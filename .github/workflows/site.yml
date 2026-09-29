@@ -1,10 +1,15 @@
-# puts site/ on github pages whenever it changes on main
+# puts site/ on github pages whenever it changes on main, or a release comes out.
+# the headset zip gets served from here too: frame drop names what it downloads
+# after the url it ends up at, and github's release downloads redirect to a url
+# ending in a random id, so it can't tell it's a zip
 name: site
 
 on:
   push:
     branches: [main]
     paths: ["site/**", ".github/workflows/site.yml"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +29,13 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: the headset zip, from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p site/dl
+          gh release download --repo "${{ github.repository }}" --pattern framecorder-arm64.zip --dir site/dl \
+            || echo "no release yet, so nothing to download"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

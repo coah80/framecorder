@@ -3,13 +3,15 @@
 # it installs, and the manifest that points at it. Run it on the headset (or
 # any arm64 SteamOS), from the repo's root.
 #
-#   packaging/release.sh https://github.com/you/framecorder/releases/download/v0.1.0
+#   packaging/release.sh https://you.github.io/framecorder/dl
 #
-# then upload dist/framecorder-arm64.zip and dist/framecorder.framedrop.json
-# to exactly that place.
+# then put both files from dist/ on a github release. the site workflow copies
+# the zip to github pages, which is where the manifest points: frame drop
+# can't use github's release download urls directly (they redirect to a url
+# with no .zip on the end).
 set -eu
 
-BASE=${1:?where the files will be downloaded from, like https://github.com/you/framecorder/releases/download/v0.1.0}
+BASE=${1:?where the zip will be downloaded from, like https://you.github.io/framecorder/dl}
 OUT=dist
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

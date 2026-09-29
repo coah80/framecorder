@@ -60,7 +60,7 @@ the easy way is [frame drop](https://framedropvr.com): pair your frame with it, 
 
 the recorder needs one permission (`cap_sys_admin`, to read what's on the display). the installer takes it if the headset lets it without a password. if it can't, the tab says so, with the one command to run over ssh.
 
-making a release for frame drop, on the headset: `packaging/release.sh <where the files will be downloaded from>`, then upload the two files in `dist/` there.
+making a release for frame drop, on the headset: `packaging/release.sh https://coah80.github.io/framecorder/dl`, then put the two files in `dist/` on a github release. the site workflow copies the zip onto github pages, since frame drop can't use github's release download links (they redirect to a url without `.zip` on the end).
 
 or build it yourself. on the headset, with developer mode on and ssh working:
 
