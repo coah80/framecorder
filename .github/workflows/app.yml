@@ -1,0 +1,104 @@
+# builds the sync app for macos, windows and linux. push a tag like v0.1.0 and
+# they land on that tag's release, named how the website links to them.
+# android is built and signed locally, see app/README.md
+#
+# macos is ad-hoc signed unless these repo secrets exist, then it's signed and
+# notarized properly (needs a paid apple developer account):
+#   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app specific), APPLE_TEAM_ID
+name: app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            file: framecorder-macos.dmg
+          - os: windows-latest
+            file: framecorder-windows.exe
+          - os: ubuntu-22.04
+            file: framecorder-linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - name: macos signing, if it's set up
+        if: startsWith(matrix.os, 'macos')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # empty secrets would make tauri try (and fail) to sign, so only pass on real ones
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name}" ]; then
+              { echo "$name<<END_OF_SECRET"; echo "${!name}"; echo "END_OF_SECRET"; } >> "$GITHUB_ENV"
+            fi
+          done
+
+      - name: build (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          npx --yes @tauri-apps/cli@^2 build --target universal-apple-darwin --bundles dmg
+          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "../${{ matrix.file }}"
+
+      - name: build (windows, linux)
+        if: ${{ !startsWith(matrix.os, 'macos') }}
+        run: |
+          cargo build --release
+          exe=target/release/framecorder-app
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          cp "$exe" "../${{ matrix.file }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: put them on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+          gh release upload "$TAG" dist/* --clobber

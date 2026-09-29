@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "framecorder",
+  "version": "0.1.0",
+  "identifier": "com.framecorder.app",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "framecorder",
+        "width": 920,
+        "height": 680,
+        "minWidth": 380,
+        "minHeight": 480,
+        "backgroundColor": "#1e1e2e",
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; media-src 'self' asset: http://asset.localhost; font-src 'self'; style-src 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "appimage",
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "category": "Video",
+    "shortDescription": "Clips from your Steam Frame, over Wi-Fi",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "android": {
+      "minSdkVersion": 29
+    }
+  }
+}

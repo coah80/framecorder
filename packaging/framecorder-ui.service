@@ -1,0 +1,17 @@
+[Unit]
+Description=framecorder dashboard tab
+# only run next to a SteamVR that's already up, and go away with it. the tab
+# also checks for itself, starting SteamVR from here breaks the headset view
+BindsTo=steamvr.service
+After=steamvr.service
+
+[Service]
+ExecStart=%h/.local/bin/framecorder-ui
+Restart=on-failure
+RestartSec=5
+Slice=session.slice
+# stay out of the way of whatever's being played
+Nice=5
+
+[Install]
+WantedBy=steamvr.service

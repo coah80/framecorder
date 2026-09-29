@@ -1,0 +1,18 @@
+[Unit]
+Description=framecorder Wi-Fi sync
+# unlike the dashboard tab this runs whenever the headset is on, SteamVR or
+# not, so clips can come off while the Frame just sits there. it doesn't
+# need the network up to start, mDNS picks up Wi-Fi when it appears
+
+[Service]
+ExecStart=%h/.local/bin/framecorder-sync
+Restart=on-failure
+RestartSec=5
+Slice=session.slice
+# whatever's being played comes first, for the CPU and for the disk
+Nice=10
+IOSchedulingClass=idle
+MemoryHigh=64M
+
+[Install]
+WantedBy=default.target

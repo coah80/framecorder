@@ -1,0 +1,34 @@
+{
+  "default_bindings": [
+    {
+      "controller_type": "frame_controller",
+      "binding_url": "bindings_frame_controller.json"
+    }
+  ],
+  "actions": [
+    {
+      "name": "/actions/framecorder/in/clip",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/framecorder/out/haptic",
+      "type": "vibration",
+      "requirement": "optional"
+    }
+  ],
+  "action_sets": [
+    {
+      "name": "/actions/framecorder",
+      "usage": "leftright"
+    }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/framecorder": "framecorder",
+      "/actions/framecorder/in/clip": "Clip that",
+      "/actions/framecorder/out/haptic": "Clip saved buzz"
+    }
+  ]
+}

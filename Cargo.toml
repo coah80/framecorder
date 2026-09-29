@@ -1,0 +1,28 @@
+[package]
+name = "framecorder"
+version = "0.1.0"
+edition = "2021"
+description = "Low-overhead recorder for the Steam Frame's actual panel output"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+ash = { version = "0.38", default-features = false, features = ["loaded", "debug"] }
+clap = { version = "4", features = ["derive"] }
+drm = "0.15"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+fontdue = "0.9"
+ffmpeg-sys-next = { version = "7.1", default-features = false, features = ["avcodec", "avformat"] }
+libc = "0.2"
+log = "0.4"
+pipewire = "0.10"
+qrcode = { version = "0.14", default-features = false }
+serde_json = "1"
+v4l2r = "0.0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "abort"

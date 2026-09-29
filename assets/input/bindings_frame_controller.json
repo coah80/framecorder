@@ -1,0 +1,26 @@
+{
+  "controller_type": "frame_controller",
+  "name": "framecorder defaults",
+  "description": "hold the left thumbstick down to clip",
+  "bindings": {
+    "/actions/framecorder": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/thumbstick",
+          "mode": "button",
+          "inputs": {
+            "long": {
+              "output": "/actions/framecorder/in/clip"
+            }
+          }
+        }
+      ],
+      "haptics": [
+        {
+          "output": "/actions/framecorder/out/haptic",
+          "path": "/user/hand/left/output/haptic"
+        }
+      ]
+    }
+  }
+}

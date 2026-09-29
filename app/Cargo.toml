@@ -1,0 +1,75 @@
+[package]
+name = "framecorder-app"
+version = "0.1.0"
+edition = "2021"
+description = "Gets framecorder clips off your Steam Frame, over Wi-Fi"
+license = "MIT"
+default-run = "framecorder-app"
+
+[lib]
+name = "framecorder_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "framecorder-app"
+path = "src/main.rs"
+
+[features]
+default = ["gui"]
+# everything but the sync core and the headless mode. off for quick tests
+# on machines without webkit2gtk
+gui = [
+    "dep:tauri",
+    "dep:tauri-build",
+    "dep:tauri-plugin-notification",
+    "dep:tauri-plugin-opener",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-plugin-single-instance",
+    "dep:tauri-plugin-barcode-scanner",
+    "dep:tauri-plugin-framesync",
+]
+
+[dependencies]
+bytes = "1"
+dirs = "6"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+mdns-sd = { version = "0.21", default-features = false, features = ["async"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots-no-provider", "stream", "json"] }
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "io-util"] }
+
+tauri = { version = "2.12", features = ["tray-icon", "protocol-asset", "custom-protocol"], optional = true }
+tauri-plugin-notification = { version = "2.4", optional = true }
+tauri-plugin-opener = { version = "2.5", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = { version = "2.5", optional = true }
+tauri-plugin-single-instance = { version = "2.4", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-barcode-scanner = { version = "2.4", optional = true }
+tauri-plugin-framesync = { path = "plugins/framesync", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [], optional = true }
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+tempfile = "3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

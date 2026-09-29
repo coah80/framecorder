@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- macos asks before an app can talk to the local network. this is the text it shows -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>framecorder finds your Steam Frame on your Wi-Fi and copies your clips off it.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_framecorder._tcp</string>
+  </array>
+</dict>
+</plist>

@@ -1,0 +1,14 @@
+[package]
+name = "tauri-plugin-framesync"
+version = "0.1.0"
+edition = "2021"
+description = "Android side of framecorder's app: foreground service, MediaStore, sharing"
+license = "MIT"
+links = "tauri-plugin-framesync"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = "2.12"
+
+[build-dependencies]
+tauri-plugin = { version = "2.7", features = ["build"] }

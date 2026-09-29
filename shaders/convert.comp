@@ -1,0 +1,227 @@
+#version 450
+
+// Turns the panel scanout into NV12 for the hardware encoder in one pass.
+//
+// Every output pixel gets its source position from a coarse lookup grid. The
+// grid either maps the output to a straight crop of the panel (raw view) or
+// undoes the lens distortion for one eye. Each grid point stores a position per
+// color channel, because the compositor pre-corrects chromatic aberration and
+// we need to undo that too. A negative position means "outside the lens", which
+// gets painted black.
+//
+// One invocation writes a 4x2 block: two words of luma and one word of
+// interleaved chroma, so there are no byte stores and no atomics. A workgroup
+// covers 32x16 pixels, which is exactly 4x2 grid cells, so the workgroup pulls
+// the grid points it needs into shared memory once and every invocation reads
+// its cell from there.
+
+#define STEP 8u
+#define WG_X 8u
+#define WG_Y 8u
+#define CELLS_X (WG_X * 4u / STEP)
+#define CELLS_Y (WG_Y * 2u / STEP)
+#define POINTS_X (CELLS_X + 1u)
+#define POINTS_Y (CELLS_Y + 1u)
+#define POINTS (POINTS_X * POINTS_Y)
+
+layout(local_size_x = WG_X, local_size_y = WG_Y, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D src_tex;
+layout(set = 0, binding = 1, std430) readonly buffer Lut { vec2 lut[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer Nv12 { uint nv12[]; };
+
+layout(push_constant) uniform Params {
+    uvec2 out_size;
+    uvec2 lut_size;
+    uint y_stride;
+    uint uv_offset;
+    float lut_step;
+    uint flags;
+} p;
+
+const uint FLAG_PER_CHANNEL = 1u;
+const uint FLAG_SUPERSAMPLE = 2u;
+const uint FLAG_ROTATED_EYES = 4u;
+const uint FLAG_SHARP = 8u;
+
+// Fringes narrower than this, in output pixels, aren't worth extra reads.
+const float FRINGE_MIN = 0.3;
+
+shared vec2 s_lut[3u * POINTS];
+
+// One grid cell for one channel: a corner plus how the source moves per
+// output pixel along x and y, and the bilinear twist term.
+struct Cell {
+    vec2 origin;
+    vec2 dx;
+    vec2 dy;
+    vec2 dxy;
+    bool valid;
+};
+
+Cell load_cell(uint i, uint j, uint c) {
+    uint base = c * POINTS + j * POINTS_X + i;
+    vec2 a = s_lut[base];
+    vec2 b = s_lut[base + 1u];
+    vec2 d = s_lut[base + POINTS_X];
+    vec2 e = s_lut[base + POINTS_X + 1u];
+
+    Cell cell;
+    cell.valid = min(min(a.x, b.x), min(d.x, e.x)) >= 0.0;
+    const float inv = 1.0 / float(STEP);
+    cell.origin = a;
+    cell.dx = (b - a) * inv;
+    cell.dy = (d - a) * inv;
+    cell.dxy = (e - d - b + a) * (inv * inv);
+    return cell;
+}
+
+// Largest distance between two channels' positions at the cell's corners.
+float cell_split(Cell a, Cell b) {
+    const float s = float(STEP);
+    vec2 o = a.origin - b.origin;
+    vec2 x = (a.dx - b.dx) * s;
+    vec2 y = (a.dy - b.dy) * s;
+    vec2 xy = (a.dxy - b.dxy) * (s * s);
+    return max(max(length(o), length(o + x)), max(length(o + y), length(o + x + y + xy)));
+}
+
+vec2 cell_uv(Cell cell, vec2 local) {
+    return cell.origin + cell.dx * local.x + cell.dy * local.y + cell.dxy * (local.x * local.y);
+}
+
+// The grid is in the eyes' own panel space, as SteamVR describes it. The
+// Frame scans each eye's half out turned 180° in place, so turn it back
+// here, per sample, which keeps the seam between the eyes clean.
+// Catmull-Rom in 5 bilinear taps (the four far corners dropped, they
+// barely matter). Crisper than plain bilinear, which matters here because
+// the panel image has already been resampled once by the compositor.
+vec4 catmull_rom(vec2 uv) {
+    vec2 size = vec2(textureSize(src_tex, 0));
+    vec2 pos = uv * size;
+    vec2 center = floor(pos - 0.5) + 0.5;
+    vec2 f = pos - center;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    vec2 w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2;
+    vec2 tc0 = (center - 1.0) / size;
+    vec2 tc3 = (center + 2.0) / size;
+    vec2 tc12 = (center + w2 / w12) / size;
+    vec4 c = textureLod(src_tex, vec2(tc12.x, tc0.y), 0.0) * (w12.x * w0.y)
+           + textureLod(src_tex, vec2(tc0.x, tc12.y), 0.0) * (w0.x * w12.y)
+           + textureLod(src_tex, tc12, 0.0) * (w12.x * w12.y)
+           + textureLod(src_tex, vec2(tc3.x, tc12.y), 0.0) * (w3.x * w12.y)
+           + textureLod(src_tex, vec2(tc12.x, tc3.y), 0.0) * (w12.x * w3.y);
+    float norm = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(c / norm, 0.0);
+}
+
+vec4 fetch(vec2 uv) {
+    if ((p.flags & FLAG_ROTATED_EYES) != 0u) {
+        uv = vec2(uv.x < 0.5 ? 0.5 - uv.x : 1.5 - uv.x, 1.0 - uv.y);
+    }
+    if ((p.flags & FLAG_SHARP) != 0u) {
+        return catmull_rom(uv);
+    }
+    return textureLod(src_tex, uv, 0.0);
+}
+
+vec4 sample_at(Cell cell, vec2 local) {
+    vec2 uv = cell_uv(cell, local);
+    if ((p.flags & FLAG_SUPERSAMPLE) == 0u) {
+        return fetch(uv);
+    }
+    // 4 taps on a rotated grid, a cheap box filter for when we shrink.
+    vec2 fx = cell.dx + cell.dxy * local.y;
+    vec2 fy = cell.dy + cell.dxy * local.x;
+    return 0.25 * (fetch(uv + fx * -0.375 + fy * -0.125) +
+                   fetch(uv + fx *  0.125 + fy * -0.375) +
+                   fetch(uv + fx *  0.375 + fy *  0.125) +
+                   fetch(uv + fx * -0.125 + fy *  0.375));
+}
+
+// BT.709, limited range. The scanout is already gamma encoded, which is what
+// the video matrix expects, so no transfer conversion here.
+uint luma(vec3 c) {
+    float y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    return uint(clamp(16.0 + 219.0 * y + 0.5, 0.0, 255.0));
+}
+
+uint chroma(vec3 c) {
+    float y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float cb = (c.b - y) / 1.8556;
+    float cr = (c.r - y) / 1.5748;
+    uint u = uint(clamp(128.0 + 224.0 * cb + 0.5, 0.0, 255.0));
+    uint v = uint(clamp(128.0 + 224.0 * cr + 0.5, 0.0, 255.0));
+    return u | (v << 8);
+}
+
+void load_grid() {
+    uint li = gl_LocalInvocationIndex;
+    uint channels = (p.flags & FLAG_PER_CHANNEL) != 0u ? 3u : 1u;
+    if (li < channels * POINTS) {
+        // Green goes in slot 1 either way, so single channel mode only loads that.
+        uint c = channels == 3u ? li / POINTS : 1u;
+        uint r = li % POINTS;
+        uint gx = min(gl_WorkGroupID.x * CELLS_X + r % POINTS_X, p.lut_size.x - 1u);
+        uint gy = min(gl_WorkGroupID.y * CELLS_Y + r / POINTS_X, p.lut_size.y - 1u);
+        s_lut[c * POINTS + r] = lut[(gy * p.lut_size.x + gx) * 3u + c];
+    }
+    barrier();
+}
+
+void main() {
+    load_grid();
+
+    uint x0 = gl_GlobalInvocationID.x * 4u;
+    uint y0 = gl_GlobalInvocationID.y * 2u;
+    if (x0 >= p.out_size.x || y0 >= p.out_size.y) {
+        return;
+    }
+
+    uint ci = gl_LocalInvocationID.x * 4u / STEP;
+    uint cj = gl_LocalInvocationID.y * 2u / STEP;
+    vec2 base = vec2(float(x0 % STEP), float(y0 % STEP)) + 0.5;
+
+    Cell green = load_cell(ci, cj, 1u);
+    Cell red = green;
+    Cell blue = green;
+    bool per_channel = false;
+    if ((p.flags & FLAG_PER_CHANNEL) != 0u) {
+        red = load_cell(ci, cj, 0u);
+        blue = load_cell(ci, cj, 2u);
+        // Near the middle of the lens the channels line up; one read per
+        // pixel is enough there, and that's most of the picture.
+        float limit = FRINGE_MIN * length(green.dx);
+        per_channel = cell_split(red, green) > limit || cell_split(blue, green) > limit;
+    }
+
+    vec3 px[8];
+    for (uint k = 0u; k < 8u; k++) {
+        vec2 local = base + vec2(float(k & 3u), float(k >> 2));
+        if (!green.valid) {
+            px[k] = vec3(0.0);
+        } else if (!per_channel) {
+            px[k] = sample_at(green, local).rgb;
+        } else {
+            px[k] = vec3(red.valid ? sample_at(red, local).r : 0.0,
+                         sample_at(green, local).g,
+                         blue.valid ? sample_at(blue, local).b : 0.0);
+        }
+    }
+
+    uint row0 = 0u;
+    uint row1 = 0u;
+    for (uint dx = 0u; dx < 4u; dx++) {
+        row0 |= luma(px[dx]) << (8u * dx);
+        row1 |= luma(px[4u + dx]) << (8u * dx);
+    }
+    nv12[(y0 * p.y_stride + x0) >> 2] = row0;
+    nv12[((y0 + 1u) * p.y_stride + x0) >> 2] = row1;
+
+    vec3 left = (px[0] + px[1] + px[4] + px[5]) * 0.25;
+    vec3 right = (px[2] + px[3] + px[6] + px[7]) * 0.25;
+    nv12[(p.uv_offset + (y0 >> 1) * p.y_stride + x0) >> 2] = chroma(left) | (chroma(right) << 16);
+}

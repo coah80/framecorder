@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>framecorder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <span class="word">framecorder<i>.</i></span>
+    <nav class="tabs" id="tabs" hidden>
+      <button class="tab" data-view="clips">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/></svg>
+        clips
+      </button>
+      <button class="tab" data-view="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+        settings
+      </button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- pairing: three steps, top to bottom -->
+    <section id="view-pair" class="stack" hidden>
+      <div class="title-row">
+        <h1>pair your frame<i>.</i></h1>
+        <button class="link" id="pair-cancel" hidden>cancel</button>
+      </div>
+
+      <button class="btn primary wide" id="scan" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
+        scan the qr code instead
+      </button>
+
+      <ol class="steps">
+        <li class="card step">
+          <span class="num">1</span>
+          <div class="grow">
+            <h3>on your frame</h3>
+            <p>open the <b>framecorder</b> tab, then <b>settings</b>, <b>sync</b>, <b>pair a device</b>.</p>
+          </div>
+        </li>
+        <li class="card step">
+          <span class="num">2</span>
+          <div class="grow">
+            <div class="row">
+              <h3>pick your frame</h3>
+              <button class="link" id="rescan">look again</button>
+            </div>
+            <ul id="found" class="found"></ul>
+            <p id="found-empty" class="muted small">looking for frames on this network...</p>
+          </div>
+        </li>
+        <li class="card step">
+          <span class="num">3</span>
+          <div class="grow">
+            <h3>type the code it shows</h3>
+            <form id="pair-form" class="pair-form" autocomplete="off">
+              <input id="code" aria-label="code from the headset" placeholder="000000" inputmode="numeric" maxlength="6" pattern="[0-9]{6}">
+              <button class="btn primary" id="pair-go" type="submit" disabled>pair</button>
+            </form>
+            <p id="pair-error" class="error" role="alert" hidden></p>
+          </div>
+        </li>
+      </ol>
+
+    </section>
+
+    <!-- clips -->
+    <section id="view-clips" class="stack" hidden>
+      <div id="frames" class="frames"></div>
+
+      <div id="progress" class="card progress" hidden>
+        <div class="row">
+          <span id="progress-name" class="data"></span>
+          <span id="progress-text" class="muted data"></span>
+        </div>
+        <div class="bar"><span id="progress-bar"></span></div>
+      </div>
+
+      <div class="row list-head">
+        <div class="seg" id="filter" role="group" aria-label="show">
+          <button data-kind="all">all <span class="n"></span></button>
+          <button data-kind="clip">clips <span class="n"></span></button>
+          <button data-kind="recording">recordings <span class="n"></span></button>
+        </div>
+        <button class="btn small" id="open-folder" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          open folder
+        </button>
+      </div>
+      <p id="empty" class="empty" hidden></p>
+      <div id="gallery" class="gallery"></div>
+    </section>
+
+    <!-- settings -->
+    <section id="view-settings" class="stack" hidden>
+      <h1>settings<i>.</i></h1>
+
+      <div class="card group">
+        <h4>frames</h4>
+        <div id="paired" class="rows"></div>
+        <div class="row setting">
+          <div>
+            <b>another frame?</b>
+            <p class="muted small">you can pair more than one</p>
+          </div>
+          <button class="btn" id="pair-another">pair a frame</button>
+        </div>
+      </div>
+
+      <div class="card group">
+        <h4>this device</h4>
+        <div class="row setting" id="autostart-row" hidden>
+          <div>
+            <b>start with the computer</b>
+            <p class="muted small">sits in the <span id="tray-word">tray</span>, so clips arrive without opening anything</p>
+          </div>
+          <label class="switch"><input type="checkbox" id="autostart"><span></span></label>
+        </div>
+        <div class="row setting">
+          <div class="clip-text">
+            <b>clips are saved to</b>
+            <p class="muted small data" id="where"></p>
+          </div>
+          <button class="btn" id="open-folder-2" hidden>open</button>
+        </div>
+      </div>
+
+      <div class="card group">
+        <h4>how syncing works</h4>
+        <ul class="how">
+          <li>a clip or recording is sent the moment it's saved on your frame</li>
+          <li>it only works while the frame is <b>on</b>, on the <b>same wi-fi</b>, and <b>this app is open</b></li>
+          <li id="how-closed"></li>
+          <li>nothing goes through the internet, it's straight from the frame to this device</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
