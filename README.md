@@ -28,6 +28,8 @@ pixels never touch the cpu.
 
 so it's what's on the panels, passthrough, overlays, dashboard and all, NOT steamvr's mirror window.
 
+the long version, lens math and all, is in [docs/how-it-works.md](docs/how-it-works.md).
+
 ## views and shapes
 
 - 16:9 (default), 1:1 and 9:16: one eye un-warped from what the panels show, level, centered on straight ahead and as wide as it goes without black edges (about 77° square, 64° x 96° tall). read with a sharp catmull-rom filter so it holds up next to steam's recorder. `--fov` overrides the width
@@ -60,9 +62,11 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 
 the easy way is [frame drop](https://framedropvr.com): pair your frame with it, press install on the framecorder site, then open framecorder from your library on the headset once. that runs `framecorder-setup`, which puts everything in place and starts it. running it again is how updates get installed.
 
+(frame drop uploads from windows, so nothing it puts on the headset is executable and it can't start a linux program. what it launches is a tiny windows `framecorder.exe` instead, through proton, which runs `install.sh` with `/bin/sh`. that hops out of steam's container with `flatpak-spawn --host` and runs the real installer. it's all in `packaging/framedrop`.)
+
 the recorder needs one permission (`cap_sys_admin`, to read what's on the display). the installer takes it if the headset lets it without a password. if it can't, the tab says so, with the one command to run over ssh.
 
-making a release for frame drop, on the headset: `packaging/release.sh https://framecorder.coah80.com/dl`, then put the two files in `dist/` on a github release. the site workflow copies the zip onto github pages, since frame drop can't use github's release download links (they redirect to a url without `.zip` on the end).
+making a release for frame drop, on the headset: `packaging/release.sh https://framecorder.coah80.com/dl` (it needs zig for the windows launcher, `pip install ziglang`), then put the two files in `dist/` on a github release. the site workflow copies the zip onto github pages, since frame drop can't use github's release download links (they redirect to a url without `.zip` on the end).
 
 or build it yourself. on the headset, with developer mode on and ssh working:
 

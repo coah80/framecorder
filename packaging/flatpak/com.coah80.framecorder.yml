@@ -17,7 +17,8 @@ modules:
   - name: framecorder
     buildsystem: simple
     build-commands:
-      - install -Dm755 framecorder /app/share/framecorder/framecorder-setup
+      - tar -xf setup.tar
+      - install -Dm755 framecorder-setup /app/share/framecorder/framecorder-setup
       - install -Dm644 payload.tar /app/share/framecorder/payload.tar
       - install -Dm755 framecorder-installer.sh /app/bin/framecorder-installer
       - install -Dm644 com.coah80.framecorder.desktop /app/share/applications/com.coah80.framecorder.desktop

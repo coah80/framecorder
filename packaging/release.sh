@@ -1,7 +1,9 @@
 #!/bin/sh
 # Builds a release for Frame Drop: one zip with the installer and everything
 # it installs, and the manifest that points at it. Run it on the headset (or
-# any arm64 SteamOS), from the repo's root.
+# any arm64 SteamOS), from the repo's root. it also needs a windows c compiler
+# for the launcher frame drop starts (see packaging/framedrop), zig is easiest:
+# pip install ziglang
 #
 #   packaging/release.sh https://you.github.io/framecorder/dl
 #
@@ -30,8 +32,14 @@ mkdir -p "$WORK/payload/bin" "$WORK/payload/services" "$WORK/zip" "$OUT"
 cp target/release/framecorder target/release/framecorder-ui sync/target/release/framecorder-sync "$WORK/payload/bin/"
 cp packaging/framecorder-ui.service packaging/framecorder-sync.service "$WORK/payload/services/"
 tar -cf "$WORK/zip/payload.tar" -C "$WORK/payload" bin services
-# the one program in the zip, so there's no doubt about what to launch
-cp target/release/framecorder-setup "$WORK/zip/framecorder"
+# frame drop uploads without the executable bit, so the installer rides in a
+# tar and a windows launcher (the one program in the zip, so there's no doubt
+# what to launch) gets it running. see packaging/framedrop/launcher.c
+mkdir -p "$WORK/setup"
+cp target/release/framecorder-setup "$WORK/setup/"
+tar -cf "$WORK/zip/setup.tar" -C "$WORK/setup" framecorder-setup
+cp packaging/framedrop/install.sh "$WORK/zip/"
+packaging/framedrop/build.sh "$WORK/zip"
 
 ZIP="$OUT/framecorder-arm64.zip"
 rm -f "$ZIP"
@@ -43,8 +51,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         path = os.path.join(src, name)
         info = zipfile.ZipInfo.from_file(path, name)
         info.compress_type = zipfile.ZIP_DEFLATED
-        # keep the installer runnable after unzipping
-        info.external_attr = (0o755 if name == "framecorder" else 0o644) << 16
+        info.external_attr = 0o644 << 16
         with open(path, "rb") as f:
             z.writestr(info, f.read(), compresslevel=9)
 PY
