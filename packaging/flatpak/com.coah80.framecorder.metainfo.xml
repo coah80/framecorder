@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.coah80.framecorder</id>
+  <name>framecorder</name>
+  <summary>Record what you actually see on the Steam Frame</summary>
+  <developer id="com.coah80">
+    <name>coah80</name>
+  </developer>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>framecorder records what the Steam Frame's panels actually show, right on the headset, without taking the frames your game needs. It adds a tab to the SteamVR dashboard with a record button and clips of the last 30 seconds, and syncs them to your phone or PC over Wi-Fi.</p>
+    <p>Open this app once to install framecorder on the headset, and again whenever there's an update. It asks for your password once, for the permission the recorder needs to read the display.</p>
+  </description>
+  <launchable type="desktop-id">com.coah80.framecorder.desktop</launchable>
+  <url type="homepage">https://framecorder.coah80.com</url>
+  <url type="vcs-browser">https://github.com/coah80/framecorder</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-09-30"/>
+  </releases>
+</component>

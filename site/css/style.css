@@ -105,6 +105,7 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .get, .give { margin-top: var(--gap); display: grid; gap: 24px; justify-items: start; }
 .get h2, .give h2 { font-size: clamp(36px, 5vw, 64px); }
 .get p, .give p { color: var(--subtext0); max-width: 52ch; text-wrap: pretty; }
+.get p code { font: 500 .95em var(--data); color: var(--text); }
 .get a:not(.btn) { color: var(--mauve); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 .apps { display: flex; flex-wrap: wrap; gap: 12px; }

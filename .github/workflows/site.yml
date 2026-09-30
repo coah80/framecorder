@@ -1,5 +1,5 @@
 # puts site/ on github pages whenever it changes on main, or a release comes out.
-# the headset zip gets served from here too: frame drop names what it downloads
+# the headset zip and flatpak get served from here too: frame drop names what it downloads
 # after the url it ends up at, and github's release downloads redirect to a url
 # ending in a random id, so it can't tell it's a zip
 name: site
@@ -10,6 +10,10 @@ on:
     paths: ["site/**", ".github/workflows/site.yml"]
   release:
     types: [published]
+  # the headset flatpak is built after the release, so pick it up once it lands
+  workflow_run:
+    workflows: [flatpak]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -29,13 +33,15 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: the headset zip, from the latest release
+      - name: the headset zip and flatpak, from the latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p site/dl
-          gh release download --repo "${{ github.repository }}" --pattern framecorder-arm64.zip --dir site/dl \
-            || echo "no release yet, so nothing to download"
+          for file in framecorder-arm64.zip framecorder.flatpak; do
+            gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl \
+              || echo "no $file on the latest release yet"
+          done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

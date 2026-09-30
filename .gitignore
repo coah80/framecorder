@@ -1,2 +1,6 @@
 /target
 /dist
+
+# built in ci next to the flatpak manifest
+packaging/flatpak/framecorder-arm64.zip
+packaging/flatpak/icon.png
