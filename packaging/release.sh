@@ -37,7 +37,7 @@ tar -cf "$WORK/zip/payload.tar" -C "$WORK/payload" bin services
 # what to launch) gets it running. see packaging/framedrop/launcher.c
 mkdir -p "$WORK/setup"
 cp target/release/framecorder-setup "$WORK/setup/"
-tar -cf "$WORK/zip/setup.tar" -C "$WORK/setup" framecorder-setup
+tar -cf "$WORK/zip/setup.tar" --owner=0 --group=0 -C "$WORK/setup" framecorder-setup
 cp packaging/framedrop/install.sh "$WORK/zip/"
 packaging/framedrop/build.sh "$WORK/zip"
 
