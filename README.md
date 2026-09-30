@@ -1,3 +1,5 @@
+![framecorder](assets/framecorder-banner.png)
+
 # framecorder
 
 a recorder for the steam frame that grabs what the headset panels ACTUALLY show, without eating the headset's performance. the point is footage that looks like the frame really feels, not the laggy stuff other recorders make.
