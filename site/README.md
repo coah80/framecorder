@@ -8,8 +8,7 @@ python3 -m http.server 8080 -d site      # http://localhost:8080
 
 before publishing: set `REPO` at the top of `js/main.js` to where the project lives. the source link, the install button and the build commands all use it. the install button hands frame drop the manifest from the repo's latest release (`releases/latest/download/framecorder.framedrop.json`), which `packaging/release.sh` makes.
 
-- `js/headset.js`: loads the headset from `model/`. it's "steam frame low poly" by jwwwun on sketchfab, with the stand it came on removed. check its license on sketchfab before publishing, and keep the credit in the footer
-- `vendor/OBJLoader.js`: three.js's obj loader, MIT
+- `js/headset.js`: builds the headset from `model/steam-frame.bin`, a compact pack (quantized positions, normals and per-vertex greys, split by material) of the steam frame model made for framecorder
 - `js/main.js`: the hero scene and the things orbiting it (they're plain html, moved around by the 3d scene, so they stay sharp and go behind the headset)
 - `css/style.css`: catppuccin mocha, same look as the app and the dashboard tab
 - `vendor/three.module.min.js`: three.js r160, MIT
