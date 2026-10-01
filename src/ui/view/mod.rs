@@ -81,6 +81,8 @@ pub enum Action {
     FinishSetup,
     /// Takes framecorder off the headset, on the second tap.
     Uninstall,
+    /// Stops all of framecorder until SteamVR starts again.
+    TurnOff,
 }
 
 pub enum Status {

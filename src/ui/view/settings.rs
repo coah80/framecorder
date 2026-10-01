@@ -44,7 +44,17 @@ fn sidebar(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mu
         }
     }
 
-    // Out of the way at the bottom, and it takes a second tap.
+    // Out of the way at the bottom: closing, and removing (which takes a
+    // second tap).
+    let r = Rect::new(PAD, CONTENT_Y + CONTENT_H - 140.0, SIDE_W, 64.0);
+    let hovered = m.hover == Some(Action::TurnOff);
+    if hovered {
+        c.fill_rrect(r, 16.0, MAUVE, 0.08);
+    }
+    let color = if hovered { MAUVE } else { OVERLAY2 };
+    c.text(f, Face::Body, 18.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, "Close framecorder", color, 1.0);
+    hits.push(Hit { rect: r, action: Action::TurnOff });
+
     let r = Rect::new(PAD, CONTENT_Y + CONTENT_H - 64.0, SIDE_W, 64.0);
     let hovered = m.hover == Some(Action::Uninstall);
     if m.uninstall_armed {

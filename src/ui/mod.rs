@@ -183,6 +183,8 @@ pub fn run() -> Result<()> {
         }
         std::thread::sleep(SERVER_POLL);
     }
+    // Closing framecorder from the tab stops sync too, this is it coming back.
+    let _ = Command::new("systemctl").args(["--user", "--no-block", "start", "framecorder-sync.service"]).status();
     let vr = OpenVr::connect_as(AppType::Overlay)?;
     let tab = DashboardTab::new(&vr, KEY, "framecorder", view::WIDTH, view::HEIGHT, WIDTH_METERS)?;
     let icon = view::icon(128);
@@ -360,6 +362,7 @@ impl App {
         match action {
             Action::Uninstall if !armed => return self.uninstall_armed = true,
             Action::Uninstall => return self.uninstall(),
+            Action::TurnOff => return self.turn_off(),
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -398,6 +401,20 @@ impl App {
             }
         }
         s.save();
+    }
+
+    /// Stops the tab (and with it the recorder and the clip buffer) and sync,
+    /// until SteamVR starts again. Stopping our own service ends this
+    /// process, so systemd does it without waiting on us.
+    fn turn_off(&mut self) {
+        let stopped = Command::new("systemctl")
+            .args(["--user", "--no-block", "stop", "framecorder-sync.service", "framecorder-ui.service"])
+            .status();
+        match stopped {
+            Ok(s) if s.success() => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
+            Ok(s) => self.note = Some((format!("Couldn't close framecorder: systemctl {s}"), false)),
+            Err(e) => self.note = Some((format!("Couldn't close framecorder: {e}"), false)),
+        }
     }
 
     /// Hands the removal to systemd, since it stops this tab's own service.
