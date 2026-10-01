@@ -90,13 +90,15 @@ needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which the frame's 
 
 ## uninstall
 
-run the installer again and pick remove. or in the tab: settings, "remove framecorder" at the bottom, tap it twice. ("close framecorder" right above it, or closing it from the frame's app bar, just stops it until steamvr starts again.) or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
+run the installer again and pick remove, or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
 
 ## using it
 
 open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and four tiles saying what's set up (video, audio, clips, sync). tap a tile or "settings" to change things, one section at a time. hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
 
 (it goes by the tab and not the whole dashboard because on the frame the steam menu counts as open the whole time you're in home)
+
+it starts with steamvr. to stop it, tab, recorder, clips and sync, until steamvr starts again: settings, "close framecorder" at the bottom. to bring it back sooner, pick framecorder from "launch program" on the frame's app bar, or press play on it in the steam library.
 
 or from ssh:
 
