@@ -42,6 +42,17 @@ impl Report {
     }
 }
 
+/// Points systemctl at the user's own systemd. Konsole in the Frame's
+/// desktop mode runs in a nested plasma session with its own runtime folder
+/// and session bus, where `systemctl --user` can't find it.
+fn use_user_manager() {
+    let runtime = format!("/run/user/{}", unsafe { libc::getuid() });
+    if Path::new(&runtime).join("bus").exists() {
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={runtime}/bus"));
+        std::env::set_var("XDG_RUNTIME_DIR", runtime);
+    }
+}
+
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).context("HOME isn't set")
 }
@@ -119,6 +130,7 @@ fn quiet(program: &str, args: &[&str]) -> bool {
 /// going on the new version right away; updates leave that to the tab, which
 /// restarts itself when nothing's being recorded.
 pub fn run(restart_ui: bool) -> Result<Report> {
+    use_user_manager();
     let here = std::env::current_exe()?.parent().map(Path::to_path_buf).context("no folder to install from")?;
     let payload = here.join(PAYLOAD);
     if !payload.exists() {
@@ -167,6 +179,7 @@ pub fn run(restart_ui: bool) -> Result<Report> {
 /// What the update timer runs: installs the latest release, unless it's the
 /// one that's installed already.
 pub fn update() -> Result<()> {
+    use_user_manager();
     let home = home()?;
     let marker = home.join(INSTALLED);
     // FRAMECORDER_URL points it at another release, for testing one.
@@ -219,6 +232,7 @@ fn output(program: &str, args: &[&str]) -> Result<String> {
 /// pairings. Recordings and clips in ~/Videos/framecorder stay. Stopping the
 /// tab's service ends the tab, so the tab runs this outside of it.
 pub fn uninstall() -> Result<()> {
+    use_user_manager();
     let home = home()?;
     for service in SERVICES {
         quiet("systemctl", &["--user", "disable", "--now", service]);

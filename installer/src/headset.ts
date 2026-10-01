@@ -98,6 +98,10 @@ export function authorize(): Promise<boolean> {
 export async function unlock(): Promise<void> {
   await run("sudo", ["-n", "setcap", CAPABILITY, RECORDER])
   rmSync(join(SHARE, "relock"), { force: true })
-  // the tab picks the panels when it starts the recorder
-  spawnSync("systemctl", ["--user", "try-restart", "framecorder-ui.service"])
+  // the tab picks the panels when it starts the recorder. the user's own
+  // systemd, not desktop mode's nested session (see setup's use_user_manager)
+  const runtime = `/run/user/${process.getuid?.()}`
+  spawnSync("systemctl", ["--user", "try-restart", "framecorder-ui.service"], {
+    env: { ...process.env, XDG_RUNTIME_DIR: runtime, DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtime}/bus` },
+  })
 }
