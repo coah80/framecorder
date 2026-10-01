@@ -56,6 +56,37 @@ extern "C" fn on_signal(_: libc::c_int) {
     QUIT.store(true, Ordering::SeqCst);
 }
 
+/// Set when another launch asked to see the tab (SIGUSR1).
+static SHOW: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_show(_: libc::c_int) {
+    SHOW.store(true, Ordering::SeqCst);
+}
+
+/// Makes this the one framecorder tab. If one's running already, asks it to
+/// open its tab and says so, without this one ever talking to SteamVR: SteamVR
+/// counts every copy as the same app, and one leaving takes the other's tab
+/// down with it. The lock goes when the process does.
+fn only_one() -> Result<Option<std::fs::File>> {
+    use std::io::{Read, Seek, Write};
+    use std::os::fd::AsRawFd;
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let path = dir.join("framecorder-ui.lock");
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let mut pid = String::new();
+        let _ = file.read_to_string(&mut pid);
+        if let Ok(pid) = pid.trim().parse::<i32>() {
+            unsafe { libc::kill(pid, libc::SIGUSR1) };
+        }
+        return Ok(None);
+    }
+    file.set_len(0)?;
+    file.rewind()?;
+    write!(file, "{}", std::process::id())?;
+    Ok(Some(file))
+}
+
 /// What the tab knows about syncing, looked up again every so often while
 /// it's on screen.
 struct Sync {
@@ -170,7 +201,14 @@ pub fn run() -> Result<()> {
         for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
             libc::signal(sig, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
         }
+        libc::signal(libc::SIGUSR1, on_show as extern "C" fn(libc::c_int) as libc::sighandler_t);
     }
+    // started again (from the library, say) while it's running: that's
+    // asking to see it
+    let Some(_lock) = only_one()? else {
+        log::info!("framecorder's running already, opening its tab");
+        return Ok(());
+    };
     // Only ever attach to a SteamVR that's already running, never start one.
     let mut waited = false;
     while !OpenVr::server_running() {
@@ -236,6 +274,9 @@ pub fn run() -> Result<()> {
     log::info!("dashboard tab ready");
 
     while !QUIT.load(Ordering::Relaxed) {
+        if SHOW.swap(false, Ordering::SeqCst) {
+            tab.show(KEY);
+        }
         while let Some(event) = tab.poll() {
             if !app.handle(event) {
                 QUIT.store(true, Ordering::SeqCst);
@@ -319,7 +360,13 @@ pub fn run() -> Result<()> {
     drop(vr);
     drop(gpu_texture);
     if UPDATED.load(Ordering::Relaxed) {
-        // Not a clean exit, so systemd (Restart=on-failure) starts the new one.
+        // Becomes the new version in place, however it was started (systemd
+        // or SteamVR, from the library).
+        use std::os::unix::process::CommandExt;
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+        let err = Command::new(home.join(".local/bin/framecorder-ui")).args(std::env::args_os().skip(1)).exec();
+        log::error!("couldn't start the new version: {err}");
+        // systemd (Restart=on-failure) has a go at it then
         std::process::exit(75);
     }
     Ok(())
