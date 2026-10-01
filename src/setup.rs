@@ -36,7 +36,7 @@ impl Report {
         }];
         lines.push("ready: open the steamvr dashboard, there's a framecorder tab".to_string());
         if !self.unlocked {
-            lines.push(format!("it records steamvr's view for now. for the panels (1:1, 9:16, both eyes), give the recorder {CAPABILITY}"));
+            lines.push("it records steamvr's view for now. run the installer and unlock the panels for 1:1, 9:16 and both eyes".to_string());
         }
         lines
     }
@@ -145,17 +145,19 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         bail!("couldn't unpack {}", payload.display());
     }
 
-    let recorder = recorder()?;
-    let was_unlocked = unlocked(&recorder);
+    let was_unlocked = panels_unlocked();
     let updated = install(&release, &home)?;
-    if !unlocked(&recorder) {
-        // Works where the headset lets this user be root without a password.
-        // Where it doesn't, the tab explains the one command that's needed.
-        quiet("sudo", &["-n", "setcap", CAPABILITY, &recorder.to_string_lossy()]);
+    // Run by hand, right after the installer asked for the password (sudo
+    // remembers it for a bit): puts the panel helper in place, or a newer
+    // one. The update timer has no password, so it doesn't try.
+    if restart_ui && (!panels_unlocked() || helper_outdated(&release)) {
+        if let Err(e) = unlock() {
+            log::debug!("no panel helper: {e:#}");
+        }
     }
 
     let relock = home.join(RELOCK);
-    if unlocked(&recorder) {
+    if panels_unlocked() {
         let _ = std::fs::remove_file(&relock);
     } else if was_unlocked {
         let _ = std::fs::write(&relock, "");
@@ -173,7 +175,46 @@ pub fn run(restart_ui: bool) -> Result<Report> {
     if restart_ui && quiet("systemctl", &["--user", "is-active", "--quiet", "steamvr.service"]) {
         quiet("systemctl", &["--user", "restart", "framecorder-ui.service"]);
     }
-    Ok(Report { updated, unlocked: unlocked(&recorder) })
+    Ok(Report { updated, unlocked: panels_unlocked() })
+}
+
+/// Whether the recorder can read the panels: through the panel helper, or
+/// (installs from before it) a recorder that has the permission itself.
+pub fn panels_unlocked() -> bool {
+    crate::grab::helper_ready() || recorder().is_ok_and(|r| unlocked(&r))
+}
+
+/// Whether the release has a different panel helper than the one in place.
+fn helper_outdated(release: &Path) -> bool {
+    let Some(installed) = crate::grab::helper_path() else { return false };
+    match (std::fs::read(release.join("bin/framecorder-grab")), std::fs::read(installed)) {
+        (Ok(new), Ok(old)) => new != old,
+        _ => false,
+    }
+}
+
+/// Puts the panel helper in place: owned by root, so nothing else can change
+/// it, and with the permission, which updates never take away since they
+/// don't touch it. Needs sudo without asking, so the password's been asked
+/// for just before (the installer does that).
+pub fn unlock() -> Result<()> {
+    use_user_manager();
+    let home = home()?;
+    let from = home.join(".local/share/framecorder/release/bin/framecorder-grab");
+    if !from.exists() {
+        bail!("install framecorder first, the panel helper comes with it");
+    }
+    let to = crate::grab::helper_path().context("HOME isn't set")?;
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let (from, to) = (from.to_string_lossy(), to.to_string_lossy());
+    output("sudo", &["-n", "install", "-o", "root", "-g", "root", "-m", "0755", &from, &to])?;
+    output("sudo", &["-n", "setcap", CAPABILITY, &to])?;
+    let _ = std::fs::remove_file(home.join(RELOCK));
+    // the tab picks the panels when it starts the recorder
+    quiet("systemctl", &["--user", "try-restart", "framecorder-ui.service"]);
+    Ok(())
 }
 
 /// What the update timer runs: installs the latest release, unless it's the
@@ -246,7 +287,9 @@ pub fn uninstall() -> Result<()> {
         }
     }
     quiet("systemctl", &["--user", "daemon-reload"]);
-    for dir in [".config/framecorder", ".local/share/framecorder", ".local/state/framecorder", ".cache/framecorder-update"] {
+    // the panel helper's root's, but the folder it's in is ours, so it can go
+    let dirs = [".config/framecorder", ".local/share/framecorder", ".local/state/framecorder", ".local/lib/framecorder"];
+    for dir in dirs.into_iter().chain([".cache/framecorder-update"]) {
         let dir = home.join(dir);
         match std::fs::remove_dir_all(&dir) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("removing {}", dir.display())),

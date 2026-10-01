@@ -192,6 +192,10 @@ pub fn run() -> Result<()> {
     if std::env::args().any(|a| a == "--show") {
         tab.show(KEY);
     }
+    match crate::apps::register(&vr) {
+        Ok(()) => log::info!("registered with SteamVR as {}", crate::apps::KEY),
+        Err(e) => log::warn!("not registered with SteamVR: {e:#}"),
+    }
     let input = Input::new(&vr).map_err(|e| log::warn!("no clip keybind: {e:#}")).ok();
     let toast = Toast::new(&vr, TOAST_KEY, "framecorder", TOAST_METERS).map_err(|e| log::warn!("no clip toasts: {e:#}")).ok();
 
@@ -225,7 +229,7 @@ pub fn run() -> Result<()> {
         screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Welcome) },
         sync: Sync::look(),
         clipped_at: None,
-        unlocked: crate::setup::recorder().is_ok_and(|r| crate::setup::unlocked(&r)),
+        unlocked: crate::setup::panels_unlocked(),
         uninstall_armed: false,
         relocked: crate::setup::relocked(),
     };
@@ -631,7 +635,7 @@ impl App {
             return;
         }
         self.sync.checked = Instant::now();
-        let unlocked = crate::setup::recorder().is_ok_and(|r| crate::setup::unlocked(&r));
+        let unlocked = crate::setup::panels_unlocked();
         let relocked = crate::setup::relocked();
         if unlocked != self.unlocked || relocked != self.relocked {
             self.unlocked = unlocked;

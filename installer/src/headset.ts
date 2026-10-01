@@ -12,13 +12,17 @@ const HOME = homedir()
 const BIN = join(HOME, ".local/bin")
 const SHARE = join(HOME, ".local/share/framecorder")
 const RECORDER = join(BIN, "framecorder")
-const CAPABILITY = "cap_sys_admin+ep"
 
 export const installed = (): boolean => existsSync(join(BIN, "framecorder-ui"))
 
+// the panel helper, which holds the permission so updates don't take it away
+const HELPER = join(HOME, ".local/lib/framecorder/framecorder-grab")
+
+/** Whether the panels are unlocked: the panel helper's in place, or (older
+ * installs) the recorder has the permission itself. */
 export function unlocked(): boolean {
-  const out = spawnSync("getcap", [RECORDER], { encoding: "utf8" })
-  return out.stdout?.includes("cap_sys_admin") ?? false
+  const has = (path: string) => spawnSync("getcap", [path], { encoding: "utf8" }).stdout?.includes("cap_sys_admin") ?? false
+  return has(HELPER) || has(RECORDER)
 }
 
 /** steamos starts out with no password, and sudo needs one. */
@@ -94,14 +98,8 @@ export function authorize(): Promise<boolean> {
   return talk("sudo", ["-v"])
 }
 
-/** Gives the recorder its permission, with the password from `authorize`. */
+/** Puts the panel helper in place, with the password from `authorize`.
+ * framecorder-setup does it, see setup::unlock. */
 export async function unlock(): Promise<void> {
-  await run("sudo", ["-n", "setcap", CAPABILITY, RECORDER])
-  rmSync(join(SHARE, "relock"), { force: true })
-  // the tab picks the panels when it starts the recorder. the user's own
-  // systemd, not desktop mode's nested session (see setup's use_user_manager)
-  const runtime = `/run/user/${process.getuid?.()}`
-  spawnSync("systemctl", ["--user", "try-restart", "framecorder-ui.service"], {
-    env: { ...process.env, XDG_RUNTIME_DIR: runtime, DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtime}/bus` },
-  })
+  await run(join(BIN, "framecorder-setup"), ["--unlock"])
 }

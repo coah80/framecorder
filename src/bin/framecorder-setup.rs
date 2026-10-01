@@ -11,6 +11,8 @@ fn main() {
         Some("--update") => framecorder::setup::update(),
         // The new release's installer, run by the old one's --update.
         Some("--update-install") => framecorder::setup::run(false).map(|_| ()),
+        // The installer's unlock, once it has the password.
+        Some("--unlock") => framecorder::setup::unlock(),
         _ => framecorder::setup::run(true).map(|report| {
             for line in report.lines() {
                 log::info!("{line}");

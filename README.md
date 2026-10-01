@@ -66,9 +66,11 @@ on the frame, in desktop mode, open konsole and run:
 curl -fsSL https://framecorder.coah80.com/install | sh
 ```
 
-(over ssh from a computer works too.) that gets the installer, a little terminal app built on [opentui](https://github.com/anomalyco/opentui) (`installer/`, about 30 MB since bun comes along), and runs it. it downloads the latest release, puts everything in place, starts it, and offers the one permission that lets the recorder read the panels. that's `cap_sys_admin`, it takes your password, and if steamos doesn't have one yet it has you pick one first. after that it updates itself: a timer (`framecorder-update.timer`) looks for a new release every 6 hours, swaps the files in, and the tab restarts into the new version once nothing's recording. `systemctl --user disable --now framecorder-update.timer` turns that off. run the installer again to update right away or remove framecorder. the script is `site/install`, the site workflow builds the installer with `installer/build.sh`.
+(over ssh from a computer works too.) that gets the installer, a little terminal app built on [opentui](https://github.com/anomalyco/opentui) (`installer/`, about 30 MB since bun comes along), and runs it. clicking install asks for your password first (if steamos doesn't have one yet, it has you pick one), then downloads the latest release, puts everything in place, starts it, and unlocks the panels with that password. after that it updates itself: a timer (`framecorder-update.timer`) looks for a new release every 6 hours, swaps the files in, and the tab restarts into the new version once nothing's recording. `systemctl --user disable --now framecorder-update.timer` turns that off. run the installer again to update right away or remove framecorder. the script is `site/install`, the site workflow builds the installer with `installer/build.sh`.
 
-without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once the permission's there. updates that replace the recorder drop the permission (only root can give it back), so the tab says so and the installer offers it again.
+without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once they're unlocked.
+
+unlocking puts the panel helper in place: `framecorder-grab`, a tiny program owned by root in `~/.local/lib/framecorder` with `cap_sys_admin` (reading another process's framebuffers needs it). it's the only part of framecorder with a permission, and it does one thing: turn a framebuffer into a dmabuf the recorder can read, passed over a socket (`src/grab.rs`). a permission lives on the file it's given to, and updates replace files, so it's not the recorder that holds it: updates never touch the helper and the panels stay unlocked.
 
 making a release, on the headset: `packaging/release.sh`, then put both files in `dist/` (the tarball and its `.sha256`) on a github release. the site workflow copies them to the site's `/dl`, where the installer and the updater get them.
 
@@ -88,7 +90,7 @@ needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which the frame's 
 
 ## uninstall
 
-run the installer again and pick remove. or in the tab: settings, "remove framecorder" at the bottom, tap it twice. or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
+run the installer again and pick remove. or in the tab: settings, "remove framecorder" at the bottom, tap it twice. ("close framecorder" right above it, or closing it from the frame's app bar, just stops it until steamvr starts again.) or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
 
 ## using it
 

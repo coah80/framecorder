@@ -33,9 +33,8 @@ async function main(screen: Screen): Promise<void> {
   // an update can replace the recorder, which takes its permission, so the
   // password comes first then too
   if (pick === "update") await install(screen)
-  if (pick === "unlock" && (await authorize(screen)) && (await unlock(screen))) {
-    await screen.ask("the panels are unlocked", "framecorder records what the panels show now, any shape you pick in the tab.", [done], "good")
-  }
+  // unlocking takes the panel helper from the latest release, so it updates too
+  if (pick === "unlock") await install(screen)
   if (pick === "remove") await remove(screen)
 }
 
@@ -43,7 +42,9 @@ async function main(screen: Screen): Promise<void> {
 async function install(screen: Screen): Promise<void> {
   const authorized = await authorize(screen)
   await headset.install((status) => screen.busy("installing framecorder", status))
-  if (authorized) await unlock(screen)
+  // the install itself puts the panel helper in place with the password,
+  // this is in case it couldn't
+  if (authorized && !headset.unlocked()) await unlock(screen)
   const view = headset.unlocked()
     ? "it records the panels."
     : "it records steamvr's view for now. run this again and pick unlock the panels for the full thing."

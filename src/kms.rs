@@ -1,16 +1,19 @@
 //! Finds the plane the VR compositor scans out and hands its buffers over as
 //! dmabufs. The compositor keeps DRM master; we only look.
 //!
-//! Getting buffer handles for someone else's framebuffer needs CAP_SYS_ADMIN,
-//! which is the one privilege this tool needs.
+//! Getting buffer handles for someone else's framebuffer needs CAP_SYS_ADMIN.
+//! The recorder uses it if it has it itself, the panel helper otherwise (see
+//! framecorder::grab).
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
-use std::path::Path;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use drm::control::{crtc, framebuffer, plane, Device as ControlDevice};
+use drm::control::{crtc, plane, Device as ControlDevice};
+use framecorder::grab;
 use drm::{ClientCapability, Device, VblankWaitFlags, VblankWaitTarget};
 
 struct Card(File);
@@ -38,6 +41,8 @@ pub struct ScanoutBuffer {
 
 pub struct Kms {
     card: Card,
+    path: PathBuf,
+    helper: RefCell<Option<grab::Grabber>>,
     pipe: u32,
     plane: plane::Handle,
     pub refresh_hz: f64,
@@ -80,6 +85,8 @@ impl Kms {
 
         Ok(Self {
             card,
+            path: path.to_path_buf(),
+            helper: RefCell::new(None),
             pipe,
             plane,
             refresh_hz,
@@ -106,43 +113,42 @@ impl Kms {
     }
 
     pub fn export(&self, fb_id: u32) -> Result<ScanoutBuffer> {
-        let handle: framebuffer::Handle =
-            drm::control::from_u32(fb_id).context("bad framebuffer id")?;
-        let info = self
-            .card
-            .get_planar_framebuffer(handle)
-            .with_context(|| format!("reading framebuffer {fb_id}"))?;
-
-        let buffers = info.buffers();
-        let Some(bo) = buffers[0] else {
-            bail!(
-                "the kernel hid the scanout buffer from us. framecorder needs CAP_SYS_ADMIN, run:\n  \
-                 sudo setcap cap_sys_admin+ep {}",
-                std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default()
-            );
+        let buf = match grab::export(&self.card, fb_id)? {
+            Some(buf) => buf,
+            // No permission of our own: the helper has it, if it's installed.
+            None => self.export_through_helper(fb_id)?,
         };
-        if buffers[1..].iter().any(Option::is_some) {
-            bail!("multi-plane scanout buffers aren't supported yet");
-        }
-
-        let fd = self
-            .card
-            .buffer_to_prime_fd(bo, libc::O_CLOEXEC as u32)
-            .context("exporting scanout buffer as dmabuf");
-        // The export holds its own reference, the GEM handle is ours to drop.
-        let _ = self.card.close_buffer(bo);
-        let (width, height) = info.size();
-
         Ok(ScanoutBuffer {
             fb_id,
-            fd: fd?,
-            width,
-            height,
-            fourcc: info.pixel_format() as u32,
-            modifier: info.modifier().map(u64::from).unwrap_or(0),
-            pitch: info.pitches()[0],
-            offset: info.offsets()[0],
+            fd: buf.fd,
+            width: buf.width,
+            height: buf.height,
+            fourcc: buf.fourcc,
+            modifier: buf.modifier,
+            pitch: buf.pitch,
+            offset: buf.offset,
         })
+    }
+
+    fn export_through_helper(&self, fb_id: u32) -> Result<grab::Exported> {
+        let mut helper = self.helper.borrow_mut();
+        if helper.is_none() {
+            if !grab::helper_ready() {
+                bail!(
+                    "the kernel hid the scanout buffer from us. framecorder needs its panel helper, \
+                     run the installer and unlock the panels"
+                );
+            }
+            let started = grab::Grabber::start(&self.path)?;
+            log::info!("reading the panels through the panel helper");
+            *helper = Some(started);
+        }
+        let result = helper.as_mut().map(|h| h.export(fb_id)).context("no panel helper")?;
+        if result.is_err() {
+            // start it fresh next time
+            *helper = None;
+        }
+        result
     }
 }
 

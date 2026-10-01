@@ -25,7 +25,7 @@ cargo build --release
 (cd sync && cargo build --release)
 
 mkdir -p "$WORK/payload/bin" "$WORK/payload/services" "$WORK/release" "$OUT"
-cp target/release/framecorder target/release/framecorder-ui target/release/framecorder-setup \
+cp target/release/framecorder target/release/framecorder-ui target/release/framecorder-setup target/release/framecorder-grab \
     sync/target/release/framecorder-sync "$WORK/payload/bin/"
 cp packaging/framecorder-ui.service packaging/framecorder-sync.service \
     packaging/framecorder-update.service packaging/framecorder-update.timer "$WORK/payload/services/"
