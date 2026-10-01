@@ -6,7 +6,7 @@ name: site
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/site.yml"]
+    paths: ["site/**", "installer/**", ".github/workflows/site.yml"]
   release:
     types: [published]
   # the headset flatpak is built after the release, so pick it up once it lands
@@ -41,6 +41,9 @@ jobs:
             gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl \
               || echo "no $file on the latest release yet"
           done
+      - uses: oven-sh/setup-bun@v2
+      - name: the installer site/install downloads
+        run: installer/build.sh site/dl
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

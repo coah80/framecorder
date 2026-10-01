@@ -149,12 +149,13 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         let _ = std::fs::write(&relock, "");
     }
 
-    quiet("systemctl", &["--user", "daemon-reload"]);
-    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service", "framecorder-update.timer"]);
+    // These have to work, or nothing runs, so they're not quiet about it.
+    output("systemctl", &["--user", "daemon-reload"])?;
+    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service", "framecorder-update.timer"])?;
     if updated.iter().any(|u| u == "framecorder-sync") {
         quiet("systemctl", &["--user", "try-restart", "framecorder-sync.service"]);
     }
-    quiet("systemctl", &["--user", "enable", "framecorder-ui.service"]);
+    output("systemctl", &["--user", "enable", "framecorder-ui.service"])?;
     // It starts with SteamVR from now on. Starting it while SteamVR is off
     // would start SteamVR too (it's bound to it), so only when it's on.
     if restart_ui && quiet("systemctl", &["--user", "is-active", "--quiet", "steamvr.service"]) {

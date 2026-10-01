@@ -4,156 +4,36 @@
 #
 #   curl -fsSL https://framecorder.coah80.com/install | sh
 #
-# it downloads the latest release, installs it, and offers the one permission
-# that lets the recorder read the panels. that takes your password, and it
-# helps set one if steamos doesn't have one yet. after that framecorder
-# updates itself (see framecorder-update.timer). run this again to update
-# right away or remove framecorder.
+# this gets the real installer, a little terminal app (installer/, built on
+# opentui), checks it and runs it. that installs or updates framecorder,
+# offers the permission that lets it record the panels (it takes your
+# password, and helps set one if steamos doesn't have one yet), or removes
+# it. framecorder updates itself after that (see framecorder-update.timer).
 #
 # everything happens in main, called on the last line: sh has read the whole
-# script by then, so the prompts can have the terminal instead of curl's pipe.
-
-# FRAMECORDER_URL points it at another release, for testing one
-URL=${FRAMECORDER_URL:-https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz}
-BIN="$HOME/.local/bin"
-TITLE=framecorder
-
-# whiptail draws the dialogs. it's on steamos, plain prompts if it isn't.
-if command -v whiptail >/dev/null 2>&1 && [ "${TERM:-dumb}" != dumb ]; then
-    tui=1
-else
-    tui=
-fi
-
-msg() {
-    if [ -n "$tui" ]; then
-        whiptail --title "$TITLE" --ok-button ok --msgbox "$1" 0 72
-    else
-        printf '\n%s\n\npress enter ' "$1"
-        read -r _
-    fi
-}
-
-# yesno <text> [yes label] [no label]
-yesno() {
-    if [ -n "$tui" ]; then
-        whiptail --title "$TITLE" --yes-button "${2:-yes}" --no-button "${3:-no}" --yesno "$1" 0 72
-    else
-        printf '\n%s\n\n%s? [Y/n] ' "$1" "${2:-yes}"
-        read -r answer
-        case $answer in [nN]*) return 1 ;; esac
-    fi
-}
-
-# busy <text>: shown while something runs, cleared by the next dialog
-busy() {
-    if [ -n "$tui" ]; then
-        whiptail --title "$TITLE" --infobox "$1" 8 72
-    else
-        printf '%s\n' "$1"
-    fi
-}
+# script by then, so the installer can have the terminal instead of curl's pipe.
 
 fail() {
-    msg "$1"
+    printf '%s\n' "$1" >&2
     exit 1
-}
-
-unlocked() {
-    getcap "$BIN/framecorder" 2>/dev/null | grep -q cap_sys_admin
-}
-
-install_release() {
-    work=$(mktemp -d) || fail "couldn't make a folder to download into."
-    trap 'rm -rf "$work"' EXIT
-    busy "downloading framecorder..."
-    curl -fsSL -o "$work/release.tar.gz" "$URL" && sum=$(curl -fsSL "$URL.sha256" | cut -d' ' -f1) \
-        || fail "couldn't download framecorder. is the frame online?"
-    [ "$(sha256sum "$work/release.tar.gz" | cut -d' ' -f1)" = "$sum" ] \
-        || fail "the download got mangled on the way. run this again."
-    tar -xzf "$work/release.tar.gz" -C "$work" || fail "couldn't unpack the download."
-    busy "installing..."
-    if ! out=$("$work/framecorder-setup" 2>&1); then
-        fail "framecorder couldn't be installed:
-
-$(printf '%s\n' "$out" | tail -n 6)"
-    fi
-    # so the updater knows this one's installed
-    printf '%s\n' "$sum" >"$HOME/.local/share/framecorder/installed.sha256"
-}
-
-# steamos starts out with no password, and sudo needs one
-ensure_password() {
-    [ "$(passwd -S 2>/dev/null | cut -d' ' -f2)" = P ] && return 0
-    msg "steamos doesn't have a password yet, so pick one now.
-
-you'll type it twice, and nothing shows while you type. remember it: steamos asks for it for things like this." || return 1
-    clear
-    passwd
-}
-
-unlock() {
-    unlocked && return 0
-    yesno "one more thing, optional: let framecorder record the panels themselves.
-
-without it, it records steamvr's view: 16:9 of the left eye, and it costs the game a little gpu. with it, any shape (16:9, 1:1, 9:16, both eyes), sharper, and the game doesn't notice.
-
-it's one permission on the recorder (cap_sys_admin), and it takes your password once." "unlock" "skip" || return 0
-    ensure_password || { msg "no password was set, so the panels stay locked. run this again any time."; return 0; }
-    clear
-    echo "your password, for sudo:"
-    if sudo setcap cap_sys_admin+ep "$BIN/framecorder"; then
-        rm -f "$HOME/.local/share/framecorder/relock"
-        # the tab picks the panels when it starts the recorder
-        systemctl --user try-restart framecorder-ui.service 2>/dev/null
-    else
-        msg "that didn't work, so it records steamvr's view for now. run this again to try again."
-    fi
-}
-
-install() {
-    install_release
-    unlock
-    msg "framecorder is ready.
-
-put the headset on and open the steamvr dashboard: there's a framecorder tab with the record button.
-
-it updates itself from now on. run this again to remove it."
-}
-
-remove() {
-    yesno "remove framecorder? your videos stay in ~/Videos/framecorder." "remove" "cancel" || return 0
-    busy "removing..."
-    if ! out=$("$BIN/framecorder-ui" --uninstall 2>&1); then
-        fail "couldn't remove framecorder:
-
-$(printf '%s\n' "$out" | tail -n 6)"
-    fi
-    msg "framecorder is gone. your videos are still in ~/Videos/framecorder."
 }
 
 main() {
     [ "$(uname -m)" = aarch64 ] || fail "this is for the steam frame, and this machine is $(uname -m)."
-    if [ ! -x "$BIN/framecorder-ui" ]; then
-        yesno "install framecorder?
+    # FRAMECORDER_DL points it at another release, for testing one
+    dl=${FRAMECORDER_DL:-https://framecorder.coah80.com/dl}
+    work=$(mktemp -d) || fail "couldn't make a folder to download into."
+    trap 'rm -rf "$work"' EXIT
 
-it records what the frame's panels show, from a tab in the steamvr dashboard. clips, and sync to your phone or computer too. about 5 MB." "install" "cancel" || exit 0
-        install
-        return
-    fi
-    if [ -n "$tui" ]; then
-        choice=$(whiptail --title "$TITLE" --ok-button go --cancel-button quit --menu "framecorder is installed." 0 72 0 \
-            update "get the latest version" \
-            remove "take it off the headset" 3>&1 1>&2 2>&3) || exit 0
-    else
-        printf '\nframecorder is installed. [u]pdate, [r]emove or [q]uit? '
-        read -r choice
-        case $choice in u*) choice=update ;; r*) choice=remove ;; *) exit 0 ;; esac
-    fi
-    case $choice in
-        update) install ;;
-        remove) remove ;;
-    esac
+    echo "getting the installer (about 30 MB)..."
+    curl -fL --progress-bar -o "$work/installer.zst" "$dl/framecorder-installer.zst" \
+        && want=$(curl -fsSL "$dl/framecorder-installer.zst.sha256" | cut -d' ' -f1) \
+        || fail "couldn't download the installer. is the frame online?"
+    [ "$(sha256sum "$work/installer.zst" | cut -d' ' -f1)" = "$want" ] \
+        || fail "the download got mangled on the way. run this again."
+    zstd -dq "$work/installer.zst" -o "$work/framecorder-installer" && chmod +x "$work/framecorder-installer" \
+        || fail "couldn't unpack the installer."
+    "$work/framecorder-installer"
 }
 
 main "$@" </dev/tty
