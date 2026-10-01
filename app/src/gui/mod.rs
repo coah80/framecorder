@@ -4,6 +4,8 @@
 mod commands;
 mod platform;
 #[cfg(desktop)]
+mod prefs;
+#[cfg(desktop)]
 mod tray;
 
 use std::path::PathBuf;
@@ -21,6 +23,9 @@ pub struct AppState {
     pub download_dir: PathBuf,
     pub tray: AtomicBool,
     pub told_about_tray: AtomicBool,
+    /// Desktop: closing the window leaves it in the tray, or quits.
+    pub background: AtomicBool,
+    pub config_dir: PathBuf,
 }
 
 pub fn run() {
@@ -54,6 +59,8 @@ pub fn run() {
             commands::share_clip,
             commands::open_folder,
             commands::set_autostart,
+            commands::set_background,
+            commands::quit,
         ])
         .setup(|app| {
             setup(app)?;
@@ -107,11 +114,17 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let device_name = platform::device_name(&handle);
     let rt = tauri::async_runtime::handle().inner().clone();
     let engine = Engine::new(rt, &state_dir, sink, listener, &device_name);
+    #[cfg(desktop)]
+    let background = prefs::load(&state_dir).background;
+    #[cfg(mobile)]
+    let background = true;
     app.manage(AppState {
         engine: engine.clone(),
         download_dir,
         tray: AtomicBool::new(false),
         told_about_tray: AtomicBool::new(false),
+        background: AtomicBool::new(background),
+        config_dir: state_dir.clone(),
     });
     engine.start_all();
 
@@ -125,8 +138,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         app.state::<AppState>().tray.store(ok, std::sync::atomic::Ordering::SeqCst);
+        tray::set_visible(&handle, background);
+        // started with the computer: straight to the tray, if it's staying there
         let minimized = std::env::args().any(|a| a == "--minimized");
-        if !(minimized && ok) {
+        if !(minimized && ok && background) {
             show_main(&handle);
         }
     }

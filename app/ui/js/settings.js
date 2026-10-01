@@ -54,14 +54,40 @@ export function renderSettings(refresh) {
   );
   $("autostart-row").hidden = ui.autostart == null;
   $("autostart").checked = !!ui.autostart;
+  renderBackground();
   $("where").textContent = ui.downloadDir;
   $("open-folder-2").hidden = android();
+}
+
+// desktop only: whether it stays in the tray, and leaving it
+function renderBackground() {
+  const desktop = ui.background != null;
+  $("background-row").hidden = !desktop;
+  $("quit-row").hidden = !desktop;
+  $("background").checked = !!ui.background;
+  const tray = ui.platform === "macos" ? "menu bar" : "tray";
+  $("autostart-what").textContent = ui.background
+    ? `sits in the ${tray}, so clips arrive without opening anything`
+    : "opens when you log in, so clips arrive without you opening it";
+  $("background-what").textContent = ui.background
+    ? `closing the window leaves it syncing in the ${tray}`
+    : "closing the window quits it. clips catch up the next time it's open";
 }
 
 export function initSettings() {
   const open = () => invoke("open_folder").catch(toast);
   $("open-folder").onclick = open;
   $("open-folder-2").onclick = open;
+  $("background").addEventListener("change", async (e) => {
+    try {
+      ui.background = await invoke("set_background", { enabled: e.target.checked });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toast(err);
+    }
+    renderBackground();
+  });
+  $("quit").onclick = () => invoke("quit").catch(toast);
   $("autostart").addEventListener("change", async (e) => {
     try {
       e.target.checked = await invoke("set_autostart", { enabled: e.target.checked });

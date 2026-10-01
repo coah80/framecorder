@@ -30,7 +30,7 @@
   }[state];
 
   const commands = {
-    overview: () => ({ platform, hosts, clips: state === "empty" || !hosts.length ? [] : clips, download_dir: platform === "android" ? "Movies/framecorder" : "C:\\Users\\you\\Videos\\framecorder", autostart: platform === "android" ? null : true }),
+    overview: () => ({ platform, hosts, clips: state === "empty" || !hosts.length ? [] : clips, download_dir: platform === "android" ? "Movies/framecorder" : "C:\\Users\\you\\Videos\\framecorder", autostart: platform === "android" ? null : true, background: platform === "android" ? null : true }),
     app_ready: () => null,
     discover: () => new Promise((done) => {
       if (state === "pair-found") setTimeout(() => emit("discovered", { name: "frame", addr: "192.168.1.20:38619", fingerprint: "d2b7" }), 150);
@@ -38,6 +38,8 @@
     }),
     pair: () => Promise.reject("that code isn't right, or it ran out. get a new one on the frame."),
     set_autostart: ({ enabled }) => enabled,
+    set_background: ({ enabled }) => enabled,
+    quit: () => null,
   };
 
   window.__TAURI__ = {

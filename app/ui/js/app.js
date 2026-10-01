@@ -45,11 +45,11 @@ function render() {
 async function refresh() {
   const o = await invoke("overview");
   ui.platform = o.platform;
-  document.getElementById("tray-word").textContent = o.platform === "macos" ? "menu bar" : "tray";
   ui.hosts = o.hosts;
   ui.clips = o.clips;
   ui.downloadDir = o.download_dir;
   ui.autostart = o.autostart;
+  ui.background = o.background;
   // nothing paired (yet, or anymore): pairing is all there is to do
   const start = !ui.hosts.length && !ui.pairing;
   if (start) ui.pairing = true;

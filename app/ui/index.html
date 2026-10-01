@@ -117,9 +117,23 @@
         <div class="row setting" id="autostart-row" hidden>
           <div>
             <b>start with the computer</b>
-            <p class="muted small">sits in the <span id="tray-word">tray</span>, so clips arrive without opening anything</p>
+            <p class="muted small" id="autostart-what"></p>
           </div>
           <label class="switch"><input type="checkbox" id="autostart"><span></span></label>
+        </div>
+        <div class="row setting" id="background-row" hidden>
+          <div>
+            <b>keep running when closed</b>
+            <p class="muted small" id="background-what"></p>
+          </div>
+          <label class="switch"><input type="checkbox" id="background"><span></span></label>
+        </div>
+        <div class="row setting" id="quit-row" hidden>
+          <div>
+            <b>quit framecorder</b>
+            <p class="muted small">stops syncing until you open it again. clips catch up then</p>
+          </div>
+          <button class="btn" id="quit">quit</button>
         </div>
         <div class="row setting">
           <div class="clip-text">

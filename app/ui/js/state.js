@@ -10,6 +10,7 @@ export const ui = {
   clips: [],
   downloadDir: "",
   autostart: null,
+  background: null,
   view: "clips", // clips | settings
   pairing: false,
   filter: "all", // all | clip | recording

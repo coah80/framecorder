@@ -53,11 +53,17 @@ pub fn set_status(app: &AppHandle, status: &Status) {
     let _ = tray.set_tooltip(Some(text));
 }
 
+pub fn set_visible(app: &AppHandle, visible: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_visible(visible);
+    }
+}
+
 /// Whether closing the window should just hide it. Only with a tray icon to
-/// get it back from.
+/// get it back from, and when it's meant to keep running.
 pub fn hide_instead_of_close(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
-    if !state.tray.load(Ordering::SeqCst) {
+    if !state.tray.load(Ordering::SeqCst) || !state.background.load(Ordering::SeqCst) {
         return false;
     }
     if !state.told_about_tray.swap(true, Ordering::SeqCst) {
@@ -66,9 +72,9 @@ pub fn hide_instead_of_close(app: &AppHandle) -> bool {
             .builder()
             .title("framecorder is still syncing")
             .body(if cfg!(target_os = "macos") {
-                "it's in the menu bar. new clips keep coming in while your frame is on and nearby."
+                "it's in the menu bar, so new clips keep coming in. to close it for real, click it there and pick quit, or turn off \"keep running\" in settings."
             } else {
-                "it's in the tray. new clips keep coming in while your frame is on and nearby."
+                "it's in the tray, so new clips keep coming in. to close it for real, right-click it there and pick quit, or turn off \"keep running\" in settings."
             })
             .show();
     }

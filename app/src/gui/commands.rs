@@ -17,6 +17,8 @@ pub struct Overview {
     clips: Vec<ClipView>,
     download_dir: String,
     autostart: Option<bool>,
+    /// Desktop: whether closing the window leaves it running in the tray.
+    background: Option<bool>,
 }
 
 fn platform() -> &'static str {
@@ -43,7 +45,9 @@ pub fn overview(app: AppHandle, state: State<'_, AppState>) -> Overview {
         let _ = &app;
         None
     };
+    let background = cfg!(desktop).then(|| state.background.load(std::sync::atomic::Ordering::SeqCst));
     Overview {
+        background,
         platform: platform(),
         hosts: state.engine.statuses(),
         clips: state.engine.clips().iter().map(view).collect(),
@@ -195,6 +199,30 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
         let _ = (app, state);
         Err("not on this platform".into())
     }
+}
+
+/// Whether closing the window keeps it syncing from the tray, or quits.
+#[tauri::command]
+pub fn set_background(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
+    #[cfg(desktop)]
+    {
+        let prefs = super::prefs::Prefs { background: enabled };
+        super::prefs::save(&state.config_dir, &prefs).map_err(|e| format!("couldn't save that: {e}"))?;
+        state.background.store(enabled, std::sync::atomic::Ordering::SeqCst);
+        super::tray::set_visible(&app, enabled);
+        Ok(enabled)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, state, enabled);
+        Err("not on this platform".into())
+    }
+}
+
+/// Closes the app for real, tray and all.
+#[tauri::command]
+pub fn quit(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
