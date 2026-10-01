@@ -60,13 +60,19 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 
 ## install
 
-the easy way is [frame drop](https://framedropvr.com): pair your frame with it, press install on the framecorder site, then open framecorder from your library on the headset once. that runs `framecorder-setup`, which puts everything in place and starts it. running it again is how updates get installed.
+on the frame, in desktop mode, open konsole and run:
 
-(frame drop uploads from windows, so nothing it puts on the headset is executable and it can't start a linux program. what it launches is a tiny windows `framecorder.exe` instead, through proton, which runs `install.sh` with `/bin/sh`. that hops out of steam's container with `flatpak-spawn --host` and runs the real installer. it's all in `packaging/framedrop`.)
+```sh
+curl -fsSL https://framecorder.coah80.com/install | sh
+```
 
-that's it, it records right away. out of the box it records steamvr's headset view (16:9, left eye, about 0.45 ms of the game's gpu a frame), since that needs no permissions. reading the panels themselves (any shape, both eyes, costs the game nothing) needs `cap_sys_admin`, and that takes a password steamos doesn't have until you set one, so it's optional: `sudo setcap cap_sys_admin+ep ~/.local/bin/framecorder` over ssh. the tab switches to the panels on its own once it's there. an update replaces the recorder, which drops the permission, so run it again after one.
+(over ssh from a computer works too.) it's a little terminal installer: it downloads the latest release, puts everything in place, starts it, and offers the one permission that lets the recorder read the panels. that's `cap_sys_admin`, it takes your password, and if steamos doesn't have one yet it has you pick one first. run it again to update or remove framecorder. the script is `site/install`.
 
-making a release for frame drop, on the headset: `packaging/release.sh https://framecorder.coah80.com/dl` (it needs zig for the windows launcher, `pip install ziglang`), then put the two files in `dist/` on a github release. the site workflow copies the zip onto github pages, since frame drop can't use github's release download links (they redirect to a url without `.zip` on the end).
+without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once the permission's there. updates that replace the recorder drop the permission, the installer offers it again.
+
+there's also a flatpak for installing from discover without a terminal (`packaging/flatpak`). it can't ask for a password, so it's steamvr's view only.
+
+making a release, on the headset: `packaging/release.sh`, then put `dist/framecorder-arm64.tar.gz` on a github release. the site workflow copies it to the site's `/dl`, where the installer gets it.
 
 or build it yourself. on the headset, with developer mode on and ssh working:
 
@@ -84,7 +90,7 @@ needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which the frame's 
 
 ## uninstall
 
-in the tab: settings, "remove framecorder" at the bottom, tap it twice. or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`. then delete framecorder from frame drop (or the flatpak from discover), which takes the installer and its library entry.
+run the installer again and pick remove. or in the tab: settings, "remove framecorder" at the bottom, tap it twice. or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
 
 ## using it
 

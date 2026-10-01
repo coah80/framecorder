@@ -1,4 +1,4 @@
-# builds the headset flatpak (packaging/flatpak) from the release's headset zip
+# builds the headset flatpak (packaging/flatpak) from the release's headset tarball
 # and attaches framecorder.flatpak to that release. the site workflow runs when
 # this finishes and serves it at /dl, where the site links to it.
 name: flatpak
@@ -33,10 +33,10 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "building for $TAG"
-      - name: the headset zip and the icon, next to the manifest
+      - name: the headset release and the icon, next to the manifest
         run: |
-          curl -fsSL -o packaging/flatpak/framecorder-arm64.zip \
-            "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/framecorder-arm64.zip"
+          curl -fsSL -o packaging/flatpak/framecorder-arm64.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/framecorder-arm64.tar.gz"
           cp app/icons/icon.png packaging/flatpak/icon.png
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:

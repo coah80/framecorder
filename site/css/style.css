@@ -129,6 +129,8 @@ details .code { margin-top: 14px; }
   background: var(--mantle); border: 1px solid var(--surface0);
 }
 .code pre { margin: 0; font: 500 15px/2 var(--data); color: var(--subtext1); }
+/* the one line that installs it, so it reads first */
+.code.big pre { font-size: 18px; color: var(--text); padding-right: 88px; }
 .copy {
   position: absolute; top: 16px; right: 16px; padding: 7px 16px; border-radius: 10px; cursor: pointer;
   font: 500 14px var(--body); color: var(--subtext1);

@@ -6,7 +6,9 @@ one static page, no build step. open `index.html` through any web server, or put
 python3 -m http.server 8080 -d site      # http://localhost:8080
 ```
 
-before publishing: set `REPO` at the top of `js/main.js` to where the project lives. the source link, the install button and the build commands all use it. the install button hands frame drop the manifest from the repo's latest release (`releases/latest/download/framecorder.framedrop.json`), which `packaging/release.sh` makes.
+before publishing: set `REPO` at the top of `js/main.js` to where the project lives. the source link and the build commands use it.
+
+`install` is the headset installer the page tells people to pipe into `sh`. it downloads `dl/framecorder-arm64.tar.gz`, which the site workflow copies from the latest release (`packaging/release.sh` makes it).
 
 - `js/headset.js`: loads the headset from `model/`. it's "steam frame low poly" by jwwwun on sketchfab, with the stand it came on removed. check its license on sketchfab before publishing, and keep the credit in the footer
 - `vendor/OBJLoader.js`: three.js's obj loader, MIT

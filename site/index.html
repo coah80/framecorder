@@ -68,23 +68,17 @@
     <section id="get" class="get">
       <h2>get it<i>.</i></h2>
       <ol class="path">
-        <li><span>get <a href="https://framedropvr.com">frame drop</a> on your pc and pair your frame</span></li>
-        <li><a class="btn" id="install" href="https://framedropvr.com">install framecorder</a></li>
-        <li><span>on the headset, open framecorder from your library, once</span></li>
-      </ol>
-      <p>no pc? install it right on the headset:</p>
-      <ol class="path">
         <li><span>on the frame, switch to desktop mode and open this page</span></li>
-        <li><a class="btn plain" id="flatpak" href="dl/framecorder.flatpak" download>download for your frame</a></li>
-        <li><span>open the download and let discover install it, then open framecorder from the app menu, once</span></li>
+        <li><span>copy this, paste it into konsole, press enter</span></li>
       </ol>
+      <div class="code big">
+        <pre>curl -fsSL https://framecorder.coah80.com/install | sh</pre>
+        <button class="copy">copy</button>
+      </div>
+      <p>it walks you through the rest. run it again to update or remove framecorder. over ssh from a computer works too.</p>
       <details>
-        <summary>want 1:1, 9:16 or both eyes?</summary>
-        <p>out of the box framecorder records steamvr's view, 16:9 of the left eye. reading the panels themselves (sharper, any shape, costs the game nothing) takes one permission. with developer mode on, over ssh: <code>sudo setcap cap_sys_admin+ep ~/.local/bin/framecorder</code>. steamos has no password until you set one with <code>passwd</code>.</p>
-      </details>
-      <details>
-        <summary>how do i remove it?</summary>
-        <p>in the framecorder tab: settings, then <code>remove framecorder</code> at the bottom, tap it twice. your videos stay. then delete it from frame drop (or discover, if you used the flatpak).</p>
+        <summary>rather not use a terminal?</summary>
+        <p>there's a <a href="dl/framecorder.flatpak" download>flatpak</a>: open it on the frame and let discover install it, then open framecorder from the app menu once. it can't ask for your password, so it records steamvr's view (16:9, left eye) instead of the panels.</p>
       </details>
       <details>
         <summary>rather build it yourself?</summary>

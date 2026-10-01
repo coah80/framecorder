@@ -6,8 +6,6 @@ import { headset } from "./headset.js";
 
 // where the project lives. the one thing to change before publishing
 const REPO = "https://github.com/coah80/framecorder";
-// what frame drop installs: packaging/release.sh makes it, a release hosts it
-const MANIFEST = `${REPO}/releases/latest/download/framecorder.framedrop.json`;
 
 const $ = (id) => document.getElementById(id);
 const still = matchMedia("(prefers-reduced-motion: reduce)").matches || new URLSearchParams(location.search).has("still");
@@ -16,7 +14,6 @@ const still = matchMedia("(prefers-reduced-motion: reduce)").matches || new URLS
 if (new URLSearchParams(location.search).has("still")) document.documentElement.classList.add("still");
 
 for (const a of document.querySelectorAll('[data-link="repo"]')) a.href = REPO;
-$("install").href = `https://framedropvr.com/install?manifest=${encodeURIComponent(MANIFEST)}`;
 
 // the sync app: every download comes from the latest release, and the one
 // for the device you're on is the filled in button
