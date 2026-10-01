@@ -70,8 +70,6 @@ curl -fsSL https://framecorder.coah80.com/install | sh
 
 without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once the permission's there. updates that replace the recorder drop the permission (only root can give it back), so the tab says so and the installer offers it again.
 
-there's also a flatpak for installing from discover without a terminal (`packaging/flatpak`). it can't ask for a password, so it's steamvr's view only.
-
 making a release, on the headset: `packaging/release.sh`, then put both files in `dist/` (the tarball and its `.sha256`) on a github release. the site workflow copies them to the site's `/dl`, where the installer and the updater get them.
 
 or build it yourself. on the headset, with developer mode on and ssh working:

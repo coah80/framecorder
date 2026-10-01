@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=framecorder
-Comment=Install or update the framecorder recorder on this headset
-Exec=framecorder-installer
-Icon=com.coah80.framecorder
-Terminal=false
-Categories=AudioVideo;Recorder;
-Keywords=record;capture;clip;vr;steam frame;

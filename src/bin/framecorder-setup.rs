@@ -1,4 +1,4 @@
-//! What site/install (and the flatpak) run once the release is downloaded:
+//! What the installer runs once the release is downloaded:
 //! puts framecorder where it lives on the headset and starts its services.
 //! Safe to run again, it's how updates get installed too.
 
