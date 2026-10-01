@@ -133,6 +133,34 @@ pub fn run() -> Result<Report> {
     Ok(Report { updated, unlocked: unlocked(&recorder) })
 }
 
+/// Takes framecorder off the headset: its services, programs, settings and
+/// pairings. Recordings and clips in ~/Videos/framecorder stay. Stopping the
+/// tab's service ends the tab, so the tab runs this outside of it.
+pub fn uninstall() -> Result<()> {
+    let home = home()?;
+    for service in SERVICES {
+        quiet("systemctl", &["--user", "disable", "--now", service]);
+    }
+    let files = PROGRAMS.iter().map(|p| home.join(".local/bin").join(p));
+    let units = SERVICES.iter().map(|s| home.join(".config/systemd/user").join(s));
+    for file in files.chain(units) {
+        match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("removing {}", file.display())),
+            _ => {}
+        }
+    }
+    quiet("systemctl", &["--user", "daemon-reload"]);
+    for dir in [".config/framecorder", ".local/share/framecorder", ".local/state/framecorder"] {
+        let dir = home.join(dir);
+        match std::fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("removing {}", dir.display())),
+            _ => {}
+        }
+    }
+    log::info!("framecorder is gone. your videos are still in ~/Videos/framecorder");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

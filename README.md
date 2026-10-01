@@ -82,6 +82,10 @@ the tab only ever attaches to a steamvr that's already running. connecting as an
 
 needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which the frame's image already has.
 
+## uninstall
+
+in the tab: settings, "remove framecorder" at the bottom, tap it twice. or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`. then delete framecorder from frame drop (or the flatpak from discover), which takes the installer and its library entry.
+
 ## using it
 
 open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and four tiles saying what's set up (video, audio, clips, sync). tap a tile or "settings" to change things, one section at a time. hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.

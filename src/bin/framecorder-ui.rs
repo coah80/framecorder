@@ -7,6 +7,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let result = match args.iter().position(|a| a == "--preview") {
         Some(i) if args.len() > i + 2 => framecorder::ui::preview(args[i + 1].as_ref(), &args[i + 2]),
+        _ if args.iter().any(|a| a == "--uninstall") => framecorder::setup::uninstall(),
         _ => framecorder::ui::run(),
     };
     if let Err(e) = result {

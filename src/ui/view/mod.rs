@@ -79,6 +79,8 @@ pub enum Action {
     Step(Step),
     /// Done with the setup, or skipping the rest of it.
     FinishSetup,
+    /// Takes framecorder off the headset, on the second tap.
+    Uninstall,
 }
 
 pub enum Status {
@@ -107,6 +109,8 @@ pub struct Model<'a> {
     pub hover: Option<Action>,
     /// Last finished recording or error, and whether it went well.
     pub note: Option<(&'a str, bool)>,
+    /// Remove was tapped once, the next tap does it.
+    pub uninstall_armed: bool,
 }
 
 impl Model<'_> {

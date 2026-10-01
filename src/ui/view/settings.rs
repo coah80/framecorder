@@ -43,6 +43,23 @@ fn sidebar(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mu
             hits.push(Hit { rect: r, action });
         }
     }
+
+    // Out of the way at the bottom, and it takes a second tap.
+    let r = Rect::new(PAD, CONTENT_Y + CONTENT_H - 64.0, SIDE_W, 64.0);
+    let hovered = m.hover == Some(Action::Uninstall);
+    if m.uninstall_armed {
+        c.fill_rrect(r, 16.0, RED, 0.12);
+        c.stroke_rrect(r, 16.0, 1.5, RED, 0.5);
+    } else if hovered {
+        c.fill_rrect(r, 16.0, RED, 0.08);
+    }
+    let (text, color) = match (m.uninstall_armed, hovered) {
+        (true, _) => ("Tap again to remove", RED),
+        (false, true) => ("Remove framecorder", RED),
+        (false, false) => ("Remove framecorder", OVERLAY2),
+    };
+    c.text(f, Face::Body, 18.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, text, color, 1.0);
+    hits.push(Hit { rect: r, action: Action::Uninstall });
 }
 
 fn row(inner: Rect, i: usize) -> Rect {

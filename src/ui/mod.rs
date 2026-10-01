@@ -14,6 +14,7 @@ mod texture;
 mod view;
 
 use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -108,8 +109,10 @@ struct App {
     sync: Sync,
     /// When the last clip was asked for, while the button is still cooling down.
     clipped_at: Option<Instant>,
-    /// Whether the recorder may read the display. Without it nothing records.
+    /// Whether the recorder may read the panels, or records SteamVR's view.
     unlocked: bool,
+    /// Remove was tapped once, the next tap does it.
+    uninstall_armed: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -129,7 +132,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         _ => Status::Idle,
     };
     let screen = match state {
-        "video" | "locked" => Screen::Settings(Section::Video),
+        "video" | "locked" | "remove" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
         "sync" | "pair" => Screen::Settings(Section::Sync),
@@ -153,7 +156,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover = (state == "idle").then_some(Action::Record);
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out");
-    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note });
+    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, uninstall_armed: state == "remove" });
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
 }
@@ -217,6 +220,7 @@ pub fn run() -> Result<()> {
         sync: Sync::look(),
         clipped_at: None,
         unlocked: crate::setup::recorder().is_ok_and(|r| crate::setup::unlocked(&r)),
+        uninstall_armed: false,
     };
     log::info!("dashboard tab ready");
 
@@ -328,8 +332,12 @@ impl App {
 
     fn act(&mut self, action: Action) {
         self.dirty = true;
+        // Anything else tapped in between calls the removal off.
+        let armed = std::mem::take(&mut self.uninstall_armed);
         let s = &mut self.settings;
         match action {
+            Action::Uninstall if !armed => return self.uninstall_armed = true,
+            Action::Uninstall => return self.uninstall(),
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -368,6 +376,17 @@ impl App {
             }
         }
         s.save();
+    }
+
+    /// Hands the removal to systemd, since it stops this tab's own service.
+    fn uninstall(&mut self) {
+        let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+        let started = Command::new("systemd-run").args(["--user", "--collect", "--quiet", &exe, "--uninstall"]).status();
+        match started {
+            Ok(s) if s.success() => self.note = Some(("Removing framecorder. Your videos stay in Videos/framecorder.".into(), true)),
+            Ok(s) => self.note = Some((format!("Couldn't remove framecorder: systemd-run {s}"), false)),
+            Err(e) => self.note = Some((format!("Couldn't remove framecorder: {e}"), false)),
+        }
     }
 
     /// The setup's over, finished or skipped: on to the record button, and
@@ -634,6 +653,7 @@ impl App {
             status,
             hover: self.hover,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
+            uninstall_armed: self.uninstall_armed,
         }
     }
 }
