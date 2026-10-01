@@ -40,7 +40,7 @@ impl Report {
         }];
         lines.push("ready: open the steamvr dashboard, there's a framecorder tab".to_string());
         if !self.unlocked {
-            lines.push("it records steamvr's view for now. run the installer and unlock the panels for 1:1, 9:16 and both eyes".to_string());
+            lines.push("the panels aren't unlocked: run the installer, it asks for your password".to_string());
         }
         lines
     }
