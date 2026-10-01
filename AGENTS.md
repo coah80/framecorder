@@ -31,8 +31,6 @@ same installer, pointed at the dev build. a frame installed that way stays on de
 curl -fsSL https://framecorder.coah80.com/install | sh
 ```
 
-(releases up to 0.1.1 don't know about dev builds yet, so until 0.1.2 is out, also `rm ~/.local/share/framecorder/source` after that.)
-
 ## releasing
 
 1. merge `dev` into `main`
