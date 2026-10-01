@@ -89,6 +89,13 @@ impl Saved {
     }
 }
 
+/// How much gets written before it's pushed to disk and dropped from memory.
+/// A clip is a few hundred MB written in about a second: left alone it all
+/// sits in memory waiting to be written, and the kernel making room for it
+/// (into compressed swap, on the Frame) once stalled PipeWire's realtime
+/// thread long enough to get it killed, taking the audio with it.
+const FLUSH_EVERY: i64 = 8 * 1024 * 1024;
+
 struct Writer {
     fmt: *mut ff::AVFormatContext,
     packet: *mut ff::AVPacket,
@@ -97,6 +104,10 @@ struct Writer {
     fps: u32,
     frames: u64,
     bytes: u64,
+    /// The file again, for pushing what's written out of memory.
+    file: Option<std::fs::File>,
+    /// How far into the file is on disk and out of memory.
+    flushed: i64,
 }
 
 // Owned by exactly one thread at a time.
@@ -121,6 +132,8 @@ impl Writer {
             fps: streams.fps,
             frames: 0,
             bytes: 0,
+            file: None,
+            flushed: 0,
         };
         unsafe {
             // The container comes from the real name, the .part one means nothing to FFmpeg.
@@ -137,6 +150,7 @@ impl Writer {
                 w.add_audio(title, params, i == 0)?;
             }
             check(ff::avio_open(&mut (*w.fmt).pb, part_c.as_ptr(), ff::AVIO_FLAG_WRITE), "creating the output file")?;
+            w.file = std::fs::File::open(&w.part).ok();
             // No faststart: moving the index to the front means rewriting the
             // whole file when the recording stops, which is a lot of I/O on a
             // long recording.
@@ -221,7 +235,29 @@ impl Writer {
             self.bytes += p.data.len() as u64;
             check(ff::av_interleaved_write_frame(self.fmt, pkt), "writing")?;
         }
+        self.flush_some();
         Ok(())
+    }
+
+    /// Every FLUSH_EVERY bytes: waits for them to be on disk, then lets the
+    /// kernel forget them. Paces the writing to the disk instead of to
+    /// memory.
+    fn flush_some(&mut self) {
+        let Some(file) = &self.file else { return };
+        use std::os::fd::AsRawFd;
+        unsafe {
+            let pb = (*self.fmt).pb;
+            let at = ff::avio_seek(pb, 0, libc::SEEK_CUR);
+            if at - self.flushed < FLUSH_EVERY {
+                return;
+            }
+            ff::avio_flush(pb);
+            let (fd, from, len) = (file.as_raw_fd(), self.flushed, at - self.flushed);
+            let how = libc::SYNC_FILE_RANGE_WAIT_BEFORE | libc::SYNC_FILE_RANGE_WRITE | libc::SYNC_FILE_RANGE_WAIT_AFTER;
+            libc::sync_file_range(fd, from, len, how);
+            libc::posix_fadvise(fd, from, len, libc::POSIX_FADV_DONTNEED);
+            self.flushed = at;
+        }
     }
 
     fn finish(mut self) -> Result<Saved> {
@@ -276,6 +312,13 @@ impl Handle {
 }
 
 fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
+    // The game comes first, for the CPU and the disk.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 19);
+        const IOPRIO_WHO_PROCESS: libc::c_long = 1;
+        const BEST_EFFORT_LOWEST: libc::c_long = (2 << 13) | 7;
+        libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0 as libc::c_long, BEST_EFFORT_LOWEST);
+    }
     let mut failure = None;
     for p in rx {
         if let Err(e) = writer.write(&p) {
