@@ -14,6 +14,10 @@ const SERVICES: [&str; 4] =
     ["framecorder-ui.service", "framecorder-sync.service", "framecorder-update.service", "framecorder-update.timer"];
 /// The latest release, and its checksum next to it at `.sha256`.
 const RELEASE_URL: &str = "https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz";
+/// Where it was installed from, when that's not the releases (the dev
+/// builds): the folder the installer downloaded from. Updates come from
+/// there too. Installing from the normal place takes it away again.
+const SOURCE: &str = ".local/share/framecorder/source";
 /// The checksum of the release that's installed, under the home folder.
 const INSTALLED: &str = ".local/share/framecorder/installed.sha256";
 /// Left by an update that replaced an unlocked recorder, which drops its
@@ -259,7 +263,8 @@ pub fn update() -> Result<()> {
     let home = home()?;
     let marker = home.join(INSTALLED);
     // FRAMECORDER_URL points it at another release, for testing one.
-    let url = std::env::var("FRAMECORDER_URL").unwrap_or_else(|_| RELEASE_URL.to_string());
+    let source = std::fs::read_to_string(home.join(SOURCE)).ok().map(|s| format!("{}/framecorder-arm64.tar.gz", s.trim()));
+    let url = std::env::var("FRAMECORDER_URL").ok().or(source).unwrap_or_else(|| RELEASE_URL.to_string());
     let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
     let latest = listed
         .split_whitespace()

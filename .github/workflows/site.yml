@@ -23,6 +23,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # the dev builds are a prerelease, they're not for the site
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
