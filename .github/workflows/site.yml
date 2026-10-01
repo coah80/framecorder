@@ -1,5 +1,5 @@
 # puts site/ on github pages whenever it changes on main, or a release comes out.
-# the headset release and flatpak get served from here too, so the installer's
+# the headset release gets served from here too, so the installer's
 # one url (framecorder.coah80.com/install) always gets the latest
 name: site
 
@@ -9,10 +9,6 @@ on:
     paths: ["site/**", "installer/**", ".github/workflows/site.yml"]
   release:
     types: [published]
-  # the headset flatpak is built after the release, so pick it up once it lands
-  workflow_run:
-    workflows: [flatpak]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -32,12 +28,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: the headset release and flatpak, from the latest release
+      - name: the headset release, from the latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p site/dl
-          for file in framecorder-arm64.tar.gz framecorder-arm64.tar.gz.sha256 framecorder.flatpak; do
+          for file in framecorder-arm64.tar.gz framecorder-arm64.tar.gz.sha256; do
             gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl \
               || echo "no $file on the latest release yet"
           done
