@@ -29,7 +29,7 @@ framecorder goes one level lower, to the display itself (`src/kms.rs`). on linux
 2. find the plane on that crtc with the biggest framebuffer. that's the compositor's output, not a cursor or anything small
 3. every frame, wait for vblank, then ask the plane which framebuffer it's scanning out right now
 
-getting from a framebuffer id to the actual memory behind it is the one privileged thing framecorder does. the kernel only hands out buffer handles for someone else's framebuffer to processes with `CAP_SYS_ADMIN`, which is why the installer asks for your password once and puts that capability on the recorder binary (and nothing else). with it, the buffer gets exported as a dmabuf, a file descriptor for a chunk of gpu memory.
+getting from a framebuffer id to the actual memory behind it is the one privileged thing framecorder does. the kernel only hands out buffer handles for someone else's framebuffer to processes with `CAP_SYS_ADMIN`, which is why the recorder binary (and nothing else) gets that capability, given once with `sudo setcap`. without it, the tab records steamvr's headset view instead, which needs nothing. with it, the buffer gets exported as a dmabuf, a file descriptor for a chunk of gpu memory.
 
 a couple of details that matter:
 

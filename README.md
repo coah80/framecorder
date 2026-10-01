@@ -64,7 +64,7 @@ the easy way is [frame drop](https://framedropvr.com): pair your frame with it, 
 
 (frame drop uploads from windows, so nothing it puts on the headset is executable and it can't start a linux program. what it launches is a tiny windows `framecorder.exe` instead, through proton, which runs `install.sh` with `/bin/sh`. that hops out of steam's container with `flatpak-spawn --host` and runs the real installer. it's all in `packaging/framedrop`.)
 
-the recorder needs one permission (`cap_sys_admin`, to read what's on the display). the installer takes it if the headset lets it without a password. if it can't, the tab says so, with the one command to run over ssh.
+that's it, it records right away. out of the box it records steamvr's headset view (16:9, left eye, about 0.45 ms of the game's gpu a frame), since that needs no permissions. reading the panels themselves (any shape, both eyes, costs the game nothing) needs `cap_sys_admin`, and that takes a password steamos doesn't have until you set one, so it's optional: `sudo setcap cap_sys_admin+ep ~/.local/bin/framecorder` over ssh. the tab switches to the panels on its own once it's there. an update replaces the recorder, which drops the permission, so run it again after one.
 
 making a release for frame drop, on the headset: `packaging/release.sh https://framecorder.coah80.com/dl` (it needs zig for the windows launcher, `pip install ziglang`), then put the two files in `dist/` on a github release. the site workflow copies the zip onto github pages, since frame drop can't use github's release download links (they redirect to a url without `.zip` on the end).
 

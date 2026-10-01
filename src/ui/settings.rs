@@ -178,9 +178,12 @@ impl Settings {
     }
 
     /// Recorder arguments, minus the output path.
-    pub fn recorder_args(&self) -> Vec<String> {
+    /// `panel` is whether the recorder may read the panels. Without that it
+    /// records SteamVR's headset view, which is 16:9 of the left eye only.
+    pub fn recorder_args(&self, panel: bool) -> Vec<String> {
         let mut args: Vec<String> = Vec::new();
         match self.shape {
+            _ if !panel => args.extend(["--view", "eye", "--aspect", "16:9", "--source", "headset"].map(String::from)),
             Shape::BothEyes => args.extend(["--view".into(), "raw".into()]),
             shape => {
                 let aspect = match shape {
@@ -215,14 +218,20 @@ mod tests {
 
     #[test]
     fn args_for_defaults() {
-        let args = Settings::default().recorder_args().join(" ");
+        let args = Settings::default().recorder_args(true).join(" ");
         assert_eq!(args, "--view eye --aspect 16:9 --eye left --bitrate 40 --mic");
+    }
+
+    #[test]
+    fn args_without_the_panel() {
+        let s = Settings { shape: Shape::Tall, ..Settings::default() };
+        assert_eq!(s.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic");
     }
 
     #[test]
     fn args_for_both_eyes_with_mic() {
         let s = Settings { shape: Shape::BothEyes, mic: true, game_audio: false, ..Settings::default() };
-        assert_eq!(s.recorder_args().join(" "), "--view raw --bitrate 40 --no-audio --mic");
+        assert_eq!(s.recorder_args(true).join(" "), "--view raw --bitrate 40 --no-audio --mic");
     }
 
     #[test]

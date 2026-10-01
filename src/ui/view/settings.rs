@@ -53,27 +53,33 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let s = m.settings;
     let locked = m.locked();
 
+    // Without the panels it's SteamVR's view, whatever was picked.
+    let (shape, eye) = if m.unlocked { (s.shape, s.eye) } else { (Shape::Wide, Eye::Left) };
     let shapes = [
-        ("16:9", Action::Shape(Shape::Wide), s.shape == Shape::Wide),
-        ("1:1", Action::Shape(Shape::Square), s.shape == Shape::Square),
-        ("9:16", Action::Shape(Shape::Tall), s.shape == Shape::Tall),
-        ("Both eyes", Action::Shape(Shape::BothEyes), s.shape == Shape::BothEyes),
+        ("16:9", Action::Shape(Shape::Wide), shape == Shape::Wide),
+        ("1:1", Action::Shape(Shape::Square), shape == Shape::Square),
+        ("9:16", Action::Shape(Shape::Tall), shape == Shape::Tall),
+        ("Both eyes", Action::Shape(Shape::BothEyes), shape == Shape::BothEyes),
     ];
     let meaning = match s.shape {
+        _ if !m.unlocked => "SteamVR's view, 1920 × 1080 · the others need the recorder unlocked",
         Shape::Wide => "Widescreen · 1920 × 1080",
         Shape::Square => "Square · 1440 × 1440",
         Shape::Tall => "Vertical · 1080 × 1920",
         Shape::BothEyes => "Both panels, just as the headset shows them",
     };
-    choice(c, f, m, hits, row(inner, 0), "Shape", meaning, &shapes, locked);
+    choice(c, f, m, hits, row(inner, 0), "Shape", meaning, &shapes, locked || !m.unlocked);
 
-    let both = s.shape == Shape::BothEyes;
     let eyes = [
-        ("Left eye", Action::Eye(Eye::Left), s.eye == Eye::Left),
-        ("Right eye", Action::Eye(Eye::Right), s.eye == Eye::Right),
+        ("Left eye", Action::Eye(Eye::Left), eye == Eye::Left),
+        ("Right eye", Action::Eye(Eye::Right), eye == Eye::Right),
     ];
-    let meaning = if both { "Both eyes are in the video" } else { "The eye whose view gets recorded" };
-    choice(c, f, m, hits, row(inner, 1), "Eye", meaning, &eyes, locked || both);
+    let (meaning, fixed) = match shape {
+        _ if !m.unlocked => ("SteamVR's view is always the left eye", true),
+        Shape::BothEyes => ("Both eyes are in the video", true),
+        _ => ("The eye whose view gets recorded", false),
+    };
+    choice(c, f, m, hits, row(inner, 1), "Eye", meaning, &eyes, locked || fixed);
 
     let qualities = [
         ("Standard", Action::Quality(Quality::Standard), s.quality == Quality::Standard),

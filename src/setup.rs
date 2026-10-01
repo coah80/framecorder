@@ -26,11 +26,10 @@ impl Report {
             0 => "framecorder is up to date".to_string(),
             _ => format!("installed {}", self.updated.join(", ")),
         }];
-        lines.push(if self.unlocked {
-            "ready: open the steamvr dashboard, there's a framecorder tab".to_string()
-        } else {
-            format!("one step left, the tab says how: the recorder needs {CAPABILITY}")
-        });
+        lines.push("ready: open the steamvr dashboard, there's a framecorder tab".to_string());
+        if !self.unlocked {
+            lines.push(format!("it records steamvr's view for now. for the panels (1:1, 9:16, both eyes), give the recorder {CAPABILITY}"));
+        }
         lines
     }
 }

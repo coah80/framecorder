@@ -79,8 +79,8 @@
         <li><span>open the download and let discover install it, then open framecorder from the app menu, once</span></li>
       </ol>
       <details>
-        <summary>it asks for a password you never set?</summary>
-        <p>the recorder needs one permission to read what's on the display, and that takes your password. steamos doesn't set one for you. open konsole, type <code>passwd</code>, pick one, then open framecorder again.</p>
+        <summary>want 1:1, 9:16 or both eyes?</summary>
+        <p>out of the box framecorder records steamvr's view, 16:9 of the left eye. reading the panels themselves (sharper, any shape, costs the game nothing) takes one permission. with developer mode on, over ssh: <code>sudo setcap cap_sys_admin+ep ~/.local/bin/framecorder</code>. steamos has no password until you set one with <code>passwd</code>.</p>
       </details>
       <details>
         <summary>rather build it yourself?</summary>

@@ -73,12 +73,13 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// Starts paused; `set_paused(false)` once our tab is out of view.
-    pub fn start(settings: &Settings) -> Result<Self> {
+    /// Starts paused; `set_paused(false)` once our tab is out of view. `panel`
+    /// is whether it may read the panels, see `Settings::recorder_args`.
+    pub fn start(settings: &Settings, panel: bool) -> Result<Self> {
         let exe = std::env::current_exe()?.with_file_name("framecorder");
         let log = log_path()?;
         let log_file = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
-        let args = settings.recorder_args();
+        let args = settings.recorder_args(panel);
         let replay = settings.clipping();
 
         let mut cmd = Command::new(&exe);

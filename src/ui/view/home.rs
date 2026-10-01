@@ -23,6 +23,7 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         Shape::BothEyes => "Both eyes",
     };
     let view = match (s.shape, s.eye) {
+        _ if !m.unlocked => "16:9 · SteamVR's view".to_string(),
         (Shape::BothEyes, _) => shape.to_string(),
         (_, Eye::Left) => format!("{shape} · Left eye"),
         (_, Eye::Right) => format!("{shape} · Right eye"),

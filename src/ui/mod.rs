@@ -397,7 +397,7 @@ impl App {
             return;
         }
         if self.recorder.is_none() {
-            match Recorder::start(&self.settings) {
+            match Recorder::start(&self.settings, self.unlocked) {
                 Ok(r) => self.recorder = Some(r),
                 Err(e) => {
                     self.note = Some((format!("Couldn't start: {e:#}"), false));
@@ -447,14 +447,14 @@ impl App {
         }
         let wanted = self.settings.clipping().is_some();
         if let Some(r) = &mut self.recorder {
-            let stale = r.replay != self.settings.clipping() || r.args != self.settings.recorder_args();
+            let stale = r.replay != self.settings.clipping() || r.args != self.settings.recorder_args(self.unlocked);
             if self.recording.is_none() && !r.quitting() && (stale || (!wanted && r.replay.is_some())) {
                 r.quit();
             }
             return;
         }
         if wanted && self.retry_at.is_none_or(|t| Instant::now() >= t) {
-            match Recorder::start(&self.settings) {
+            match Recorder::start(&self.settings, self.unlocked) {
                 Ok(r) => self.recorder = Some(r),
                 Err(e) => {
                     self.note = Some((format!("Couldn't start clipping: {e:#}"), false));

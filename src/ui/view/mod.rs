@@ -101,7 +101,7 @@ pub struct Model<'a> {
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.
     pub clip_cooling: bool,
-    /// Whether the recorder may read the display.
+    /// Whether the recorder may read the panels, or records SteamVR's view.
     pub unlocked: bool,
     pub status: Status,
     pub hover: Option<Action>,
@@ -158,7 +158,6 @@ fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: 
 fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model) {
     let locked_here = m.locked() && matches!(m.screen, Screen::Settings(s) if s != Section::Sync);
     let (text, color, text_color) = match m.note {
-        _ if !m.unlocked => (UNLOCK, YELLOW, YELLOW),
         _ if locked_here => ("Recording. Stop it to change these.", YELLOW, YELLOW),
         Some((text, true)) => (text, GREEN, SUBTEXT0),
         Some((text, false)) => (text, RED, RED),
@@ -169,9 +168,6 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model) {
     c.fill_circle(PAD + 6.0, y - 6.0, 5.0, color, 1.0);
     c.text(f, Face::Body, 17.0, PAD + 22.0, y, text, text_color, 1.0);
 }
-
-/// Shown until the recorder has been allowed to read the display.
-const UNLOCK: &str = "One step left. From a computer:  ssh steamos@frame  then  sudo setcap cap_sys_admin+ep ~/.local/bin/framecorder";
 
 pub fn clock(d: Duration) -> String {
     let s = d.as_secs();
