@@ -178,8 +178,11 @@ struct Args {
     #[arg(long)]
     soft: bool,
 
-    /// How the recorder's GPU work ranks against the game's.
-    #[arg(long, value_enum, default_value_t = gpu::Priority::Low)]
+    /// How the recorder's GPU work ranks against the game's. High by
+    /// default: lower ones wait for the game to leave the GPU idle, which in
+    /// a heavy game means missed frames, and reading the panel late enough
+    /// that the compositor's already drawing the next frame into it.
+    #[arg(long, value_enum, default_value_t = gpu::Priority::High)]
     gpu_priority: gpu::Priority,
 
     /// Also keep the mic on its own track, for editing.

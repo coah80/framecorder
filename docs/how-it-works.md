@@ -75,7 +75,7 @@ every recorded frame is one compute dispatch of `shaders/convert.comp`, reading 
 
 that costs about 0.6 ms of gpu per recorded frame at 500 mhz, less at gameplay clocks.
 
-it runs on its own vulkan queue with a global priority you pick (`--gpu-priority`). `low` only runs when the game leaves the gpu idle, which is the nicest to the game. but the compositor reuses the scanout buffer a frame later, so in a really heavy game `low` can miss frames, and `medium` or `high` trade a little of the game's gpu time for a steady capture.
+it runs on its own vulkan queue with a global priority (`--gpu-priority`), `high` by default. `low` only runs when the game leaves the gpu idle, which is the nicest to the game, but on the frame the compositor draws every frame into the one scanout buffer, so in a heavy game `low` reads late: missed frames, and frames torn by the compositor drawing the next one in while we read. `high` costs the game the shader's ~1.4 ms on the frames it's gpu bound, for a steady, clean capture.
 
 ## 5. timing
 
