@@ -74,18 +74,30 @@ export async function remove(): Promise<void> {
 
 // these two ask in the terminal themselves, so the screen hands it over first
 
-export function setPassword(): boolean {
-  console.log("\npick a password for steamos. you'll type it twice, nothing shows while you type.\n")
-  return spawnSync("passwd", [], { stdio: "inherit" }).status === 0
+/** Runs something that talks to the person in the terminal, and waits until
+ * it's really gone: it puts the terminal back the way it found it on the way
+ * out, and the screen has to come back after that, not before. */
+async function talk(program: string, args: string[]): Promise<boolean> {
+  const proc = Bun.spawn([program, ...args], { stdin: "inherit", stdout: "inherit", stderr: "inherit" })
+  return (await proc.exited) === 0
 }
 
-export function unlock(): boolean {
-  console.log("\nyour password, for sudo:\n")
-  const ok = spawnSync("sudo", ["setcap", CAPABILITY, RECORDER], { stdio: "inherit" }).status === 0
-  if (ok) {
-    rmSync(join(SHARE, "relock"), { force: true })
-    // the tab picks the panels when it starts the recorder
-    spawnSync("systemctl", ["--user", "try-restart", "framecorder-ui.service"])
-  }
-  return ok
+export function setPassword(): Promise<boolean> {
+  console.log("\npick a password for steamos. you'll type it twice, nothing shows while you type.\n")
+  return talk("passwd", [])
+}
+
+/** Asks for the password up front. sudo remembers it for a few minutes, which
+ * is how the install unlocks the panels at the end without asking again. */
+export function authorize(): Promise<boolean> {
+  console.log("\nyour password, so framecorder can record the panels:\n")
+  return talk("sudo", ["-v"])
+}
+
+/** Gives the recorder its permission, with the password from `authorize`. */
+export async function unlock(): Promise<void> {
+  await run("sudo", ["-n", "setcap", CAPABILITY, RECORDER])
+  rmSync(join(SHARE, "relock"), { force: true })
+  // the tab picks the panels when it starts the recorder
+  spawnSync("systemctl", ["--user", "try-restart", "framecorder-ui.service"])
 }

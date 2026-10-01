@@ -15,67 +15,83 @@ async function main(screen: Screen): Promise<void> {
   if (!headset.installed()) {
     const pick = await screen.ask(
       "install framecorder?",
-      "it records what the frame's panels show, from a tab in the steamvr dashboard. clips, and sync to your phone or computer too. about 5 MB, and it updates itself.",
-      [{ value: "install", name: "install", description: "takes a few seconds" }, quit],
+      "it records what the frame's panels show, from a tab in the steamvr dashboard. clips, and sync to your phone or computer too. about 5 MB, and it updates itself.\n\nit asks for your password first, so it can record the panels themselves: any shape, sharper, and the game doesn't notice.",
+      [{ value: "install", name: "install", description: "asks for your password, then does the rest" }, quit],
     )
     if (pick === "install") await install(screen)
     return
   }
 
+  const locked = !headset.unlocked()
   const choices = [
     { value: "update", name: "update", description: "get the latest version now (it also updates itself)" },
-    ...(headset.unlocked() ? [] : [{ value: "unlock", name: "unlock the panels", description: "sharper, any shape, costs the game nothing" }]),
+    ...(locked ? [{ value: "unlock", name: "unlock the panels", description: "sharper, any shape, costs the game nothing" }] : []),
     { value: "remove", name: "remove", description: "take framecorder off the headset" },
     quit,
   ]
   const pick = await screen.ask("framecorder is installed", "what do you want to do?", choices)
+  // an update can replace the recorder, which takes its permission, so the
+  // password comes first then too
   if (pick === "update") await install(screen)
-  if (pick === "unlock") await offerUnlock(screen, true)
+  if (pick === "unlock" && (await authorize(screen)) && (await unlock(screen))) {
+    await screen.ask("the panels are unlocked", "framecorder records what the panels show now, any shape you pick in the tab.", [done], "good")
+  }
   if (pick === "remove") await remove(screen)
 }
 
+/** Password first, then everything else runs on its own. */
 async function install(screen: Screen): Promise<void> {
+  const authorized = await authorize(screen)
   await headset.install((status) => screen.busy("installing framecorder", status))
-  await offerUnlock(screen, false)
+  if (authorized) await unlock(screen)
+  const view = headset.unlocked()
+    ? "it records the panels."
+    : "it records steamvr's view for now. run this again and pick unlock the panels for the full thing."
   await screen.ask(
     "framecorder is ready",
-    "put the headset on and open the steamvr dashboard: there's a framecorder tab with the record button.\n\nit updates itself from now on. run this again to remove it.",
+    `put the headset on and open the steamvr dashboard: there's a framecorder tab with the record button. ${view}\n\nit updates itself from now on. run this again to remove it.`,
     [done],
     "good",
   )
 }
 
-/** The permission that lets the recorder read the panels. Optional. */
-async function offerUnlock(screen: Screen, asked: boolean): Promise<void> {
-  if (headset.unlocked()) return
-  if (!asked) {
-    const pick = await screen.ask(
-      "one more thing: unlock the panels?",
-      "without it, framecorder records steamvr's view: 16:9 of the left eye, and it costs the game a little gpu.\n\nwith it: any shape (16:9, 1:1, 9:16, both eyes), sharper, and the game doesn't notice. it's one permission on the recorder, and it takes your password once.",
-      [
-        { value: "unlock", name: "unlock", description: "asks for your password" },
-        { value: "skip", name: "skip", description: "record steamvr's view for now" },
-      ],
-    )
-    if (pick === "skip") return
-  }
+/** Gets the password, before anything else happens. Helps set one if
+ * steamos doesn't have one yet. */
+async function authorize(screen: Screen): Promise<boolean> {
   if (!headset.hasPassword()) {
     const pick = await screen.ask(
       "pick a password first",
-      "steamos doesn't have a password yet, and this needs one. remember it: steamos asks for it for things like this.",
+      "steamos doesn't have a password yet, and recording the panels needs one. remember it: steamos asks for it for things like this.",
       [
         { value: "set", name: "set a password", description: "you'll type it twice" },
         { value: "skip", name: "skip", description: "record steamvr's view for now" },
       ],
     )
-    if (pick === "skip") return
-    if (!screen.handOver(headset.setPassword)) {
-      await screen.ask("no password was set", "so the panels stay locked. run this again any time.", [done], "bad")
-      return
+    if (pick === "skip") return false
+    if (!(await screen.handOver(headset.setPassword))) {
+      await screen.ask("no password was set", "so it'll record steamvr's view for now. run this again any time.", [done], "bad")
+      return false
     }
   }
-  if (!screen.handOver(headset.unlock)) {
-    await screen.ask("that didn't work", "it records steamvr's view for now. run this again to try again.", [done], "bad")
+  while (!(await screen.handOver(headset.authorize))) {
+    const pick = await screen.ask("no password", "that didn't work. try again, or go on and record steamvr's view for now.", [
+      { value: "retry", name: "try again", description: "" },
+      { value: "skip", name: "go on without it", description: "record steamvr's view for now" },
+    ], "bad")
+    if (pick === "skip") return false
+  }
+  return true
+}
+
+/** The permission that lets the recorder read the panels. */
+async function unlock(screen: Screen): Promise<boolean> {
+  screen.busy("framecorder", "unlocking the panels")
+  try {
+    await headset.unlock()
+    return true
+  } catch {
+    await screen.ask("couldn't unlock the panels", "it records steamvr's view for now. run this again to try again.", [done], "bad")
+    return false
   }
 }
 
@@ -91,6 +107,8 @@ async function remove(screen: Screen): Promise<void> {
 }
 
 const screen = await Screen.open()
+// konsole closed: there's no one left to ask, and the terminal's gone
+process.on("SIGHUP", () => process.exit(129))
 try {
   await main(screen)
 } catch (e) {

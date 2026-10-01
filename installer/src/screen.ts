@@ -3,12 +3,11 @@
 
 import {
   BoxRenderable,
-  SelectRenderable,
-  SelectRenderableEvents,
   TextAttributes,
   TextRenderable,
   createCliRenderer,
   type CliRenderer,
+  type KeyEvent,
 } from "@opentui/core"
 
 export const color = {
@@ -40,34 +39,64 @@ export class Screen {
   private constructor(private renderer: CliRenderer) {}
 
   static async open(): Promise<Screen> {
-    const renderer = await createCliRenderer({ exitOnCtrlC: true })
+    const renderer = await createCliRenderer({ exitOnCtrlC: true, useMouse: true })
     renderer.setBackgroundColor(color.base)
     return new Screen(renderer)
   }
 
-  /** Shows the words and waits for one of the choices. */
+  /** Shows the words and waits for one of the choices: a click (there's no
+   * keyboard in steamvr), or the arrow keys and enter. */
   ask<T extends string>(heading: string, body: string, choices: Choice<T>[], tone: Tone = "normal"): Promise<T> {
     const panel = this.show(heading, body, tone)
-    const list = new SelectRenderable(this.renderer, {
-      options: choices,
-      // a name and a description each
-      height: choices.length * 2,
-      width: "100%",
-      backgroundColor: color.base,
-      focusedBackgroundColor: color.base,
-      selectedBackgroundColor: color.surface,
-      textColor: color.subtext,
-      focusedTextColor: color.subtext,
-      selectedTextColor: color.mauve,
-      descriptionColor: color.overlay,
-      selectedDescriptionColor: color.subtext,
-    })
-    panel.add(list)
-    panel.add(this.hint("↑↓ choose · enter to go · ctrl+c to quit"))
-    list.focus()
     return new Promise((resolve) => {
-      list.on(SelectRenderableEvents.ITEM_SELECTED, (_index: number, option: Choice<T>) => resolve(option.value))
+      let active = 0
+      let picked = false
+      const buttons = choices.map((choice, i) => this.button(choice, () => highlight(i), () => pick(i)))
+      const paint = () =>
+        buttons.forEach(({ box, name }, i) => {
+          box.borderColor = i === active ? color.mauve : color.surface
+          box.backgroundColor = i === active ? color.surface : color.base
+          name.fg = i === active ? color.mauve : color.text
+        })
+      const highlight = (i: number) => {
+        active = i
+        paint()
+      }
+      const pick = (i: number) => {
+        if (picked) return
+        picked = true
+        this.renderer.keyInput.off("keypress", keys)
+        // let the click finish going through opentui first: handing the
+        // terminal over in the middle of it leaves the terminal stuck
+        setTimeout(() => resolve(choices[i].value), 50)
+      }
+      const keys = (key: KeyEvent) => {
+        const step = { up: -1, left: -1, down: 1, right: 1, tab: key.shift ? -1 : 1 }[key.name]
+        if (step) highlight((active + step + choices.length) % choices.length)
+        if (key.name === "return" || key.name === "enter") pick(active)
+      }
+      for (const { box } of buttons) panel.add(box)
+      panel.add(this.hint(choices.length > 1 ? "click one, or use the arrow keys and enter" : "click it, or press enter"))
+      paint()
+      this.renderer.keyInput.on("keypress", keys)
     })
+  }
+
+  private button(choice: Choice<string>, over: () => void, up: () => void): { box: BoxRenderable; name: TextRenderable } {
+    const box = new BoxRenderable(this.renderer, {
+      width: "100%",
+      border: true,
+      borderStyle: "rounded",
+      paddingX: 2,
+      flexDirection: "row",
+      gap: 2,
+      onMouseOver: over,
+      onMouseUp: up,
+    })
+    const name = new TextRenderable(this.renderer, { content: choice.name, attributes: TextAttributes.BOLD })
+    box.add(name)
+    if (choice.description) box.add(new TextRenderable(this.renderer, { content: choice.description, fg: color.overlay }))
+    return { box, name }
   }
 
   /** Shows the words with a spinner, until the next screen. */
@@ -83,12 +112,16 @@ export class Screen {
   }
 
   /** Hands the terminal to something that asks for itself, like sudo. */
-  handOver<R>(run: () => R): R {
+  async handOver<R>(run: () => Promise<R>): Promise<R> {
     this.stopSpinner()
     this.renderer.suspend()
+    // ctrl+c there cancels the prompt, it shouldn't take the installer with it
+    const stay = () => {}
+    process.on("SIGINT", stay)
     try {
-      return run()
+      return await run()
     } finally {
+      process.off("SIGINT", stay)
       this.renderer.resume()
     }
   }
