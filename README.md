@@ -72,6 +72,8 @@ without that permission framecorder still works, it records steamvr's headset vi
 
 unlocking puts the panel helper in place: `framecorder-grab`, a tiny program owned by root in `~/.local/lib/framecorder` with `cap_sys_admin` (reading another process's framebuffers needs it). it's the only part of framecorder with a permission, and it does one thing: turn a framebuffer into a dmabuf the recorder can read, passed over a socket (`src/grab.rs`). a permission lives on the file it's given to, and updates replace files, so it's not the recorder that holds it: updates never touch the helper and the panels stay unlocked.
 
+work happens on `dev`. `main` is what's released: the site deploys from it, and everything people download comes from its releases, so pushing to `dev` changes nothing for anyone. when it's time for a release, merge `dev` into `main`, bump the versions (`Cargo.toml`, `sync/Cargo.toml`, `app/Cargo.toml`, `app/tauri.conf.json`), and make the release.
+
 making a release, on the headset: `packaging/release.sh`, then put both files in `dist/` (the tarball and its `.sha256`) on a github release. the site workflow copies them to the site's `/dl`, where the installer and the updater get them.
 
 or build it yourself. on the headset, with developer mode on and ssh working:
