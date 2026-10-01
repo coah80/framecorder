@@ -64,29 +64,86 @@ impl Capture {
     }
 }
 
+/// How long to wait before connecting again after losing PipeWire.
+const RECONNECT_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn run(
     sources: Vec<Source>,
     tx: Sender<Msg>,
     stop_rx: pw::channel::Receiver<Terminate>,
     ready: &std::sync::mpsc::Sender<Result<()>>,
 ) -> Result<()> {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None).context("creating PipeWire loop")?;
-    let context = pw::context::ContextRc::new(&mainloop, None).context("creating PipeWire context")?;
-    let core = context.connect_rc(None).context("connecting to PipeWire")?;
-
+    let stopping = Rc::new(Cell::new(false));
     let _stop = stop_rx.attach(mainloop.loop_(), {
-        let mainloop = mainloop.clone();
-        move |_| mainloop.quit()
+        let (mainloop, stopping) = (mainloop.clone(), stopping.clone());
+        move |_| {
+            stopping.set(true);
+            mainloop.quit()
+        }
     });
 
+    // PipeWire restarts now and then (on the Frame, starting a game can do
+    // it), and streams on the old connection just go quiet. So: connect,
+    // capture until the connection's lost, and connect again, until stopped.
+    let mut first = true;
+    loop {
+        match capture(&mainloop, &sources, &tx, first.then_some(ready)) {
+            Ok(()) => {}
+            Err(e) if first => return Err(e),
+            Err(e) => log::warn!("audio: {e:#}, trying again"),
+        }
+        first = false;
+        if stopping.get() {
+            return Ok(());
+        }
+        // a second's pause, while still hearing about being stopped
+        let timer = mainloop.loop_().add_timer({
+            let mainloop = mainloop.clone();
+            move |_| mainloop.quit()
+        });
+        let _ = timer.update_timer(Some(RECONNECT_AFTER), None);
+        mainloop.run();
+        if stopping.get() {
+            return Ok(());
+        }
+    }
+}
+
+/// One connection to PipeWire, capturing until it's lost or we're stopped.
+fn capture(
+    mainloop: &pw::main_loop::MainLoopRc,
+    sources: &[Source],
+    tx: &Sender<Msg>,
+    ready: Option<&std::sync::mpsc::Sender<Result<()>>>,
+) -> Result<()> {
+    let context = pw::context::ContextRc::new(mainloop, None).context("creating PipeWire context")?;
+    let core = context.connect_rc(None).context("connecting to PipeWire")?;
+    let _lost = core
+        .add_listener_local()
+        .error({
+            let mainloop = mainloop.clone();
+            move |id, _seq, _res, message| {
+                if id == pw::core::PW_ID_CORE {
+                    log::warn!("audio: lost PipeWire ({message}), connecting again");
+                    mainloop.quit();
+                }
+            }
+        })
+        .register();
+
     let mut streams = Vec::new();
-    for source in sources {
-        streams.push(open_stream(&core, source, tx.clone())?);
+    for &source in sources {
+        streams.push(open_stream(&core, source, tx.clone(), mainloop.clone())?);
         log::info!("audio: capturing {source:?}");
     }
-
-    let _ = ready.send(Ok(()));
+    if let Some(ready) = ready {
+        let _ = ready.send(Ok(()));
+    }
     mainloop.run();
     drop(streams);
     Ok(())
@@ -94,7 +151,7 @@ fn run(
 
 type Stream<'c> = (pw::stream::StreamBox<'c>, pw::stream::StreamListener<()>);
 
-fn open_stream(core: &pw::core::CoreRc, source: Source, tx: Sender<Msg>) -> Result<Stream<'_>> {
+fn open_stream(core: &pw::core::CoreRc, source: Source, tx: Sender<Msg>, mainloop: pw::main_loop::MainLoopRc) -> Result<Stream<'_>> {
     let mut props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
@@ -115,6 +172,13 @@ fn open_stream(core: &pw::core::CoreRc, source: Source, tx: Sender<Msg>) -> Resu
 
     let listener = stream
         .add_local_listener_with_user_data(())
+        .state_changed(move |_, _, _, new| {
+            // a stream PipeWire's given up on: start over with a fresh connection
+            if let pw::stream::StreamState::Error(e) = new {
+                log::warn!("audio: {source:?} stream failed ({e}), connecting again");
+                mainloop.quit();
+            }
+        })
         .process(move |stream, _| {
             let Some(mut buffer) = stream.dequeue_buffer() else { return };
             let datas = buffer.datas_mut();
