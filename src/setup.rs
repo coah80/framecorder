@@ -111,6 +111,40 @@ pub fn install(release: &Path, home: &Path) -> Result<Vec<String>> {
     Ok(updated)
 }
 
+/// Where framecorder shows up as an app: the "launch program" list on the
+/// Frame's app bar, and desktop mode's app menu. Both read these.
+const DESKTOP_ENTRY: &str = ".local/share/applications/framecorder.desktop";
+const ICON: &str = ".local/share/icons/hicolor/128x128/apps/framecorder.png";
+
+/// Writes framecorder's app menu entry and icon. Launching it opens the tab,
+/// or starts framecorder again if it was closed.
+fn desktop_entry(home: &Path) -> Result<()> {
+    let ui = home.join(".local/bin/framecorder-ui");
+    let entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=framecorder\n\
+         Comment=Records what the Frame's panels show\n\
+         Exec={} --show\n\
+         Icon=framecorder\n\
+         Categories=AudioVideo;Recorder;\n\
+         Terminal=false\n",
+        ui.display()
+    );
+    let files: [(&str, &[u8]); 2] = [(DESKTOP_ENTRY, entry.as_bytes()), (ICON, include_bytes!("../app/icons/128x128.png"))];
+    for (path, bytes) in files {
+        let path = home.join(path);
+        if std::fs::read(&path).is_ok_and(|old| old == bytes) {
+            continue;
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn quiet(program: &str, args: &[&str]) -> bool {
     let done = Command::new(program).args(args).output();
     match done {
@@ -147,6 +181,7 @@ pub fn run(restart_ui: bool) -> Result<Report> {
 
     let was_unlocked = panels_unlocked();
     let updated = install(&release, &home)?;
+    desktop_entry(&home)?;
     // Run by hand, right after the installer asked for the password (sudo
     // remembers it for a bit): puts the panel helper in place, or a newer
     // one. The update timer has no password, so it doesn't try.
@@ -280,7 +315,8 @@ pub fn uninstall() -> Result<()> {
     }
     let files = PROGRAMS.iter().map(|p| home.join(".local/bin").join(p));
     let units = SERVICES.iter().map(|s| home.join(".config/systemd/user").join(s));
-    for file in files.chain(units) {
+    let app = [DESKTOP_ENTRY, ICON].map(|f| home.join(f));
+    for file in files.chain(units).chain(app) {
         match std::fs::remove_file(&file) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("removing {}", file.display())),
             _ => {}
