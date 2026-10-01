@@ -1,6 +1,6 @@
 [package]
 name = "framecorder-app"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Gets framecorder clips off your Steam Frame, over Wi-Fi"
 license = "MIT"
