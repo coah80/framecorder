@@ -111,6 +111,8 @@ struct EyeModel {
     t: f64,
     b: f64,
     roll: f64,
+    /// Level view direction -> the compositor's canted eye (see `cant`).
+    cant: [[f64; 3]; 3],
     /// Panel -> render target, sampled on a grid, per channel.
     forward: Vec<[[f64; 2]; 3]>,
     /// Render target spots the compositor never draws.
@@ -123,6 +125,7 @@ impl EyeModel {
     fn new(vr: &OpenVr, eye: usize) -> Result<Self> {
         let proj = vr.projection(eye);
         let roll = vr.eye_roll(eye);
+        let cant = cant(eye);
         log::info!(
             "eye {eye} projection: {proj:?}, render target {:?}, roll {:.2}°",
             vr.render_target_size(),
@@ -166,6 +169,7 @@ impl EyeModel {
             t: proj.top as f64,
             b: proj.bottom as f64,
             roll,
+            cant,
             forward,
             hidden,
             covered,
@@ -177,16 +181,30 @@ impl EyeModel {
     fn target(&self, tx: f64, ty: f64) -> [f64; 2] {
         let (s, c) = (-self.roll).sin_cos();
         let (rx, ry) = (tx * c - ty * s, tx * s + ty * c);
+        let m = &self.cant;
+        let d = [0, 1, 2].map(|i| m[i][0] * rx + m[i][1] * ry + m[i][2]);
+        if d[2] <= 0.0 {
+            return [f64::NAN; 2];
+        }
+        let (rx, ry) = (d[0] / d[2], d[1] / d[2]);
         [(rx - self.l) / (self.r - self.l), (ry - self.t) / (self.b - self.t)]
     }
 
     /// Whether a render target spot is on the panel and actually drawn.
-    fn shown(&self, uv: [f64; 2]) -> bool {
-        if !(0.0..1.0).contains(&uv[0]) || !(0.0..1.0).contains(&uv[1]) {
-            return false;
-        }
-        let i = (uv[1] * MASK_SIZE as f64) as usize * MASK_SIZE + (uv[0] * MASK_SIZE as f64) as usize;
-        self.covered[i] && !self.hidden[i]
+    /// Whether a view direction (tangents, level) ends up in the video: the
+    /// game drew it (its render target and hidden area are level, they're
+    /// the game's) and it lands on the panel (the distortion is the
+    /// compositor's, so canted).
+    fn shown(&self, tx: f64, ty: f64) -> bool {
+        let mask = |uv: [f64; 2], m: &[bool]| {
+            if !(0.0..1.0).contains(&uv[0]) || !(0.0..1.0).contains(&uv[1]) {
+                return false;
+            }
+            m[(uv[1] * MASK_SIZE as f64) as usize * MASK_SIZE + (uv[0] * MASK_SIZE as f64) as usize]
+        };
+        let level = [(tx - self.l) / (self.r - self.l), (ty - self.t) / (self.b - self.t)];
+        let drawn = (0.0..1.0).contains(&level[0]) && (0.0..1.0).contains(&level[1]) && !mask(level, &self.hidden);
+        drawn && mask(self.target(tx, ty), &self.covered)
     }
 
     /// Panel position (eye local) that shows this render target spot in channel `c`.
@@ -214,7 +232,7 @@ impl EyeModel {
                     (cx + tan_h, cy + f * tan_v),
                 ]
                 .iter()
-                .all(|&(x, y)| self.shown(self.target(x, y)))
+                .all(|&(x, y)| self.shown(x, y))
             })
         };
         let limit = (-self.l).max(self.r).max((-self.t).max(self.b) / aspect);
@@ -312,6 +330,53 @@ pub fn flat(out_w: u32, out_h: u32, src_w: u32, src_h: u32) -> Lut {
 /// One eye as a flat 2D picture: the lens distortion SteamVR applied gets
 /// undone, cropped to the output's aspect ratio around straight ahead. With
 /// no field of view given, it picks the widest one that has no black edges.
+/// How the compositor's eye is turned from the one apps render, which is
+/// level: the Frame's displays are canted, about 10° of roll each way plus a
+/// few degrees of yaw and pitch. SteamVR doesn't tell apps (it's not in the
+/// eye to head transform), it's in the headset's factory calibration, which
+/// is also what `vrcmd --info` shows as the "compositor residual". Without
+/// it the video comes out tilted. Identity when there's no calibration.
+fn cant(eye: usize) -> [[f64; 3]; 3] {
+    const LEVEL: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let Some(m) = calibrated_eye_to_head(eye) else {
+        log::info!("eye {eye}: no headset calibration found, assuming the display isn't canted");
+        return LEVEL;
+    };
+    // The calibration's x and y point the other way from ours (it's a 180°
+    // turn about the view axis, the head's plus_x and plus_z are -1 in it).
+    // Checked against SteamVR's own level headset view and between the eyes:
+    // level within about a degree, and the eyes line up but for their
+    // spacing.
+    let q: [[f64; 3]; 3] = std::array::from_fn(|i| {
+        let sign = if i < 2 { -1.0 } else { 1.0 };
+        std::array::from_fn(|j| sign * m[i][j])
+    });
+    log::info!(
+        "eye {eye}: display canted {:.1}° roll, {:.1}° yaw, {:.1}° pitch (undoing it)",
+        q[1][0].atan2(q[0][0]).to_degrees(),
+        q[0][2].atan2(q[2][2]).to_degrees(),
+        q[1][2].atan2(q[2][2]).to_degrees()
+    );
+    q
+}
+
+/// The headset's factory calibration of where each eye looks, from the
+/// tracking config SteamVR keeps per headset.
+fn calibrated_eye_to_head(eye: usize) -> Option<[[f64; 3]; 3]> {
+    let home = std::env::var_os("HOME")?;
+    let dir = std::path::Path::new(&home).join(".config/openvr/config/cv");
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path().join("config.json")) else { continue };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let rows = &json["tracking_to_eye_transform"][eye]["eye_to_head"];
+        let m: Option<Vec<Vec<f64>>> = rows.as_array().and_then(|r| r.iter().map(|row| row.as_array()?.iter().map(|v| v.as_f64()).collect()).collect());
+        if let Some(m) = m.filter(|m| m.len() == 3 && m.iter().all(|r| r.len() == 3)) {
+            return Some(std::array::from_fn(|i| std::array::from_fn(|j| m[i][j])));
+        }
+    }
+    None
+}
+
 pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
     let model = EyeModel::new(vr, eye)?;
     let aspect = out_h as f64 / out_w as f64;
