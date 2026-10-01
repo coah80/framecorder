@@ -183,6 +183,12 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         bail!("couldn't unpack {}", payload.display());
     }
 
+    // Installed from the normal place (the installer passes FRAMECORDER_DL
+    // through when it's not): back on releases, see SOURCE. Not for updates,
+    // they come from wherever it was installed from.
+    if restart_ui && std::env::var_os("FRAMECORDER_DL").is_none() {
+        let _ = std::fs::remove_file(home.join(SOURCE));
+    }
     let was_unlocked = panels_unlocked();
     let updated = install(&release, &home)?;
     desktop_entry(&home)?;

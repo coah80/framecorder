@@ -33,11 +33,11 @@ installer/build.sh "$OUT" >/dev/null
 
 commit=$(git rev-parse --short HEAD)
 notes="the dev build, from dev at $commit. not a release: see AGENTS.md for installing it."
-if gh release view "$TAG" >/dev/null 2>&1; then
-    gh release edit "$TAG" --prerelease --target dev --notes "$notes" >/dev/null
+if gh release view "$TAG" </dev/null >/dev/null 2>&1; then
+    gh release edit "$TAG" --prerelease --target dev --notes "$notes" </dev/null >/dev/null
 else
-    gh release create "$TAG" --prerelease --target dev --title "dev build" --notes "$notes" >/dev/null
+    gh release create "$TAG" --prerelease --target dev --title "dev build" --notes "$notes" </dev/null >/dev/null
 fi
-gh release upload "$TAG" --clobber "$OUT"/framecorder-arm64.tar.gz "$OUT"/framecorder-arm64.tar.gz.sha256 \
+gh release upload "$TAG" --clobber </dev/null "$OUT"/framecorder-arm64.tar.gz "$OUT"/framecorder-arm64.tar.gz.sha256 \
     "$OUT"/framecorder-installer.zst "$OUT"/framecorder-installer.zst.sha256
 echo "dev build is up, from $commit"
