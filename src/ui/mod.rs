@@ -49,6 +49,8 @@ const CLIP_COOLDOWN: Duration = Duration::from_secs(1);
 const SYNC_POLL: Duration = Duration::from_secs(3);
 
 static QUIT: AtomicBool = AtomicBool::new(false);
+/// Set when an update replaced this program, to restart into it.
+static UPDATED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
     QUIT.store(true, Ordering::SeqCst);
@@ -113,6 +115,8 @@ struct App {
     unlocked: bool,
     /// Remove was tapped once, the next tap does it.
     uninstall_armed: bool,
+    /// An update took the panels' permission away.
+    relocked: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -155,8 +159,8 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let sync = SyncView { available: state != "setup-no-sync", devices: &devices, pairing };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover = (state == "idle").then_some(Action::Record);
-    let unlocked = !matches!(state, "locked-out" | "setup-locked-out");
-    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, uninstall_armed: state == "remove" });
+    let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
+    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, uninstall_armed: state == "remove", relocked: state == "relocked" });
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
 }
@@ -221,6 +225,7 @@ pub fn run() -> Result<()> {
         clipped_at: None,
         unlocked: crate::setup::recorder().is_ok_and(|r| crate::setup::unlocked(&r)),
         uninstall_armed: false,
+        relocked: crate::setup::relocked(),
     };
     log::info!("dashboard tab ready");
 
@@ -239,6 +244,13 @@ pub fn run() -> Result<()> {
         app.manage_recorder();
         app.auto_pause(tab_visible);
         app.check_recorder();
+        // An update swapped this program out. Restart into it once nothing's
+        // being recorded and nobody's using the tab.
+        if !tab_visible && app.recording.is_none() && replaced() {
+            log::info!("framecorder was updated, restarting into the new version");
+            UPDATED.store(true, Ordering::SeqCst);
+            break;
+        }
         if tab_visible {
             app.check_sync();
         } else if matches!(app.screen, Screen::Settings(_)) {
@@ -300,7 +312,17 @@ pub fn run() -> Result<()> {
     drop(tab);
     drop(vr);
     drop(gpu_texture);
+    if UPDATED.load(Ordering::Relaxed) {
+        // Not a clean exit, so systemd (Restart=on-failure) starts the new one.
+        std::process::exit(75);
+    }
     Ok(())
+}
+
+/// Whether the program file this was started from has been replaced, which
+/// is how updates land (see setup::place).
+fn replaced() -> bool {
+    std::fs::read_link("/proc/self/exe").is_ok_and(|p| p.to_string_lossy().ends_with(" (deleted)"))
 }
 
 impl App {
@@ -593,8 +615,10 @@ impl App {
         }
         self.sync.checked = Instant::now();
         let unlocked = crate::setup::recorder().is_ok_and(|r| crate::setup::unlocked(&r));
-        if unlocked != self.unlocked {
+        let relocked = crate::setup::relocked();
+        if unlocked != self.unlocked || relocked != self.relocked {
             self.unlocked = unlocked;
+            self.relocked = relocked;
             self.dirty = true;
         }
         let available = pairing::available();
@@ -654,6 +678,7 @@ impl App {
             hover: self.hover,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             uninstall_armed: self.uninstall_armed,
+            relocked: self.relocked,
         }
     }
 }

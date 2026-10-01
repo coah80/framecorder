@@ -1,0 +1,12 @@
+[Unit]
+Description=framecorder update
+# installs the latest release if there's a new one. it swaps the files in,
+# the dashboard tab restarts into the new version once nothing's recording
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/framecorder-setup --update
+# whatever's being played comes first
+Nice=19
+IOSchedulingClass=idle

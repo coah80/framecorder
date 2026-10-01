@@ -111,6 +111,8 @@ pub struct Model<'a> {
     pub note: Option<(&'a str, bool)>,
     /// Remove was tapped once, the next tap does it.
     pub uninstall_armed: bool,
+    /// An update took the panels' permission away.
+    pub relocked: bool,
 }
 
 impl Model<'_> {
@@ -163,6 +165,7 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model) {
     let locked_here = m.locked() && matches!(m.screen, Screen::Settings(s) if s != Section::Sync);
     let (text, color, text_color) = match m.note {
         _ if locked_here => ("Recording. Stop it to change these.", YELLOW, YELLOW),
+        _ if m.relocked && !m.unlocked => (RELOCKED, YELLOW, YELLOW),
         Some((text, true)) => (text, GREEN, SUBTEXT0),
         Some((text, false)) => (text, RED, RED),
         None => return,
@@ -172,6 +175,9 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model) {
     c.fill_circle(PAD + 6.0, y - 6.0, 5.0, color, 1.0);
     c.text(f, Face::Body, 17.0, PAD + 22.0, y, text, text_color, 1.0);
 }
+
+/// An update replaced the recorder, which drops its permission.
+const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer unlocks the panels again.";
 
 pub fn clock(d: Duration) -> String {
     let s = d.as_secs();

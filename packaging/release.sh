@@ -5,8 +5,9 @@
 #
 #   packaging/release.sh
 #
-# then put dist/framecorder-arm64.tar.gz on a github release. the site
-# workflow copies it to the site's /dl, which is where site/install gets it.
+# then put both files from dist/ on a github release. the site workflow
+# copies them to the site's /dl, where site/install gets the release and
+# installed headsets look for updates (see setup::update).
 set -eu
 
 OUT=dist
@@ -24,12 +25,16 @@ cargo build --release
 (cd sync && cargo build --release)
 
 mkdir -p "$WORK/payload/bin" "$WORK/payload/services" "$WORK/release" "$OUT"
-cp target/release/framecorder target/release/framecorder-ui sync/target/release/framecorder-sync "$WORK/payload/bin/"
-cp packaging/framecorder-ui.service packaging/framecorder-sync.service "$WORK/payload/services/"
+cp target/release/framecorder target/release/framecorder-ui target/release/framecorder-setup \
+    sync/target/release/framecorder-sync "$WORK/payload/bin/"
+cp packaging/framecorder-ui.service packaging/framecorder-sync.service \
+    packaging/framecorder-update.service packaging/framecorder-update.timer "$WORK/payload/services/"
 tar -cf "$WORK/release/payload.tar" -C "$WORK/payload" bin services
 cp target/release/framecorder-setup "$WORK/release/"
 
 TARBALL="$OUT/framecorder-arm64.tar.gz"
 tar -czf "$TARBALL" --owner=0 --group=0 -C "$WORK/release" framecorder-setup payload.tar
-ls -l "$TARBALL"
-echo "put it on a github release"
+# what installed headsets check every few hours for an update
+(cd "$OUT" && sha256sum framecorder-arm64.tar.gz >framecorder-arm64.tar.gz.sha256)
+ls -l "$OUT"
+echo "put both on a github release"

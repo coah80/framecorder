@@ -66,13 +66,13 @@ on the frame, in desktop mode, open konsole and run:
 curl -fsSL https://framecorder.coah80.com/install | sh
 ```
 
-(over ssh from a computer works too.) it's a little terminal installer: it downloads the latest release, puts everything in place, starts it, and offers the one permission that lets the recorder read the panels. that's `cap_sys_admin`, it takes your password, and if steamos doesn't have one yet it has you pick one first. run it again to update or remove framecorder. the script is `site/install`.
+(over ssh from a computer works too.) it's a little terminal installer: it downloads the latest release, puts everything in place, starts it, and offers the one permission that lets the recorder read the panels. that's `cap_sys_admin`, it takes your password, and if steamos doesn't have one yet it has you pick one first. after that it updates itself: a timer (`framecorder-update.timer`) looks for a new release every 6 hours, swaps the files in, and the tab restarts into the new version once nothing's recording. `systemctl --user disable --now framecorder-update.timer` turns that off. run the installer again to update right away or remove framecorder. the script is `site/install`.
 
-without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once the permission's there. updates that replace the recorder drop the permission, the installer offers it again.
+without that permission framecorder still works, it records steamvr's headset view instead (16:9, left eye, about 0.45 ms of the game's gpu a frame). the panels give you any shape and both eyes, and cost the game nothing. the tab switches to the panels on its own once the permission's there. updates that replace the recorder drop the permission (only root can give it back), so the tab says so and the installer offers it again.
 
 there's also a flatpak for installing from discover without a terminal (`packaging/flatpak`). it can't ask for a password, so it's steamvr's view only.
 
-making a release, on the headset: `packaging/release.sh`, then put `dist/framecorder-arm64.tar.gz` on a github release. the site workflow copies it to the site's `/dl`, where the installer gets it.
+making a release, on the headset: `packaging/release.sh`, then put both files in `dist/` (the tarball and its `.sha256`) on a github release. the site workflow copies them to the site's `/dl`, where the installer and the updater get them.
 
 or build it yourself. on the headset, with developer mode on and ssh working:
 

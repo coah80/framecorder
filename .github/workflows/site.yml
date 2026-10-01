@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p site/dl
-          for file in framecorder-arm64.tar.gz framecorder.flatpak; do
+          for file in framecorder-arm64.tar.gz framecorder-arm64.tar.gz.sha256 framecorder.flatpak; do
             gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl \
               || echo "no $file on the latest release yet"
           done

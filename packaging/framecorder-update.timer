@@ -1,0 +1,12 @@
+[Unit]
+Description=look for a framecorder update every few hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+# so every headset doesn't ask at the same moment
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -6,8 +6,9 @@
 #
 # it downloads the latest release, installs it, and offers the one permission
 # that lets the recorder read the panels. that takes your password, and it
-# helps set one if steamos doesn't have one yet. run it again to update or
-# remove framecorder.
+# helps set one if steamos doesn't have one yet. after that framecorder
+# updates itself (see framecorder-update.timer). run this again to update
+# right away or remove framecorder.
 #
 # everything happens in main, called on the last line: sh has read the whole
 # script by then, so the prompts can have the terminal instead of curl's pipe.
@@ -66,14 +67,19 @@ install_release() {
     work=$(mktemp -d) || fail "couldn't make a folder to download into."
     trap 'rm -rf "$work"' EXIT
     busy "downloading framecorder..."
-    curl -fsSL "$URL" | tar -xz -C "$work" \
+    curl -fsSL -o "$work/release.tar.gz" "$URL" && sum=$(curl -fsSL "$URL.sha256" | cut -d' ' -f1) \
         || fail "couldn't download framecorder. is the frame online?"
+    [ "$(sha256sum "$work/release.tar.gz" | cut -d' ' -f1)" = "$sum" ] \
+        || fail "the download got mangled on the way. run this again."
+    tar -xzf "$work/release.tar.gz" -C "$work" || fail "couldn't unpack the download."
     busy "installing..."
     if ! out=$("$work/framecorder-setup" 2>&1); then
         fail "framecorder couldn't be installed:
 
 $(printf '%s\n' "$out" | tail -n 6)"
     fi
+    # so the updater knows this one's installed
+    printf '%s\n' "$sum" >"$HOME/.local/share/framecorder/installed.sha256"
 }
 
 # steamos starts out with no password, and sudo needs one
@@ -97,6 +103,7 @@ it's one permission on the recorder (cap_sys_admin), and it takes your password 
     clear
     echo "your password, for sudo:"
     if sudo setcap cap_sys_admin+ep "$BIN/framecorder"; then
+        rm -f "$HOME/.local/share/framecorder/relock"
         # the tab picks the panels when it starts the recorder
         systemctl --user try-restart framecorder-ui.service 2>/dev/null
     else
@@ -111,7 +118,7 @@ install() {
 
 put the headset on and open the steamvr dashboard: there's a framecorder tab with the record button.
 
-run this again to update framecorder or remove it."
+it updates itself from now on. run this again to remove it."
 }
 
 remove() {

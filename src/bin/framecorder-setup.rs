@@ -6,15 +6,19 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_target(false)
         .init();
-    match framecorder::setup::run() {
-        Ok(report) => {
+    let result = match std::env::args().nth(1).as_deref() {
+        // What the update timer runs, every few hours.
+        Some("--update") => framecorder::setup::update(),
+        // The new release's installer, run by the old one's --update.
+        Some("--update-install") => framecorder::setup::run(false).map(|_| ()),
+        _ => framecorder::setup::run(true).map(|report| {
             for line in report.lines() {
                 log::info!("{line}");
             }
-        }
-        Err(e) => {
-            log::error!("{e:#}");
-            std::process::exit(1);
-        }
+        }),
+    };
+    if let Err(e) = result {
+        log::error!("{e:#}");
+        std::process::exit(1);
     }
 }

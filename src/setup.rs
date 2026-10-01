@@ -9,8 +9,16 @@ use anyhow::{bail, Context, Result};
 
 /// The release's files, packed next to the installer.
 const PAYLOAD: &str = "payload.tar";
-const PROGRAMS: [&str; 3] = ["framecorder", "framecorder-ui", "framecorder-sync"];
-const SERVICES: [&str; 2] = ["framecorder-ui.service", "framecorder-sync.service"];
+const PROGRAMS: [&str; 4] = ["framecorder", "framecorder-ui", "framecorder-sync", "framecorder-setup"];
+const SERVICES: [&str; 4] =
+    ["framecorder-ui.service", "framecorder-sync.service", "framecorder-update.service", "framecorder-update.timer"];
+/// The latest release, and its checksum next to it at `.sha256`.
+const RELEASE_URL: &str = "https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz";
+/// The checksum of the release that's installed, under the home folder.
+const INSTALLED: &str = ".local/share/framecorder/installed.sha256";
+/// Left by an update that replaced an unlocked recorder, which drops its
+/// permission, so the tab can say how to get it back.
+pub const RELOCK: &str = ".local/share/framecorder/relock";
 /// What lets the recorder read what's on the display.
 const CAPABILITY: &str = "cap_sys_admin+ep";
 
@@ -44,6 +52,11 @@ pub fn unlocked(program: &Path) -> bool {
     let Ok(path) = std::ffi::CString::new(program.as_os_str().as_bytes()) else { return false };
     let size = unsafe { libc::getxattr(path.as_ptr(), c"security.capability".as_ptr(), std::ptr::null_mut(), 0) };
     size > 0
+}
+
+/// Whether an update took the recorder's permission away (see `RELOCK`).
+pub fn relocked() -> bool {
+    home().is_ok_and(|h| h.join(RELOCK).exists())
 }
 
 /// Where the recorder gets installed.
@@ -102,7 +115,10 @@ fn quiet(program: &str, args: &[&str]) -> bool {
     }
 }
 
-pub fn run() -> Result<Report> {
+/// Installs the release next to this program. `restart_ui` gets the tab
+/// going on the new version right away; updates leave that to the tab, which
+/// restarts itself when nothing's being recorded.
+pub fn run(restart_ui: bool) -> Result<Report> {
     let here = std::env::current_exe()?.parent().map(Path::to_path_buf).context("no folder to install from")?;
     let payload = here.join(PAYLOAD);
     if !payload.exists() {
@@ -117,20 +133,85 @@ pub fn run() -> Result<Report> {
         bail!("couldn't unpack {}", payload.display());
     }
 
-    let updated = install(&release, &home)?;
     let recorder = recorder()?;
+    let was_unlocked = unlocked(&recorder);
+    let updated = install(&release, &home)?;
     if !unlocked(&recorder) {
         // Works where the headset lets this user be root without a password.
         // Where it doesn't, the tab explains the one command that's needed.
         quiet("sudo", &["-n", "setcap", CAPABILITY, &recorder.to_string_lossy()]);
     }
 
+    let relock = home.join(RELOCK);
+    if unlocked(&recorder) {
+        let _ = std::fs::remove_file(&relock);
+    } else if was_unlocked {
+        let _ = std::fs::write(&relock, "");
+    }
+
     quiet("systemctl", &["--user", "daemon-reload"]);
-    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"]);
+    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service", "framecorder-update.timer"]);
+    if updated.iter().any(|u| u == "framecorder-sync") {
+        quiet("systemctl", &["--user", "try-restart", "framecorder-sync.service"]);
+    }
     quiet("systemctl", &["--user", "enable", "framecorder-ui.service"]);
-    // Starts with SteamVR from now on; this gets it going right now, on the tab.
-    quiet("systemctl", &["--user", "restart", "framecorder-ui.service"]);
+    // It starts with SteamVR from now on. Starting it while SteamVR is off
+    // would start SteamVR too (it's bound to it), so only when it's on.
+    if restart_ui && quiet("systemctl", &["--user", "is-active", "--quiet", "steamvr.service"]) {
+        quiet("systemctl", &["--user", "restart", "framecorder-ui.service"]);
+    }
     Ok(Report { updated, unlocked: unlocked(&recorder) })
+}
+
+/// What the update timer runs: installs the latest release, unless it's the
+/// one that's installed already.
+pub fn update() -> Result<()> {
+    let home = home()?;
+    let marker = home.join(INSTALLED);
+    // FRAMECORDER_URL points it at another release, for testing one.
+    let url = std::env::var("FRAMECORDER_URL").unwrap_or_else(|_| RELEASE_URL.to_string());
+    let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
+    let latest = listed
+        .split_whitespace()
+        .next()
+        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .context("the release's checksum doesn't look like one")?
+        .to_ascii_lowercase();
+    if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == latest) {
+        log::info!("framecorder is up to date");
+        return Ok(());
+    }
+
+    let work = home.join(".cache/framecorder-update");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work)?;
+    let tarball = work.join("release.tar.gz");
+    let tarball_path = tarball.to_string_lossy();
+    output("curl", &["-fsSL", "-o", &tarball_path, &url]).context("downloading the update")?;
+    let got = output("sha256sum", &[&tarball_path])?;
+    if got.split_whitespace().next() != Some(latest.as_str()) {
+        bail!("the download doesn't match the release's checksum, not installing it");
+    }
+    output("tar", &["-xzf", &tarball_path, "-C", &work.to_string_lossy()])?;
+    // The new release's own installer, so whatever it changed about
+    // installing applies too.
+    let installed = Command::new(work.join("framecorder-setup")).arg("--update-install").status()?;
+    if !installed.success() {
+        bail!("the new release's installer failed");
+    }
+    std::fs::write(&marker, format!("{latest}\n"))?;
+    let _ = std::fs::remove_dir_all(&work);
+    log::info!("updated framecorder");
+    Ok(())
+}
+
+/// Runs a program and hands back what it printed, or why it failed.
+fn output(program: &str, args: &[&str]) -> Result<String> {
+    let out = Command::new(program).args(args).output().with_context(|| format!("running {program}"))?;
+    if !out.status.success() {
+        bail!("{program} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Takes framecorder off the headset: its services, programs, settings and
@@ -150,7 +231,7 @@ pub fn uninstall() -> Result<()> {
         }
     }
     quiet("systemctl", &["--user", "daemon-reload"]);
-    for dir in [".config/framecorder", ".local/share/framecorder", ".local/state/framecorder"] {
+    for dir in [".config/framecorder", ".local/share/framecorder", ".local/state/framecorder", ".cache/framecorder-update"] {
         let dir = home.join(dir);
         match std::fs::remove_dir_all(&dir) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).with_context(|| format!("removing {}", dir.display())),
