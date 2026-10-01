@@ -264,20 +264,49 @@ pub fn unlock() -> Result<()> {
 
 /// What the update timer runs: installs the latest release, unless it's the
 /// one that's installed already.
-pub fn update() -> Result<()> {
-    use_user_manager();
-    let home = home()?;
-    let marker = home.join(INSTALLED);
+/// The newest release where this one came from: its url, checksum, and
+/// version (releases list it under the checksum, older ones didn't).
+struct Latest {
+    url: String,
+    sum: String,
+    version: Option<String>,
+}
+
+fn latest(home: &Path) -> Result<Latest> {
     // FRAMECORDER_URL points it at another release, for testing one.
     let source = std::fs::read_to_string(home.join(SOURCE)).ok().map(|s| format!("{}/framecorder-arm64.tar.gz", s.trim()));
     let url = std::env::var("FRAMECORDER_URL").ok().or(source).unwrap_or_else(|| RELEASE_URL.to_string());
     let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
-    let latest = listed
+    let sum = listed
         .split_whitespace()
         .next()
         .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         .context("the release's checksum doesn't look like one")?
         .to_ascii_lowercase();
+    let version = listed.lines().find_map(|l| l.strip_prefix("version ")).map(|v| v.trim().to_string());
+    Ok(Latest { url, sum, version })
+}
+
+/// Whether there's an update, as JSON for framecorder-sync to hand the apps:
+/// the version that's installed, the newest one, and whether that's not
+/// what's installed.
+pub fn check() -> Result<String> {
+    let home = home()?;
+    let latest = latest(&home)?;
+    let installed = std::fs::read_to_string(home.join(INSTALLED)).ok().map(|s| s.trim().to_string());
+    Ok(serde_json::json!({
+        "installed": env!("CARGO_PKG_VERSION"),
+        "latest": latest.version,
+        "available": installed.as_deref() != Some(latest.sum.as_str()),
+    })
+    .to_string())
+}
+
+pub fn update() -> Result<()> {
+    use_user_manager();
+    let home = home()?;
+    let marker = home.join(INSTALLED);
+    let Latest { url, sum: latest, .. } = self::latest(&home)?;
     if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == latest) {
         log::info!("framecorder is up to date");
         return Ok(());

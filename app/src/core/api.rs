@@ -36,6 +36,20 @@ pub struct Hello {
     pub fingerprint: String,
 }
 
+/// What the Frame says about framecorder updates.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct UpdateStatus {
+    /// The version on the Frame.
+    pub installed: String,
+    /// The newest one, when the release says (older ones didn't).
+    pub latest: Option<String>,
+    /// There's something newer than what's installed.
+    pub available: bool,
+    /// An update's being installed right now.
+    #[serde(default)]
+    pub updating: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Paired {
     pub token: String,
@@ -180,6 +194,23 @@ impl Client {
             Err(ApiError::Refused(403, _)) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+
+    /// Whether there's a framecorder update for the Frame. None from Frames
+    /// older than this, which don't say.
+    pub async fn update_status(&self) -> Result<Option<UpdateStatus>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/update").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(resp) => resp.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Has the Frame install its update now, rather than within a few hours.
+    pub async fn start_update(&self) -> Result<(), ApiError> {
+        let rb = self.request(reqwest::Method::POST, "/update").timeout(REQUEST_TIMEOUT);
+        self.send(rb).await.map(|_| ())
     }
 
     pub async fn events(&self) -> Result<Events, ApiError> {

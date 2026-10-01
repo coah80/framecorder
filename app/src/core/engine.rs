@@ -12,7 +12,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
-use super::api::{ApiError, Client, RemoteClip};
+use super::api::{ApiError, Client, RemoteClip, UpdateStatus};
 use super::discover;
 use super::space;
 use super::store::{Entry, Host, Hosts, Index};
@@ -24,6 +24,10 @@ const UNPAIRED_RETRY: Duration = Duration::from_secs(300);
 const FIND_WINDOW: Duration = Duration::from_secs(3);
 /// How often to look whether there's room again on a full device.
 const FULL_RETRY: Duration = Duration::from_secs(60);
+/// How often to ask a connected Frame whether there's a framecorder update,
+/// and how often while one's being installed.
+const UPDATE_CHECK: Duration = Duration::from_secs(30 * 60);
+const UPDATE_WATCH: Duration = Duration::from_secs(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +49,8 @@ pub struct Status {
     pub addr: String,
     pub state: State,
     pub message: Option<String>,
+    /// Whether there's a framecorder update for it, once it's said.
+    pub update: Option<UpdateStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -93,6 +99,9 @@ pub struct Engine {
     device_name: String,
     running: Mutex<HashMap<String, Running>>,
     statuses: Mutex<HashMap<String, Status>>,
+    updates: Mutex<HashMap<String, UpdateStatus>>,
+    /// Wakes the update checks, after asking for an update.
+    update_nudge: Arc<Notify>,
 }
 
 pub fn now_unix() -> i64 {
@@ -119,6 +128,8 @@ impl Engine {
             device_name: device_name.to_string(),
             running: Mutex::new(HashMap::new()),
             statuses: Mutex::new(HashMap::new()),
+            updates: Mutex::new(HashMap::new()),
+            update_nudge: Arc::new(Notify::new()),
         })
     }
 
@@ -143,13 +154,16 @@ impl Engine {
         self.hosts()
             .iter()
             .map(|h| {
-                statuses.get(&h.fingerprint).cloned().unwrap_or_else(|| Status {
+                let mut s = statuses.get(&h.fingerprint).cloned().unwrap_or_else(|| Status {
                     fingerprint: h.fingerprint.clone(),
                     name: h.name.clone(),
                     addr: h.addr.clone(),
                     state: State::Connecting,
                     message: None,
-                })
+                    update: None,
+                });
+                s.update = self.updates.lock().unwrap().get(&h.fingerprint).cloned();
+                s
             })
             .collect()
     }
@@ -240,6 +254,7 @@ impl Engine {
             addr: host.addr.clone(),
             state,
             message,
+            update: self.updates.lock().unwrap().get(&host.fingerprint).cloned(),
         };
         self.statuses.lock().unwrap().insert(host.fingerprint.clone(), status.clone());
         self.listener.status(&status);
@@ -360,9 +375,58 @@ impl Engine {
         let err = tokio::select! {
             e = listen => e,
             e = self.download_all(&client, &host, rx) => e,
+            e = self.watch_updates(&client, &host) => e,
         };
         self.listener.busy(false);
         (true, err)
+    }
+
+    /// Keeps asking the Frame whether there's a framecorder update, while
+    /// connected. Frames too old to say get asked once.
+    async fn watch_updates(&self, client: &Client, host: &Host) -> ApiError {
+        loop {
+            let wait = match client.update_status().await {
+                Ok(Some(update)) => {
+                    let watching = update.updating;
+                    self.set_update(host, update);
+                    if watching { UPDATE_WATCH } else { UPDATE_CHECK }
+                }
+                Ok(None) => return std::future::pending().await,
+                Err(e) => {
+                    log::info!("{}: couldn't check for a framecorder update: {e}", host.name);
+                    UPDATE_CHECK
+                }
+            };
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = self.update_nudge.notified() => tokio::time::sleep(UPDATE_WATCH).await,
+            }
+        }
+    }
+
+    fn set_update(&self, host: &Host, update: UpdateStatus) {
+        let changed = self.updates.lock().unwrap().insert(host.fingerprint.clone(), update.clone()) != Some(update);
+        if changed {
+            if let Some(status) = self.statuses().into_iter().find(|s| s.fingerprint == host.fingerprint) {
+                self.statuses.lock().unwrap().insert(host.fingerprint.clone(), status.clone());
+                self.listener.status(&status);
+            }
+        }
+    }
+
+    /// Has the Frame install its framecorder update now. It restarts its
+    /// sync service on the way, so the connection drops and comes back on
+    /// the new version.
+    pub async fn start_update(&self, fingerprint: &str) -> Result<(), String> {
+        let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
+        let client = self.connect(&host).await.map_err(|e| e.to_string())?;
+        client.start_update().await.map_err(|e| e.to_string())?;
+        let current = self.updates.lock().unwrap().get(fingerprint).cloned();
+        if let Some(update) = current {
+            self.set_update(&host, UpdateStatus { updating: true, ..update });
+        }
+        self.update_nudge.notify_waiters();
+        Ok(())
     }
 
     async fn download_all(&self, client: &Client, host: &Host, mut rx: mpsc::UnboundedReceiver<RemoteClip>) -> ApiError {

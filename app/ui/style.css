@@ -122,6 +122,14 @@ main { max-width: 860px; margin: 0 auto; padding: 24px 24px 72px; }
 .frame[data-state="connected"] .dot { background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 15%, transparent); }
 .frame[data-state="connecting"] .dot { background: var(--yellow); animation: pulse 1.4s ease-in-out infinite; }
 .frame .state { font-size: 13px; color: var(--subtext0); }
+.frame .title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.frame .detail { font-size: 13px; color: var(--subtext1); margin-top: 4px; }
+/* "new update!" next to the frame's name */
+.pill {
+  padding: 2px 10px; border-radius: 999px; font: 600 12px var(--body); white-space: nowrap;
+  background: color-mix(in srgb, var(--mauve) 14%, transparent); color: var(--mauve);
+  border: 1px solid color-mix(in srgb, var(--mauve) 35%, transparent);
+}
 .frame.bad { align-items: flex-start; background: color-mix(in srgb, var(--red) 5%, transparent); border-color: color-mix(in srgb, var(--red) 20%, transparent); }
 .frame.bad .dot { background: var(--red); margin-top: 7px; }
 .frame.bad h3 { color: var(--red); }

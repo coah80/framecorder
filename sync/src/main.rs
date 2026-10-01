@@ -10,6 +10,7 @@ mod mdns;
 mod openvr;
 mod server;
 mod throttle;
+mod update;
 mod watch;
 
 use std::net::TcpListener;
@@ -128,6 +129,7 @@ fn run(args: Args) -> std::io::Result<()> {
         devices,
         pairing: devices::Pairing::new(&paths.pairing()),
         throttle,
+        updates: update::Updates::default(),
         connections: AtomicUsize::new(0),
     });
     server::serve(listener, state);

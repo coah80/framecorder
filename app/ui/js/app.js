@@ -60,6 +60,12 @@ async function refresh() {
 
 listen("status", ({ payload }) => {
   const i = ui.hosts.findIndex((h) => h.fingerprint === payload.fingerprint);
+  // an update that was going and isn't anymore: say how it went
+  const was = i >= 0 ? ui.hosts[i].update : null;
+  const now = payload.update;
+  if (was?.updating && now && !now.updating) {
+    toast(now.available ? `${payload.name} couldn't update, it tries again on its own` : `${payload.name} is on framecorder ${now.installed} now`);
+  }
   if (i >= 0) ui.hosts[i] = payload;
   else ui.hosts.push(payload);
   renderStatus(showPairing);

@@ -133,6 +133,12 @@ pub fn unpair(state: State<'_, AppState>, fingerprint: String) -> Result<(), Str
     state.engine.unpair(&fingerprint)
 }
 
+/// Has a Frame install its framecorder update now.
+#[tauri::command]
+pub async fn start_update(state: State<'_, AppState>, fingerprint: String) -> Result<(), String> {
+    state.engine.start_update(&fingerprint).await
+}
+
 #[tauri::command]
 pub fn retry_now(state: State<'_, AppState>) {
     state.engine.retry_now();

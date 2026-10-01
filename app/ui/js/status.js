@@ -1,6 +1,6 @@
 // how each frame is doing: a card per frame.
 
-import { $, ui, el, android, invoke } from "./state.js";
+import { $, ui, el, android, invoke, toast } from "./state.js";
 
 const NEEDS = ["your frame is on", "it's on this wi-fi", "framecorder is running on it"];
 
@@ -15,11 +15,36 @@ function ok(h) {
   const card = el("div", "card frame");
   card.dataset.state = h.state;
   const text = el("div", "grow");
+  const title = el("div", "title");
+  title.append(el("h3", null, h.name));
   text.append(
-    el("h3", null, h.name),
+    title,
     el("p", "state", h.state === "connected" ? "connected. new clips land here on their own" : "looking for it on this network..."),
   );
   card.append(el("span", "dot"), text);
+  const u = h.update;
+  if (u && (u.available || u.updating)) {
+    title.append(el("span", "pill", u.updating ? "updating..." : "new update!"));
+    if (u.updating) {
+      text.append(el("p", "detail", `installing framecorder ${u.latest ?? "update"} on ${h.name}. it reconnects on its own when it's done.`));
+    } else {
+      text.append(el("p", "detail", u.latest ? `framecorder ${u.latest} is out, ${h.name} has ${u.installed}.` : `there's a newer framecorder than ${h.name} has.`));
+      const button = el("button", "btn primary", "update framecorder");
+      button.title = "the frame installs it on its own, it would within a few hours anyway";
+      button.onclick = async () => {
+        button.disabled = true;
+        button.textContent = "starting...";
+        try {
+          await invoke("start_update", { fingerprint: h.fingerprint });
+        } catch (e) {
+          toast(e);
+          button.disabled = false;
+          button.textContent = "update framecorder";
+        }
+      };
+      card.append(button);
+    }
+  }
   return card;
 }
 

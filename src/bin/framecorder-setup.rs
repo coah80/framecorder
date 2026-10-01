@@ -9,6 +9,8 @@ fn main() {
     let result = match std::env::args().nth(1).as_deref() {
         // What the update timer runs, every few hours.
         Some("--update") => framecorder::setup::update(),
+        // Whether there's an update, as JSON, for framecorder-sync.
+        Some("--check") => framecorder::setup::check().map(|json| println!("{json}")),
         // The new release's installer, run by the old one's --update.
         Some("--update-install") => framecorder::setup::run(false).map(|_| ()),
         // The installer's unlock, once it has the password.

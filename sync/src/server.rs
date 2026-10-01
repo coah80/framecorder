@@ -43,6 +43,7 @@ pub struct State {
     pub devices: Arc<Devices>,
     pub pairing: Pairing,
     pub throttle: Arc<Throttle>,
+    pub updates: crate::update::Updates,
     pub connections: AtomicUsize,
 }
 
@@ -157,11 +158,26 @@ fn handle(req: &Request, w: &mut Tls, state: &State) -> io::Result<bool> {
             delete(w, state, id, keep)?;
             Ok(true)
         }
+        ("GET", ["update"]) => {
+            match state.updates.status() {
+                Ok(status) => write_json(w, 200, &status.to_string(), keep)?,
+                Err(e) => write_json(w, 502, &serde_json::json!({ "error": e }).to_string(), keep)?,
+            }
+            Ok(true)
+        }
+        ("POST", ["update"]) => {
+            log::info!("{device} asked for an update");
+            match state.updates.start() {
+                Ok(()) => write_json(w, 202, r#"{"started":true}"#, keep)?,
+                Err(e) => write_json(w, 500, &serde_json::json!({ "error": e }).to_string(), keep)?,
+            }
+            Ok(true)
+        }
         ("GET", ["events"]) => {
             events(w, state, &device, req.bearer().unwrap_or(""))?;
             Ok(false)
         }
-        (_, ["hello" | "pair" | "clips" | "events", ..]) => {
+        (_, ["hello" | "pair" | "clips" | "events" | "update", ..]) => {
             write_error(w, 405, "method not allowed", keep)?;
             Ok(true)
         }

@@ -54,6 +54,7 @@ pub fn run() {
             commands::pair_link,
             commands::unpair,
             commands::retry_now,
+            commands::start_update,
             commands::open_clip,
             commands::reveal_clip,
             commands::share_clip,
