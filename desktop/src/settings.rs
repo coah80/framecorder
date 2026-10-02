@@ -56,7 +56,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
     let first_other = frames.is_empty();
 
     div()
-        .id("settings")
+        .id("settings-page")
         .flex_1()
         .min_w_0()
         .h_full()

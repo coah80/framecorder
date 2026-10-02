@@ -55,7 +55,7 @@ fn header(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
                 .child(seg().children(counts.into_iter().map(|(f, name, n)| {
                     let on = app.filter == f;
                     div()
-                        .id(name)
+                        .id(SharedString::from(format!("filter-{name}")))
                         .flex()
                         .items_center()
                         .gap(px(5.))
@@ -90,7 +90,7 @@ fn seg() -> Div {
 fn layout_button(name: &'static str, on: bool, grid: bool, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let fg = if on { theme::TEXT } else { theme::OVERLAY2 };
     div()
-        .id(name)
+        .id(SharedString::from(format!("layout-{name}")))
         .size(px(34.))
         .flex()
         .items_center()
