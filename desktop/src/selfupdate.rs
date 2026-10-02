@@ -51,9 +51,17 @@ pub fn newer(latest: &str, current: &str) -> bool {
     parse(latest) > parse(current)
 }
 
+/// the system's own root certificates, so this works behind a proxy that
+/// inspects tls, like a lot of school and work networks have
+fn agent() -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
+    ureq::Agent::config_builder().tls_config(tls).build().into()
+}
+
 /// whether there's a newer desktop app than this one. blocking
 pub fn check() -> Result<Option<Release>, String> {
-    let rel: GhRelease = ureq::get(LATEST)
+    let rel: GhRelease = agent()
+        .get(LATEST)
         .header("User-Agent", "framecorder-desktop")
         .header("Accept", "application/vnd.github+json")
         .call()
@@ -77,7 +85,7 @@ pub fn check() -> Result<Option<Release>, String> {
 pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dst = exe.with_extension("update");
-    let mut res = ureq::get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
+    let mut res = agent().get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
     let total = res.body().content_length().unwrap_or(size).max(1);
     let mut reader = res.body_mut().as_reader();
     let mut out = std::fs::File::create(&dst).map_err(|e| format!("can't write {}: {e}", dst.display()))?;

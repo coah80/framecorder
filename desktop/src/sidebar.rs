@@ -6,6 +6,8 @@ use crate::app::{status_color, status_text, DesktopUpdate, FrameApp, Page};
 use crate::theme::{self, a, c};
 use crate::widgets::{data, dot, icon, spinner, wordmark};
 use framecorder_app_lib::core::engine::State;
+use gpui::{Animation, AnimationExt, SharedString};
+use std::time::Duration;
 
 pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let count = app.clips.len();
@@ -106,18 +108,7 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
                         .text_color(c(if color == theme::RED { theme::RED } else { theme::SUBTEXT0 }))
                         .child(status_text(s)),
                 )
-                .when(updating, |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(12.))
-                            .text_color(c(theme::MAUVE))
-                            .child(spinner(format!("upd-{fp}"), 12., c(theme::MAUVE)))
-                            .child("updating the frame..."),
-                    )
-                })
+                .when(updating, |d| d.child(updating_text(format!("upd-{fp}"))))
                 .when_some(update.cloned(), |d, u| {
                     d.child(
                         div()
@@ -220,4 +211,17 @@ fn folder(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
                         .truncate(),
                 ),
         )
+}
+
+/// "updating", grey, filling in mauve from the left over and over, like a bar
+/// made of text. the frame doesn't say how far along it is, it just comes back
+fn updating_text(id: impl Into<SharedString>) -> impl IntoElement {
+    let text = || div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).whitespace_nowrap().child("updating");
+    div().relative().child(text().text_color(c(0x6c7086))).child(
+        div().absolute().top_0().left_0().overflow_hidden().child(text().text_color(c(theme::MAUVE))).with_animation(
+            id.into(),
+            Animation::new(Duration::from_millis(1800)).repeat(),
+            |d, delta| d.w(relative(delta)),
+        ),
+    )
 }

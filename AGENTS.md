@@ -177,7 +177,7 @@ curl -fsSL https://framecorder.coah80.com/install | sh     # back to releases
 
 Publishing redeploys the site, which serves the release to the installer and every headset's updater. If the site job didn't run: `gh workflow run site.yml --ref main`. Check it's live with `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`.
 
-**CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the desktop apps on a `v*` tag or by hand.
+**CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the Tauri app and the native desktop app on a `v*` tag or by hand.
 
 ## Pull requests and commits
 
@@ -204,7 +204,7 @@ Every vblank, the recorder finds the plane the VR compositor scans out and expor
 - `src/ui/`: the tab. Drawn by hand into a pixel canvas (`paint.rs`, `text.rs`), no UI toolkit, so every effect costs CPU.
 - `src/grab.rs`, `src/setup.rs`, `src/apps.rs`: the helper and its protocol, install, unlock, update and uninstall, SteamVR app registration. Their binaries are in `src/bin/`.
 - `src/openvr.rs`, `src/overlay.rs`, `src/input.rs`: OpenVR through `FnTable:` interface tables, no bindings crate. Slot indices come from `openvr_capi.h`, as named consts next to the interface version.
-- `sync/`: the sync service, its own crate. `app/`: the desktop app (Tauri 2), `app/src/core/` is the sync client with no UI in it. `desktop/`: the desktop app rebuilt natively on gpui-ce, not shipped yet. It runs the same sync core (`app/src/core`, `default-features = false`) and the same state folder as `app/`, so pairings carry over, and you must never run both at once. `installer/`: the terminal installer. `site/`: the website. `packaging/`: services and the build scripts.
+- `sync/`: the sync service, its own crate. `app/`: the desktop app (Tauri 2), `app/src/core/` is the sync client with no UI in it. `desktop/`: the desktop app rebuilt natively on gpui-ce, not linked from the site yet (`app.yml` builds it on a tag as `framecorder-desktop-{linux,windows.exe,macos}`, which its self updater looks for). It runs the same sync core (`app/src/core`, `default-features = false`), the same state folder and the same `prefs.json` as `app/`, so pairings carry over, and you must never run both at once. `installer/`: the terminal installer. `site/`: the website. `packaging/`: services and the build scripts.
 
 ## What the code can't tell you
 

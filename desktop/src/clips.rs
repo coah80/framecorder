@@ -98,10 +98,7 @@ fn layout_button(name: &'static str, on: bool, grid: bool, cx: &mut Context<Fram
         .rounded(px(9.))
         .cursor_pointer()
         .when(on, |d| d.bg(c(theme::SURFACE1)))
-        .on_click(cx.listener(move |app, _, _, cx| {
-            app.grid = grid;
-            cx.notify();
-        }))
+        .on_click(cx.listener(move |app, _, _, cx| app.set_grid(grid, cx)))
         .child(icon(name, 16., c(fg)))
 }
 

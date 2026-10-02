@@ -1,5 +1,6 @@
-# builds the sync app for macos, windows and linux. push a tag like v0.1.0 and
-# they land on that tag's release, named how the website links to them.
+# builds the sync app (and the native desktop app) for macos, windows and
+# linux. push a tag like v0.1.0 and they land on that tag's release, named how
+# the website links to them.
 # android is built and signed locally, see app/README.md
 #
 # macos is ad-hoc signed unless these repo secrets exist, then it's signed and
@@ -85,9 +86,56 @@ jobs:
           path: ${{ matrix.file }}
           if-no-files-found: error
 
+  # the native desktop app (desktop/, gpui-ce). one binary per platform, named
+  # what its self updater looks for. not what the site links yet
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            file: framecorder-desktop-macos
+          - os: windows-latest
+            file: framecorder-desktop-windows.exe
+          - os: ubuntu-22.04
+            file: framecorder-desktop-linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
+
+      - name: test
+        run: cargo test --release
+
+      - name: build
+        run: |
+          cargo build --release
+          exe=target/release/framecorder-desktop
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          cp "$exe" "../${{ matrix.file }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

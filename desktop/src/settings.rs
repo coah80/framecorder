@@ -92,14 +92,34 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                             .child(switch("autostart", on).on_click(cx.listener(move |app, _, _, cx| app.set_autostart(!on, cx)))),
                     )
                 })
+                .when(app.tray.is_some() || app.demo, |d| {
+                    let on = app.background;
+                    let what = if on {
+                        if cfg!(target_os = "macos") { "closing the window leaves it syncing in the menu bar" } else { "closing the window leaves it syncing in the tray" }
+                    } else {
+                        "closing the window quits it. clips catch up the next time it's open"
+                    };
+                    d.child(
+                        row(app.autostart.is_none())
+                            .child(text("keep running when closed", what))
+                            .child(switch("background", on).on_click(cx.listener(move |app, _, _, cx| app.set_background(!on, cx)))),
+                    )
+                })
                 .child(
-                    row(app.autostart.is_none())
+                    row(app.autostart.is_none() && app.tray.is_none() && !app.demo)
                         .child(text("clips are saved to", data(short_path(&app.core.download_dir))))
                         .child(outline("open", "open").on_click(cx.listener(|app, _, _, cx| app.open_folder(cx)))),
                 )
                 .child(
                     row(false)
-                        .child(text("quit framecorder", "stops syncing until you open it again, clips catch up then. closing the window does this too"))
+                        .child(text(
+                            "quit framecorder",
+                            if app.background && (app.tray.is_some() || app.demo) {
+                                "stops syncing until you open it again, clips catch up then"
+                            } else {
+                                "stops syncing until you open it again, clips catch up then. closing the window does this too"
+                            },
+                        ))
                         .child(outline("quit", "quit").on_click(|_, _, cx| quit(cx))),
                 ),
         ))
