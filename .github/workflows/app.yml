@@ -94,7 +94,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            file: framecorder-desktop-macos
+            file: framecorder-desktop-macos.dmg
           - os: windows-latest
             file: framecorder-desktop-windows.exe
           - os: ubuntu-22.04
@@ -107,6 +107,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
@@ -121,11 +123,31 @@ jobs:
         run: cargo test --release
 
       - name: build
+        if: ${{ !startsWith(matrix.os, 'macos') }}
         run: |
           cargo build --release
           exe=target/release/framecorder-desktop
           [ -f "$exe.exe" ] && exe="$exe.exe"
           cp "$exe" "../${{ matrix.file }}"
+
+      # a mac app has to be a bundle: one binary for apple silicon and intel,
+      # the Info.plist (macos won't let it find the frame without its local
+      # network keys) and the icon, ad-hoc signed, in a dmg
+      - name: build (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          app=dmg/framecorder.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          lipo -create -output "$app/Contents/MacOS/framecorder-desktop" \
+            target/aarch64-apple-darwin/release/framecorder-desktop target/x86_64-apple-darwin/release/framecorder-desktop
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          sed "s/VERSION/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
+          cp ../app/icons/icon.icns "$app/Contents/Resources/icon.icns"
+          codesign --force --deep --sign - "$app"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname framecorder -srcfolder dmg -ov -format UDZO "../${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v4
         with:

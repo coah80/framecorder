@@ -10,7 +10,7 @@ this is the new design from the redesign canvas: a sidebar with your frame and u
 cargo run --release
 ```
 
-linux needs a few dev packages to build (`libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev`) and a vulkan driver to run. mac and windows need nothing extra. the binaries ci makes on a tag are `framecorder-desktop-linux`, `framecorder-desktop-windows.exe` and `framecorder-desktop-macos`.
+linux needs a few dev packages to build (`libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev`) and a vulkan driver to run. mac and windows need nothing extra. on a tag, ci makes `framecorder-desktop-linux`, `framecorder-desktop-windows.exe` and `framecorder-desktop-macos.dmg`: a universal `framecorder.app` (apple silicon and intel) with the Info.plist from `macos/`, which has the local network keys macos needs before it lets the app find the frame. the site's download buttons point at these.
 
 no frame around? the demo fills it with made up frames and clips, nothing syncs and nothing's saved:
 

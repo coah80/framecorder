@@ -31,6 +31,10 @@ ureq = { version = "3", features = ["json", "platform-verifier"] }
 tray-icon = { version = "0.26.0", default-features = false, features = ["ksni"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
+# the app icon in the windows exe, see build.rs
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [profile.release]
 opt-level = 3
 lto = "thin"
