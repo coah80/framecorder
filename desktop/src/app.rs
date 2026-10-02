@@ -14,7 +14,7 @@ use gpui::{
 };
 
 use crate::selfupdate::{self, Release};
-use crate::sync::{Clip, Core, Msg};
+use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
 use crate::{autostart, clips, pair, prefs, settings, sidebar, thumbs};
@@ -122,6 +122,24 @@ impl FrameApp {
                 }
                 cx.background_executor().timer(Duration::from_secs(6 * 60 * 60)).await;
             }));
+            // clips deleted or moved out of the folder leave the library on
+            // their own. a look every couple of seconds is a stat per clip
+            let engine = core.engine.clone();
+            tasks.push(cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let engine = engine.clone();
+                let clips = cx.background_executor().spawn(async move { sync::library(&engine) }).await;
+                let alive = this.update(cx, |app, cx| {
+                    if clips.len() != app.clips.len() || clips.iter().zip(&app.clips).any(|(a, b)| a.key != b.key) {
+                        app.clips = clips;
+                        app.request_thumbs(cx);
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }));
         }
 
         let prefs = prefs::load(&core.state_dir);
@@ -170,8 +188,7 @@ impl FrameApp {
             return;
         }
         self.statuses = self.core.engine.statuses();
-        self.clips = self.core.engine.clips().iter().map(Clip::from).collect();
-        self.clips.sort_by_key(|c| std::cmp::Reverse(c.created));
+        self.clips = sync::library(&self.core.engine);
     }
 
     fn on_msg(&mut self, msg: Msg, cx: &mut Context<Self>) {
@@ -234,7 +251,7 @@ impl FrameApp {
         let jobs: Vec<_> = self
             .clips
             .iter()
-            .filter(|c| c.exists && !self.thumbs.contains_key(&c.key))
+            .filter(|c| !self.thumbs.contains_key(&c.key))
             .map(|c| (c.key.clone(), c.location.clone(), thumbs::path_for(&dir, &c.key)))
             .collect();
         if jobs.is_empty() {

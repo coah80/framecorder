@@ -429,30 +429,20 @@ fn thumb(app: &FrameApp, clip: &Clip, index: usize) -> Div {
     }
 }
 
-fn size_text(clip: &Clip) -> String {
-    if clip.exists {
-        format::size(clip.size)
-    } else {
-        "moved or deleted".into()
-    }
-}
-
 fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -> AnyElement {
     let group = SharedString::from(format!("tile-{index}"));
     let (open, reveal) = (clip.clone(), clip.clone());
     div()
         .relative()
         .group(group.clone())
-        .when(!clip.exists, |d| d.opacity(0.45))
         .child(
             div()
                 .id(SharedString::from(format!("open-{}", clip.key)))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .when(clip.exists, |d| {
-                    d.cursor_pointer().on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
-                })
+                .cursor_pointer()
+                .on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
                 .child(
                     thumb(app, clip, index)
                         .w_full()
@@ -460,7 +450,7 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -
                         .rounded(px(12.))
                         .border_2()
                         .border_color(a(theme::MAUVE, 0.))
-                        .when(clip.exists, |d| d.group_hover(group.clone(), |s| s.border_color(c(theme::MAUVE))))
+                        .group_hover(group.clone(), |s| s.border_color(c(theme::MAUVE)))
                         .when_some(clip.duration_s, |d, len| {
                             d.child(
                                 data(format::length(len))
@@ -482,32 +472,30 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -
                         .px(px(2.))
                         .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
                         .child(kind_chip(clip.is_clip))
-                        .child(data(size_text(clip)).text_size(px(12.)).text_color(c(theme::OVERLAY2))),
+                        .child(data(format::size(clip.size)).text_size(px(12.)).text_color(c(theme::OVERLAY2))),
                 ),
         )
-        .when(clip.exists, |d| {
-            d.child(
-                div()
-                    .id(SharedString::from(format!("reveal-{}", clip.key)))
-                    .absolute()
-                    .top(px(6.))
-                    .right(px(6.))
-                    .size(px(32.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(9.))
-                    .bg(a(theme::CRUST, 0.8))
-                    .cursor_pointer()
-                    .opacity(0.)
-                    .group_hover(group, |s| s.opacity(1.))
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        cx.stop_propagation();
-                        app.reveal_clip(&reveal, cx);
-                    }))
-                    .child(icon("folder", 16., c(theme::TEXT))),
-            )
-        })
+        .child(
+            div()
+                .id(SharedString::from(format!("reveal-{}", clip.key)))
+                .absolute()
+                .top(px(6.))
+                .right(px(6.))
+                .size(px(32.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.))
+                .bg(a(theme::CRUST, 0.8))
+                .cursor_pointer()
+                .opacity(0.)
+                .group_hover(group, |s| s.opacity(1.))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.reveal_clip(&reveal, cx);
+                }))
+                .child(icon("folder", 16., c(theme::TEXT))),
+        )
         .into_any_element()
 }
 
@@ -521,12 +509,9 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) ->
         .px(px(10.))
         .py(px(8.))
         .when(index > 1, |d| d.border_t_1().border_color(theme::line()))
-        .when(!clip.exists, |d| d.opacity(0.45))
-        .when(clip.exists, |d| {
-            d.cursor_pointer()
-                .hover(|s| s.bg(a(theme::MAUVE, 0.08)))
-                .on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
-        })
+        .cursor_pointer()
+        .hover(|s| s.bg(a(theme::MAUVE, 0.08)))
+        .on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
         .child(thumb(app, clip, index).w(px(88.)).h(px(50.)).flex_none().rounded(px(8.)))
         .child(div().w(px(76.)).font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
         .child(kind_chip(clip.is_clip))
@@ -535,25 +520,28 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) ->
             d.child(data(format::length(len)).text_size(px(12.)).text_color(c(theme::SUBTEXT0)))
         })
         .child(
-            data(size_text(clip)).min_w(px(60.)).flex().justify_end().text_size(px(12.)).text_color(c(theme::OVERLAY2)),
+            data(format::size(clip.size))
+                .min_w(px(60.))
+                .flex()
+                .justify_end()
+                .text_size(px(12.))
+                .text_color(c(theme::OVERLAY2)),
         )
-        .when(clip.exists, |d| {
-            d.child(
-                div()
-                    .id(SharedString::from(format!("rowreveal-{}", clip.key)))
-                    .size(px(36.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(9.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(c(theme::SURFACE1)))
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        cx.stop_propagation();
-                        app.reveal_clip(&reveal, cx);
-                    }))
-                    .child(icon("folder", 16., c(theme::SUBTEXT0))),
-            )
-        })
+        .child(
+            div()
+                .id(SharedString::from(format!("rowreveal-{}", clip.key)))
+                .size(px(36.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.))
+                .cursor_pointer()
+                .hover(|s| s.bg(c(theme::SURFACE1)))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.reveal_clip(&reveal, cx);
+                }))
+                .child(icon("folder", 16., c(theme::SUBTEXT0))),
+        )
         .into_any_element()
 }

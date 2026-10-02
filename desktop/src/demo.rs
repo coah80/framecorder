@@ -56,7 +56,6 @@ fn clips() -> Vec<Clip> {
             created: at(d, h, m),
             duration_s: Some(len),
             location: PathBuf::from("/nonexistent"),
-            exists: true,
         })
         .collect()
 }

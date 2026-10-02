@@ -98,23 +98,29 @@ pub struct Clip {
     pub created: i64,
     pub duration_s: Option<f64>,
     pub location: PathBuf,
-    /// false once the file's been moved or deleted here
-    pub exists: bool,
 }
 
 impl Clip {
     pub fn from(e: &Entry) -> Self {
-        let location = PathBuf::from(&e.location);
         Self {
             key: e.key(),
             is_clip: e.kind == "clip",
             size: e.size,
             created: e.created,
             duration_s: e.duration_s,
-            exists: Path::new(&location).exists(),
-            location,
+            location: PathBuf::from(&e.location),
         }
     }
+}
+
+/// the library: every clip whose file is still here, newest first. one
+/// deleted or moved out of the folder drops out of it, and the engine still
+/// remembers syncing it, so it never comes down again
+pub fn library(engine: &Engine) -> Vec<Clip> {
+    let mut clips: Vec<Clip> =
+        engine.clips().iter().filter(|e| Path::new(&e.location).exists()).map(Clip::from).collect();
+    clips.sort_by_key(|c| std::cmp::Reverse(c.created));
+    clips
 }
 
 /// only one of us syncs at a time, two would download everything twice
