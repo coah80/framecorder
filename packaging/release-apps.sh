@@ -19,5 +19,5 @@ take() {
 echo "gathering"
 take app/target/docker/x86_64-pc-windows-msvc/release/framecorder-app.exe framecorder-windows.exe
 take app/target/docker/release/framecorder-app framecorder-linux
-take app/target/framecorder-release-debugsigned.apk framecorder-android.apk
+take android/app/build/outputs/apk/release/app-release.apk framecorder-android.apk
 ls -l "$OUT"
