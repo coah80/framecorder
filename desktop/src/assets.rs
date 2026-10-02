@@ -77,6 +77,12 @@ impl AssetSource for Assets {
     }
 }
 
+/// the app icon, for the window and the tray
+pub fn app_icon() -> Option<image::RgbaImage> {
+    let png = include_bytes!("../../app/icons/128x128@2x.png");
+    image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| i.to_rgba8())
+}
+
 pub fn icon_path(name: &str) -> SharedString {
     format!("icons/{name}.svg").into()
 }

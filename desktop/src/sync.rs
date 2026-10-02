@@ -47,6 +47,7 @@ pub struct Core {
     pub engine: Arc<Engine>,
     pub rt: tokio::runtime::Handle,
     pub download_dir: PathBuf,
+    pub state_dir: PathBuf,
 }
 
 /// where clips land: ~/Videos/framecorder (~/Movies/framecorder on a mac)
@@ -85,7 +86,7 @@ pub fn start(rt: tokio::runtime::Handle, demo: bool) -> Result<(Core, async_chan
     if !demo {
         engine.start_all();
     }
-    Ok((Core { engine, rt, download_dir }, rx))
+    Ok((Core { engine, rt, download_dir, state_dir }, rx))
 }
 
 /// a clip, the way the ui shows it
@@ -127,10 +128,19 @@ pub fn single_instance(state_dir: &Path) -> Result<std::fs::File, String> {
         .map_err(|e| format!("can't open {}: {e}", path.display()))?;
     match file.try_lock() {
         Ok(()) => Ok(file),
-        Err(std::fs::TryLockError::WouldBlock) => Err("framecorder is already open".into()),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            // the running one watches for this and brings its window up
+            let _ = std::fs::write(show_marker(state_dir), b"");
+            Err("framecorder is already open, bringing it up".into())
+        }
         Err(std::fs::TryLockError::Error(e)) => {
             log::warn!("couldn't lock {}: {e}, carrying on", path.display());
             Ok(file)
         }
     }
+}
+
+/// a file the second launch leaves, so the first one knows to show itself
+pub fn show_marker(state_dir: &Path) -> PathBuf {
+    state_dir.join("show")
 }

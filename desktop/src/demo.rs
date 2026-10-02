@@ -68,6 +68,7 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
         "list" => app.grid = false,
         "syncing" => {
             app.statuses = vec![status(State::Connected, true)];
+            app.frame_updating.insert("demo".into());
             app.progress = Some(Progress {
                 fingerprint: "demo".into(),
                 id: "incoming".into(),

@@ -16,7 +16,8 @@ use gpui::{
 use crate::selfupdate::{self, Release};
 use crate::sync::{Clip, Core, Msg};
 use crate::theme::{self, c};
-use crate::{autostart, clips, pair, settings, sidebar, thumbs};
+use crate::tray::Tray;
+use crate::{autostart, clips, pair, prefs, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -76,6 +77,10 @@ pub struct FrameApp {
     /// frames we asked to update, until they say they are
     pub frame_updating: HashSet<String>,
     pub autostart: Option<bool>,
+    /// closing the window leaves it syncing from the tray
+    pub background: bool,
+    pub tray: Option<Tray>,
+    told_about_tray: bool,
     pub desktop: DesktopUpdate,
     pub thumbs: HashMap<String, Thumb>,
     ffmpeg: bool,
@@ -119,12 +124,13 @@ impl FrameApp {
             }));
         }
 
+        let prefs = prefs::load(&core.state_dir);
         let mut app = Self {
             core,
             demo,
             page: Page::Clips,
             filter: Filter::All,
-            grid: true,
+            grid: prefs.grid,
             statuses: Vec::new(),
             clips: Vec::new(),
             progress: None,
@@ -141,6 +147,9 @@ impl FrameApp {
             },
             frame_updating: HashSet::new(),
             autostart: if demo { Some(true) } else { autostart::is_enabled() },
+            background: prefs.background,
+            tray: None,
+            told_about_tray: false,
             desktop: DesktopUpdate::None,
             thumbs: HashMap::new(),
             ffmpeg: false,
@@ -169,6 +178,9 @@ impl FrameApp {
         match msg {
             Msg::Status => {
                 self.statuses = self.core.engine.statuses();
+                if let Some(t) = &self.tray {
+                    t.set_status(&self.statuses);
+                }
                 for s in &self.statuses {
                     if s.update.as_ref().is_some_and(|u| u.updating || !u.available) {
                         self.frame_updating.remove(&s.fingerprint);
@@ -303,6 +315,61 @@ impl FrameApp {
             self.open_pair(cx);
         }
         cx.notify();
+    }
+
+    fn save_prefs(&mut self, cx: &mut Context<Self>) {
+        if self.demo {
+            return;
+        }
+        let p = prefs::Prefs { background: self.background, grid: self.grid };
+        if let Err(e) = prefs::save(&self.core.state_dir, &p) {
+            self.toast(format!("couldn't save that: {e}"), cx);
+        }
+    }
+
+    pub fn set_grid(&mut self, grid: bool, cx: &mut Context<Self>) {
+        self.grid = grid;
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    /// whether closing the window keeps it syncing from the tray, or quits
+    pub fn set_background(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.background = on;
+        if let Some(t) = &self.tray {
+            t.set_visible(on);
+        }
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    pub fn attach_tray(&mut self, tray: Tray) {
+        tray.set_status(&self.statuses);
+        tray.set_visible(self.background);
+        self.tray = Some(tray);
+    }
+
+    /// whether the window closing should leave the app running. the first
+    /// time, a notification says where it went
+    pub fn keep_running_on_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.demo || !self.background || self.tray.is_none() {
+            return false;
+        }
+        if !self.told_about_tray {
+            self.told_about_tray = true;
+            cx.show_system_notification(SystemNotification {
+                tag: "framecorder-tray".into(),
+                title: "framecorder is still syncing".into(),
+                body: if cfg!(target_os = "macos") {
+                    "it's in the menu bar, so new clips keep coming in. to close it for real, click it there and pick quit, or turn off \"keep running\" in settings."
+                } else {
+                    "it's in the tray, so new clips keep coming in. to close it for real, right-click it there and pick quit, or turn off \"keep running\" in settings."
+                }
+                .into(),
+                actions: Vec::new(),
+            });
+        }
+        true
     }
 
     pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {

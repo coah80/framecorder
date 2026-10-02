@@ -8,6 +8,8 @@ fn launcher() -> Option<AutoLaunch> {
     AutoLaunchBuilder::new()
         .set_app_name("framecorder")
         .set_app_path(&exe.to_string_lossy())
+        // started with the computer: straight to the tray
+        .set_args(&["--minimized"])
         .set_macos_launch_mode(MacOSLaunchMode::LaunchAgent)
         .build()
         .ok()
