@@ -77,10 +77,11 @@ impl AssetSource for Assets {
     }
 }
 
-/// the app icon, for the window and the tray
+/// the app icon, 256 px, for the window, the tray and the linux app menu
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../../app/icons/128x128@2x.png");
+
 pub fn app_icon() -> Option<image::RgbaImage> {
-    let png = include_bytes!("../../app/icons/128x128@2x.png");
-    image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| i.to_rgba8())
+    image::load_from_memory_with_format(APP_ICON_PNG, image::ImageFormat::Png).ok().map(|i| i.to_rgba8())
 }
 
 pub fn icon_path(name: &str) -> SharedString {

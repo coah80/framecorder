@@ -86,8 +86,8 @@ jobs:
           path: ${{ matrix.file }}
           if-no-files-found: error
 
-  # the native desktop app (desktop/, gpui-ce): a binary on linux, an installer
-  # on windows and a dmg on macos, named what the site links and its self
+  # the native desktop app (desktop/, gpui-ce): an AppImage on linux, an
+  # installer on windows and a dmg on macos, named what the site links and its self
   # updater looks for
   desktop:
     strategy:
@@ -99,7 +99,7 @@ jobs:
           - os: windows-latest
             file: framecorder-setup.exe
           - os: ubuntu-22.04
-            file: framecorder-desktop-linux
+            file: framecorder-x86_64.AppImage
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -123,11 +123,22 @@ jobs:
       - name: test
         run: cargo test --release
 
+      # an AppImage, built on the oldest ubuntu ci has so it runs on most
+      # distros. linuxdeploy bundles the libraries a distro might not have and
+      # leaves out the ones that must come from the system (glibc, the gpu
+      # driver, fontconfig). appimagetool's runtime doesn't need libfuse2
       - name: build (linux)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           cargo build --release
-          cp target/release/framecorder-desktop "../${{ matrix.file }}"
+          curl -fsSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy appimagetool
+          ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
+            --executable target/release/framecorder-desktop \
+            --desktop-file linux/com.framecorder.desktop.desktop \
+            --icon-file ../app/icons/128x128@2x.png --icon-filename framecorder
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "../${{ matrix.file }}"
 
       # windows gets an installer, see windows/installer.iss
       - name: build (windows)

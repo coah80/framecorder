@@ -1,10 +1,11 @@
 //! the desktop app keeping itself up to date, from the github releases.
 //!
 //! it only offers an update when the latest release has a build of this app
-//! for this platform (framecorder-desktop-linux, framecorder-setup.exe). on
+//! for this platform (framecorder-x86_64.AppImage, framecorder-setup.exe). on
 //! windows the update is the installer, run silently: it replaces the
-//! installed app and starts it again. a mac app lives in a bundle, so there it
-//! opens the release page instead.
+//! installed app and starts it again. on linux the new AppImage takes the old
+//! one's place. a mac app lives in a bundle, so there it opens the release
+//! page instead.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ struct GhAsset {
 
 fn asset_name() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
-        Some("framecorder-desktop-linux")
+        Some("framecorder-x86_64.AppImage")
     } else if cfg!(windows) {
         Some("framecorder-setup.exe")
     } else {
@@ -62,6 +63,10 @@ fn agent() -> ureq::Agent {
 
 /// whether there's a newer desktop app than this one. blocking
 pub fn check() -> Result<Option<Release>, String> {
+    // a linux build that isn't an AppImage is someone's own, it has nothing to swap
+    if cfg!(target_os = "linux") && crate::appimage::file().is_none() {
+        return Ok(None);
+    }
     let rel: GhRelease = agent()
         .get(LATEST)
         .header("User-Agent", "framecorder-desktop")
@@ -83,14 +88,21 @@ pub fn check() -> Result<Option<Release>, String> {
     Ok(Some(Release { version: rel.tag_name.trim_start_matches('v').to_string(), page: rel.html_url, asset }))
 }
 
-/// downloads the new build (next to us, or the installer to the temp folder on
-/// windows), calling `progress` with 0 to 1. blocking
+/// where an update downloads to: the temp folder for the windows installer,
+/// next to the AppImage on linux, so putting it in place is a rename
+fn update_path() -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        return Ok(std::env::temp_dir().join("framecorder-setup.exe"));
+    }
+    let file = crate::appimage::file().ok_or("this isn't running from an AppImage")?;
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
+    name.push(".update");
+    Ok(file.with_file_name(name))
+}
+
+/// downloads the new build, calling `progress` with 0 to 1. blocking
 pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf, String> {
-    let dst = if cfg!(windows) {
-        std::env::temp_dir().join("framecorder-setup.exe")
-    } else {
-        std::env::current_exe().map_err(|e| e.to_string())?.with_extension("update")
-    };
+    let dst = update_path()?;
     let mut res = agent().get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
     let total = res.body().content_length().unwrap_or(size).max(1);
     let mut reader = res.body_mut().as_reader();
@@ -125,13 +137,13 @@ pub fn apply_and_restart(setup: &PathBuf) -> Result<(), String> {
         .map_err(|e| format!("couldn't start the installer: {e}"))
 }
 
-/// swaps the running binary for the new one and starts it
+/// puts the new AppImage where the old one is and starts it. the running one
+/// keeps its own open copy until it quits
 #[cfg(not(windows))]
 pub fn apply_and_restart(new: &PathBuf) -> Result<(), String> {
-    self_replace::self_replace(new).map_err(|e| format!("couldn't put the update in place: {e}"))?;
-    let _ = std::fs::remove_file(new);
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    std::process::Command::new(exe).arg("--after-update").spawn().map_err(|e| e.to_string())?;
+    let file = crate::appimage::file().ok_or("this isn't running from an AppImage")?;
+    std::fs::rename(new, &file).map_err(|e| format!("couldn't put the update in place: {e}"))?;
+    std::process::Command::new(&file).arg("--after-update").spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
