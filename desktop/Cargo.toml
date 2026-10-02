@@ -29,11 +29,9 @@ ureq = { version = "3", features = ["json", "platform-verifier"] }
 tray-icon = { version = "0.26.0", default-features = false, features = ["ksni"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
-# finding and closing the old app, see oldapp.rs. self-replace is the updater
-# outside windows, where it's the installer instead
+# finding and closing the old app, see oldapp.rs
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-self-replace = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

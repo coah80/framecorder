@@ -6,6 +6,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod appimage;
 mod assets;
 mod autostart;
 mod clips;
@@ -133,6 +134,10 @@ fn main() {
     }
     // the old app syncs from the same state, so it goes before we start
     let closed_old = demo.is_none() && oldapp::close();
+    #[cfg(target_os = "linux")]
+    if demo.is_none() {
+        appimage::integrate(assets::APP_ICON_PNG);
+    }
     let (core, rx) = match sync::start(rt.handle().clone(), demo.is_some()) {
         Ok(started) => started,
         Err(e) => {
