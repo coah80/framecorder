@@ -7,6 +7,7 @@ framecorder records what the Steam Frame's panels actually show, without taking 
 1. Work on `dev`. `main` only takes releases (see [Branches](#branches)).
 2. Read [the five ways to hurt yourself](#the-five-ways-to-hurt-yourself). Most of them are about a real person's headset.
 3. Find the surfaces your change touches in [Hit every surface](#hit-every-surface) before you write code, not after.
+4. Before you call it done, [clean up after yourself](#clean-up-after-yourself).
 
 ## What we never compromise on
 
@@ -124,7 +125,32 @@ installer/build.sh dist     # arm64 binary, zstd'd, with its sha256
 - **Some bugs only show up under a real game** (GPU contention, the encoder falling behind, PipeWire restarts). Ask a maintainer to play something heavy, with exact steps, then pull the logs and files and do the analysis yourself.
 - **Screens.** The tab: `framecorder-ui --preview out.rgba <state>`, a raw 1280x760 RGBA frame (`ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png`). The app: `app/tools/preview/shots.sh`. The native desktop app: `cd desktop && cargo run -- --demo <screen>` (`clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`), which runs on its own temporary state. The site: headless Chrome against `python3 -m http.server -d site`. Look at what you made before you call it done.
 - **Installer and update flows** get tested with the dev build, never the public release. The installer runs in a terminal and takes clicks (SGR mouse) as well as keys, so it can be driven through a pty.
-- **Tests stay offline, fast and deterministic.** No headset for `--lib`, no sleeps standing in for synchronization, no tests that only mirror the implementation.
+- **Tests stay offline, fast and deterministic.** No headset for `--lib`, no sleeps standing in for synchronization, and every new test passes [the four questions](#clean-up-after-yourself).
+
+## Clean up after yourself
+
+Leave the code, the headset and your machine the way you'd want to find them. Before you call work done:
+
+**The code**
+- When your change leaves something unused, delete it in the same change: code, flags, settings, files, docs. No aliases kept for a compatibility nobody needs, no commented-out code, no paths kept for later. Frame Drop and the flatpak went the day the installer replaced them.
+- Take out what you added only to debug or test: extra logging, environment switches, and exports or hooks that no real caller uses.
+- Prefer the change that leaves less behind. A fix that removes more than it adds is a good fix.
+
+**The tests you add.** Answer all four first. A missing answer means don't add it yet:
+
+1. What behavior does it protect, that a user or another part of framecorder relies on?
+2. What realistic regression makes it fail?
+3. Why doesn't an existing test catch that already? Extend a table or an existing case before adding a near-copy.
+4. Does it need an export, flag or hook that only the test uses? Then test at the real boundary instead.
+
+A regression test has to fail on the code before the fix, for the right reason. Skip tests without a real assertion, tests whose expected value comes from the code under test, tests that grep the source, and mocks that do the thing being asserted.
+
+**What you leave running or lying around**
+- On the headset: stop the processes you started (by the PID you kept, see [rule 2](#the-five-ways-to-hurt-yourself)), delete your test recordings, binaries and logs from `/tmp`, put back any config you moved, and leave the install as you found it. If you leave a dev build installed, say so.
+- On your machine: stop the servers you started, remove the worktrees and branches you made (`git worktree list`, `git branch`), and delete scratch files.
+- Don't commit plans, research notes, test recordings, screenshots or scratch files. Keep them in `/tmp`. `dist/` is gitignored. A merged commit is the record of the work.
+
+**The report.** End with what changed for the user, what you ran to prove it, which surfaces applied, what you removed, and anything you left on purpose, with why.
 
 ## Shipping
 
@@ -167,10 +193,6 @@ Publishing redeploys the site, which serves the release to the installer and eve
 - `docs/how-it-works.md` explains the capture pipeline and the reasons behind it.
 - This file holds what a contributor would get wrong without it. If reading the code answers the question, leave it out. No file catalogs, no feature lists, no PR summaries.
 - When something documented changes, rewrite or remove the old text. Don't append a second account.
-
-## Plans and work artifacts
-
-Don't commit plans, research notes, test recordings, screenshots or scratch files. Keep them in `/tmp`. `dist/` is gitignored. A merged commit is the record of the work.
 
 ## How it works
 
