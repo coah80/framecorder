@@ -4,10 +4,13 @@
 mod config;
 mod devices;
 mod events;
+mod frame;
 mod http;
 mod library;
 mod mdns;
 mod openvr;
+mod recording;
+mod remote;
 mod server;
 mod throttle;
 mod watch;
@@ -62,10 +65,10 @@ fn main() {
 
 fn run(args: Args) -> std::io::Result<()> {
     let defaults = Paths::from_env()?;
-    let paths = Paths::new(
-        args.videos.as_deref().unwrap_or(&defaults.videos),
-        args.state.as_deref().unwrap_or(&defaults.state),
-    );
+    let paths = Paths {
+        power: defaults.power.clone(),
+        ..Paths::new(args.videos.as_deref().unwrap_or(&defaults.videos), args.state.as_deref().unwrap_or(&defaults.state))
+    };
     watch::ensure_dirs(&paths)?;
     let settings = Settings::load(&paths);
     let name = config::device_name(&settings);
@@ -128,6 +131,7 @@ fn run(args: Args) -> std::io::Result<()> {
         devices,
         pairing: devices::Pairing::new(&paths.pairing()),
         throttle,
+        remote: remote::Remote::default(),
         connections: AtomicUsize::new(0),
     });
     server::serve(listener, state);
