@@ -126,7 +126,9 @@ jobs:
       # an AppImage, built on the oldest ubuntu ci has so it runs on most
       # distros. linuxdeploy bundles the libraries a distro might not have and
       # leaves out the ones that must come from the system (glibc, the gpu
-      # driver, fontconfig). appimagetool's runtime doesn't need libfuse2
+      # driver, fontconfig). xkbcommon comes from the system too: an older one
+      # can't read a newer distro's keyboard files, and every desktop has it.
+      # appimagetool's runtime doesn't need libfuse2
       - name: build (linux)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -137,7 +139,8 @@ jobs:
           ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
             --executable target/release/framecorder-desktop \
             --desktop-file linux/com.framecorder.desktop.desktop \
-            --icon-file ../app/icons/128x128@2x.png --icon-filename framecorder
+            --icon-file ../app/icons/128x128@2x.png --icon-filename framecorder \
+            --exclude-library 'libxkbcommon*' --exclude-library 'libxcb-xkb*'
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "../${{ matrix.file }}"
 
       # windows gets an installer, see windows/installer.iss

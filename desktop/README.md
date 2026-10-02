@@ -10,7 +10,7 @@ this is the new design from the redesign canvas: a sidebar with your frame and u
 cargo run --release
 ```
 
-linux needs a few dev packages to build (`libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev`) and a vulkan driver to run. mac and windows need nothing extra. on a tag, ci makes `framecorder-desktop-linux`, `framecorder-setup.exe` (an installer, from `windows/installer.iss`: per user, no admin, start menu and desktop shortcuts, listed in installed apps) and `framecorder-desktop-macos.dmg`: a universal `framecorder.app` (apple silicon and intel) with the Info.plist from `macos/`, which has the local network keys macos needs before it lets the app find the frame. the site's download buttons point at these.
+linux needs a few dev packages to build (`libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev`) and a vulkan driver to run. mac and windows need nothing extra. on a tag, ci makes `framecorder-x86_64.AppImage` (built on ubuntu 22.04 for older glibcs, run on fedora, arch, debian, ubuntu and opensuse; on first run it adds itself to the app menu), `framecorder-setup.exe` (an installer, from `windows/installer.iss`: per user, no admin, start menu and desktop shortcuts, listed in installed apps) and `framecorder-desktop-macos.dmg`: a universal `framecorder.app` (apple silicon and intel) with the Info.plist from `macos/`, which has the local network keys macos needs before it lets the app find the frame. the site's download buttons point at these.
 
 no frame around? the demo fills it with made up frames and clips, nothing syncs and nothing's saved:
 
@@ -32,7 +32,7 @@ cargo run -- --demo clips      # or list, syncing, unreachable, pair, settings
 
 - thumbnails come from `ffmpeg` when it's installed (one frame a second in, cached in `~/.cache/com.framecorder.app/thumbs`). gpui can't decode video, so without ffmpeg the grid shows plain tiles
 - the tray on linux is a StatusNotifierItem over dbus (no gtk), which kde, and gnome with the appindicator extension, show. no tray means closing quits, same as turning keep running off
-- it updates itself: it checks the latest github release for `framecorder-desktop-linux` / `framecorder-setup.exe` (ci builds them on a tag now), and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on a mac it opens the release page
+- it updates itself: it checks the latest github release for `framecorder-x86_64.AppImage` / `framecorder-setup.exe` (ci builds them on a tag now), and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on linux the new AppImage is renamed over the old one (only from an AppImage, a build of your own doesn't update). on a mac it opens the release page
 - only one copy runs at a time. opening it again while it's running brings the running one's window up and leaves
 
 ## layout
