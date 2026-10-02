@@ -18,6 +18,64 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const EVENTS_IDLE: Duration = Duration::from_secs(60);
 const DOWNLOAD_IDLE: Duration = Duration::from_secs(30);
 
+/// How the headset itself is doing.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct About {
+    pub battery: Option<Battery>,
+    pub storage: Option<Storage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Battery {
+    pub percent: u8,
+    /// On the charger, charging or full.
+    pub charging: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Storage {
+    pub free: u64,
+    pub total: u64,
+    /// How much of it framecorder's videos take.
+    pub videos: u64,
+}
+
+/// What the Frame's dashboard tab is up to, for a remote.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Remote {
+    /// The tab's running; it starts with SteamVR.
+    pub available: bool,
+    /// Its setup's been done, so it can record.
+    pub ready: bool,
+    pub recording: bool,
+    /// Recording and not paused (it pauses while the tab's on screen).
+    pub running: bool,
+    pub elapsed_ms: u64,
+    /// The clip length while clipping's on.
+    pub clips: Option<u32>,
+    /// A clip can be saved right now.
+    pub clip_ready: bool,
+}
+
+/// The Frame's recording settings. They apply from its next recording.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Recording {
+    /// wide, square, tall or both
+    pub shape: String,
+    /// standard, high or max
+    pub quality: String,
+    /// auto, 60 or 30
+    pub fps: String,
+    pub game_audio: bool,
+    pub mic: bool,
+    /// Whether it keeps a replay buffer to save clips from.
+    pub clips: bool,
+    /// How long a clip is, in seconds: 15, 30, 60 or 120.
+    pub clip: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RemoteClip {
     pub id: String,
@@ -180,6 +238,37 @@ impl Client {
             Err(ApiError::Refused(403, _)) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+
+    /// `None` from a Frame whose framecorder is older than these.
+    pub async fn recording(&self) -> Result<Option<Recording>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/recording").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(r) => r.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn set_recording(&self, settings: &Recording) -> Result<Recording, ApiError> {
+        let rb = self.request(reqwest::Method::PATCH, "/recording").json(settings).timeout(REQUEST_TIMEOUT);
+        self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    /// `None` from a Frame whose framecorder can't take commands yet.
+    pub async fn remote(&self) -> Result<Option<Remote>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/remote").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(r) => r.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Asks the Frame to `record`, `stop` or `clip`, and says how it went.
+    pub async fn command(&self, what: &str) -> Result<Remote, ApiError> {
+        let rb = self.request(reqwest::Method::POST, "/remote").json(&serde_json::json!({ "do": what })).timeout(REQUEST_TIMEOUT);
+        self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
     }
 
     pub async fn events(&self) -> Result<Events, ApiError> {
