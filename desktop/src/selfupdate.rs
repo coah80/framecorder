@@ -1,8 +1,10 @@
 //! the desktop app keeping itself up to date, from the github releases.
 //!
 //! it only offers an update when the latest release has a build of this app
-//! for this platform (framecorder-desktop-linux, framecorder-desktop-windows.exe).
-//! a mac app lives in a bundle, so there it opens the release page instead.
+//! for this platform (framecorder-desktop-linux, framecorder-setup.exe). on
+//! windows the update is the installer, run silently: it replaces the
+//! installed app and starts it again. a mac app lives in a bundle, so there it
+//! opens the release page instead.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -37,7 +39,7 @@ fn asset_name() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
         Some("framecorder-desktop-linux")
     } else if cfg!(windows) {
-        Some("framecorder-desktop-windows.exe")
+        Some("framecorder-setup.exe")
     } else {
         None
     }
@@ -81,10 +83,14 @@ pub fn check() -> Result<Option<Release>, String> {
     Ok(Some(Release { version: rel.tag_name.trim_start_matches('v').to_string(), page: rel.html_url, asset }))
 }
 
-/// downloads the new build next to us, calling `progress` with 0 to 1. blocking
+/// downloads the new build (next to us, or the installer to the temp folder on
+/// windows), calling `progress` with 0 to 1. blocking
 pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let dst = exe.with_extension("update");
+    let dst = if cfg!(windows) {
+        std::env::temp_dir().join("framecorder-setup.exe")
+    } else {
+        std::env::current_exe().map_err(|e| e.to_string())?.with_extension("update")
+    };
     let mut res = agent().get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
     let total = res.body().content_length().unwrap_or(size).max(1);
     let mut reader = res.body_mut().as_reader();
@@ -108,7 +114,19 @@ pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf,
     Ok(dst)
 }
 
+/// starts the installer, which waits for us to quit (it closes us if we
+/// don't), installs over us and starts the new version
+#[cfg(windows)]
+pub fn apply_and_restart(setup: &PathBuf) -> Result<(), String> {
+    std::process::Command::new(setup)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("couldn't start the installer: {e}"))
+}
+
 /// swaps the running binary for the new one and starts it
+#[cfg(not(windows))]
 pub fn apply_and_restart(new: &PathBuf) -> Result<(), String> {
     self_replace::self_replace(new).map_err(|e| format!("couldn't put the update in place: {e}"))?;
     let _ = std::fs::remove_file(new);
