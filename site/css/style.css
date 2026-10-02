@@ -110,6 +110,16 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .get a:not(.btn) { color: var(--mauve); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 .apps { display: flex; flex-wrap: wrap; gap: 12px; }
+button.btn { border: 0; cursor: pointer; }
+/* linux is two choices: picking it hides the others and shows these. the
+   linux button and appimage share a name, so the browser morphs one into the other */
+.apps .pick, .apps.linux > :not(.pick) { display: none; }
+.apps.linux .pick { display: inline-flex; }
+#linux, #appimage { view-transition-name: linux; }
+.apps .soon { gap: 8px; opacity: .5; cursor: default; pointer-events: none; }
+.apps .soon small { font: 500 13px var(--data); }
+.apps .back { color: var(--overlay2); box-shadow: inset 0 0 0 1.5px var(--surface1); }
+::view-transition-group(linux) { animation-duration: .45s; animation-timing-function: var(--out); }
 
 /* three steps, in the order you do them */
 .path { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; counter-reset: step; font-size: 20px; color: var(--subtext1); }

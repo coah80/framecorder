@@ -21,8 +21,24 @@ const agent = navigator.userAgent.toLowerCase();
 const here = agent.includes("android") ? "android" : agent.includes("windows") ? "windows" : agent.includes("mac") ? "macos" : "linux";
 for (const app of $("apps").children) {
   if (app.dataset.file) app.href = `${REPO}/releases/latest/download/${app.dataset.file}`;
-  if (app.dataset.os === here && app.dataset.file) app.classList.remove("plain");
+  if (app.dataset.os === here) app.classList.remove("plain");
 }
+if (here === "linux") $("appimage").classList.remove("plain");
+
+// linux is two downloads. the linux button turns into them, morphing where
+// the browser can, and back takes you to every system again
+function pickLinux(on) {
+  const swap = () => {
+    $("apps").classList.toggle("linux", on);
+    $("appimage-help").hidden = !on;
+    $("mac").hidden = on;
+  };
+  if (document.startViewTransition && !still) document.startViewTransition(swap);
+  else swap();
+}
+$("linux").onclick = () => pickLinux(true);
+$("unpick").onclick = () => pickLinux(false);
+$("appimage-help").hidden = true;
 for (const s of document.querySelectorAll('[data-text="repo"]')) s.textContent = REPO;
 
 // macs block the app the first time, so if you're on one the how-to starts open
