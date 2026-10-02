@@ -287,6 +287,7 @@ impl FrameApp {
     // called straight from a click handler never opened anything.
     pub fn open_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
         if clip.location.exists() {
+            log::info!("opening {}", clip.location.display());
             cx.open_with_system(&clip.location);
         } else {
             self.toast("that file's been moved or deleted", cx);

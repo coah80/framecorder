@@ -50,11 +50,28 @@ struct Main {
 
 impl Global for Main {}
 
-fn main() {
-    env_logger::Builder::from_env(
+fn init_log() {
+    let mut log = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,naga=warn,wgpu=warn,tracing=warn"),
-    )
-    .init();
+    );
+    // a windowed program on windows has nowhere to print, so the log goes in a
+    // file next to the state. appended, since a second launch writes here too
+    // before it hands over to the first, and started over once it's big
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        let path = sync::state_dir().join("desktop.log");
+        let _ = std::fs::create_dir_all(sync::state_dir());
+        let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 2_000_000);
+        let file = std::fs::OpenOptions::new().create(true).append(!big).write(true).truncate(big).open(&path);
+        if let Ok(file) = file {
+            log.target(env_logger::Target::Pipe(Box::new(file)));
+        }
+    }
+    log.init();
+}
+
+fn main() {
+    init_log();
 
     let mut demo: Option<String> = None;
     let mut minimized = false;
