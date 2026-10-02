@@ -247,7 +247,7 @@ impl Session {
                 self.start(Kind::Recording, path, pts, Vec::new(), None);
             }
         }
-        self.route(Packet { stream: 0, pts, duration: 1, key: p.key, data: Arc::from(p.data) });
+        self.route(Packet { stream: 0, pts, duration: 1, key: p.key, data: p.data.into() });
 
         // Keep audio running through quiet stretches.
         let quiet = audio_pos(pts, self.fps) - QUIET_AFTER;
@@ -599,7 +599,7 @@ mod tests {
     }
 
     fn packet(stream: usize, pts: i64) -> Packet {
-        Packet { stream, pts, duration: 1, key: false, data: Arc::from(vec![0u8; 1]) }
+        Packet { stream, pts, duration: 1, key: false, data: vec![0u8; 1].into() }
     }
 
     #[test]

@@ -35,7 +35,48 @@ pub struct Packet {
     pub pts: i64,
     pub duration: i64,
     pub key: bool,
-    pub data: Arc<[u8]>,
+    pub data: Payload,
+}
+
+/// A packet's bytes: in memory, or on disk (the replay buffer keeps them
+/// there, see replay.rs).
+#[derive(Clone)]
+pub enum Payload {
+    Mem(Arc<[u8]>),
+    Disk { file: Arc<std::fs::File>, offset: u64, len: usize },
+}
+
+impl Payload {
+    pub fn len(&self) -> usize {
+        match self {
+            Payload::Mem(b) => b.len(),
+            Payload::Disk { len, .. } => *len,
+        }
+    }
+
+    /// Copies the bytes into `out`, which is `len()` long. Ones read from
+    /// disk get dropped from memory again right after.
+    pub fn read_into(&self, out: &mut [u8]) -> std::io::Result<()> {
+        match self {
+            Payload::Mem(b) => {
+                out.copy_from_slice(b);
+                Ok(())
+            }
+            Payload::Disk { file, offset, len } => {
+                use std::os::fd::AsRawFd;
+                use std::os::unix::fs::FileExt;
+                file.read_exact_at(out, *offset)?;
+                unsafe { libc::posix_fadvise(file.as_raw_fd(), *offset as i64, *len as i64, libc::POSIX_FADV_DONTNEED) };
+                Ok(())
+            }
+        }
+    }
+}
+
+impl From<Vec<u8>> for Payload {
+    fn from(v: Vec<u8>) -> Self {
+        Payload::Mem(Arc::from(v))
+    }
 }
 
 /// An audio encoder's stream parameters, copied so files can be set up from
@@ -214,7 +255,8 @@ impl Writer {
         unsafe {
             let pkt = self.packet;
             check(ff::av_new_packet(pkt, p.data.len() as i32), "allocating a packet")?;
-            ptr::copy_nonoverlapping(p.data.as_ptr(), (*pkt).data, p.data.len());
+            let out = std::slice::from_raw_parts_mut((*pkt).data, p.data.len());
+            p.data.read_into(out).context("reading the replay buffer")?;
             (*pkt).pts = p.pts;
             (*pkt).dts = p.pts;
             (*pkt).duration = p.duration;
