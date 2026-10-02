@@ -22,7 +22,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 dirs = "6"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4"
-self-replace = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
@@ -30,9 +29,11 @@ ureq = { version = "3", features = ["json", "platform-verifier"] }
 tray-icon = { version = "0.26.0", default-features = false, features = ["ksni"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
-# finding and closing the old app, see oldapp.rs
+# finding and closing the old app, see oldapp.rs. self-replace is the updater
+# outside windows, where it's the installer instead
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+self-replace = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }

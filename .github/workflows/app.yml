@@ -86,8 +86,9 @@ jobs:
           path: ${{ matrix.file }}
           if-no-files-found: error
 
-  # the native desktop app (desktop/, gpui-ce). one binary per platform, named
-  # what its self updater looks for. not what the site links yet
+  # the native desktop app (desktop/, gpui-ce): a binary on linux, an installer
+  # on windows and a dmg on macos, named what the site links and its self
+  # updater looks for
   desktop:
     strategy:
       fail-fast: false
@@ -96,7 +97,7 @@ jobs:
           - os: macos-latest
             file: framecorder-desktop-macos.dmg
           - os: windows-latest
-            file: framecorder-desktop-windows.exe
+            file: framecorder-setup.exe
           - os: ubuntu-22.04
             file: framecorder-desktop-linux
     runs-on: ${{ matrix.os }}
@@ -122,13 +123,27 @@ jobs:
       - name: test
         run: cargo test --release
 
-      - name: build
-        if: ${{ !startsWith(matrix.os, 'macos') }}
+      - name: build (linux)
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           cargo build --release
-          exe=target/release/framecorder-desktop
-          [ -f "$exe.exe" ] && exe="$exe.exe"
-          cp "$exe" "../${{ matrix.file }}"
+          cp target/release/framecorder-desktop "../${{ matrix.file }}"
+
+      # windows gets an installer, see windows/installer.iss
+      - name: build (windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          cargo build --release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          & $iscc /Q "/DVersion=$version" "/DExe=$PWD\target\release\framecorder-desktop.exe" "/DOutDir=$PWD\.." windows\installer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # a mac app has to be a bundle: one binary for apple silicon and intel,
       # the Info.plist (macos won't let it find the frame without its local
