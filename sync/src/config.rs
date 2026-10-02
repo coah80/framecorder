@@ -21,6 +21,8 @@ pub struct Paths {
     pub videos: PathBuf,
     pub clips: PathBuf,
     pub state: PathBuf,
+    /// Where the kernel lists batteries.
+    pub power: PathBuf,
 }
 
 impl Paths {
@@ -31,11 +33,21 @@ impl Paths {
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
-        Ok(Self::new(&home.join("Videos/framecorder"), &config.join("framecorder/sync")))
+        let mut paths = Self::new(&home.join("Videos/framecorder"), &config.join("framecorder/sync"));
+        // for trying it somewhere without the headset's battery
+        if let Some(power) = std::env::var_os("FRAMECORDER_POWER_SUPPLY") {
+            paths.power = PathBuf::from(power);
+        }
+        Ok(paths)
     }
 
     pub fn new(videos: &Path, state: &Path) -> Self {
-        Self { videos: videos.to_path_buf(), clips: videos.join("clips"), state: state.to_path_buf() }
+        Self {
+            videos: videos.to_path_buf(),
+            clips: videos.join("clips"),
+            state: state.to_path_buf(),
+            power: PathBuf::from("/sys/class/power_supply"),
+        }
     }
 
     pub fn info(&self) -> PathBuf {
@@ -49,6 +61,18 @@ impl Paths {
     }
     pub fn settings(&self) -> PathBuf {
         self.state.join("settings.json")
+    }
+    /// What a phone asked the tab to do.
+    pub fn command(&self) -> PathBuf {
+        self.state.join("command.json")
+    }
+    /// What the tab says back: how that went, and whether it's recording.
+    pub fn status(&self) -> PathBuf {
+        self.state.join("status.json")
+    }
+    /// The dashboard tab's own settings, next to our folder.
+    pub fn recording(&self) -> PathBuf {
+        self.state.parent().unwrap_or(&self.state).join("ui.conf")
     }
 }
 
