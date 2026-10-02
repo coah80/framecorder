@@ -23,6 +23,7 @@ The pieces:
 | setup and updater | `src/setup.rs`, binary `framecorder-setup` | installs a release, unlocks the panels (`--unlock`), checks for updates (`--check`) and installs them (`--update`, what the timer runs) |
 | sync service | `sync/` (own crate), binary `framecorder-sync` | HTTPS + mDNS service on the headset that hands clips to paired devices |
 | sync app | `app/` (own crate, Tauri 2) | desktop app (Windows, macOS, Linux) that pairs with the headset and downloads clips |
+| native desktop app | `desktop/` (own crate, gpui-ce) | the desktop app rebuilt in native Rust, no Tauri or webview. Same sync core as `app/` (`app/src/core`, `default-features = false`) and the same state folder, so don't run both. Not shipped yet |
 | installer | `installer/` (Bun + OpenTUI) | the terminal installer `site/install` downloads and runs |
 | site | `site/` | framecorder.coah80.com, static, no build step |
 
@@ -56,6 +57,8 @@ docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-
 
 The sync service builds anywhere: `cd sync && cargo build --release`. The app needs WebKitGTK and friends on Linux (see `app/tools/Dockerfile`), or use CI.
 
+The native desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Thumbnails need `ffmpeg` on the PATH, without it the grid shows plain tiles.
+
 ### Installer
 
 ```sh
@@ -77,6 +80,7 @@ installer/build.sh dist          # compiles for arm64 Linux, zstd'd, with its sh
 | installer | `cd installer && bunx tsc -p .` | anywhere |
 | tab screens | `framecorder-ui --preview out.rgba <state>` | headset. States: `idle`, `recording`, `saved`, `toast`, `video`, `audio`, `clips`, `sync`, `pair`, `locked`, `relocked`, `setup-*`. Raw RGBA 1280x760: `ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png` |
 | app screens | `app/tools/preview/shots.sh [dir]` | anywhere with Chrome, mocks the Tauri backend (`app/tools/preview/mock.js`) |
+| native desktop app | `cd desktop && cargo test`, and `cargo run -- --demo <screen>` to look at it | anywhere with a display. Screens: `clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`. The demo uses its own temp state, nothing real is touched |
 
 Recording itself can only be tested on a headset: `framecorder --duration 4 --no-audio /tmp/t.mp4` and look at it (`ffprobe`, pull a frame with `ffmpeg -ss 1 -i /tmp/t.mp4 -frames:v 1 f.png`). The log line every 5 s says fps, dropped frames and GPU time; the `.perf.csv` next to the file has the details. Things that only show up under a real game (GPU contention, encoder falling behind) need someone in the headset playing something heavy.
 
