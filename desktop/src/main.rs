@@ -11,6 +11,7 @@ mod autostart;
 mod clips;
 mod demo;
 mod format;
+mod oldapp;
 mod pair;
 mod prefs;
 mod selfupdate;
@@ -130,6 +131,8 @@ fn main() {
             log::warn!("couldn't point start with the computer at this app: {e}");
         }
     }
+    // the old app syncs from the same state, so it goes before we start
+    let closed_old = demo.is_none() && oldapp::close();
     let (core, rx) = match sync::start(rt.handle().clone(), demo.is_some()) {
         Ok(started) => started,
         Err(e) => {
@@ -148,6 +151,9 @@ fn main() {
             let mut app = FrameApp::new(core, rx, is_demo, cx);
             if let Some(screen) = &demo {
                 demo::seed(&mut app, screen);
+            }
+            if closed_old {
+                app.toast("the old framecorder app was still running, so it's closed now. this one does it all", cx);
             }
             app
         });
