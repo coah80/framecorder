@@ -55,8 +55,10 @@ fn nav(
 ) -> impl IntoElement {
     let on = app.page == page;
     let fg = if on { theme::MAUVE } else { theme::SUBTEXT0 };
+    // ids are per window, and the clips page has a "clips" filter too. two
+    // elements on one id share their click state and neither click lands
     div()
-        .id(name)
+        .id(SharedString::from(format!("nav-{name}")))
         .flex()
         .items_center()
         .gap(px(12.))
