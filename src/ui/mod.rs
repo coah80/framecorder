@@ -8,6 +8,7 @@
 mod pairing;
 mod paint;
 mod recorder;
+mod remote;
 mod settings;
 mod text;
 mod texture;
@@ -16,7 +17,7 @@ mod view;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 
@@ -25,6 +26,7 @@ use crate::openvr::{AppType, OpenVr};
 use crate::overlay::{DashboardTab, Event};
 use crate::toast::Toast;
 use recorder::{Kind, Recorder};
+use remote::Remote;
 use settings::Settings;
 use text::Fonts;
 use pairing::{Device, Pairing};
@@ -42,6 +44,8 @@ const RESUME_DELAY: Duration = Duration::from_millis(350);
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
+/// How often to look for settings a phone changed.
+const SETTINGS_EVERY: Duration = Duration::from_secs(1);
 const SERVER_POLL: Duration = Duration::from_secs(2);
 /// Shortest time between two clips, however they're asked for.
 const CLIP_COOLDOWN: Duration = Duration::from_secs(1);
@@ -125,6 +129,11 @@ impl Recording {
 
 struct App {
     settings: Settings,
+    /// What phones ask for, through framecorder-sync.
+    remote: Remote,
+    /// When ui.conf last changed as far as we know, and when we last looked.
+    settings_at: Option<SystemTime>,
+    settings_checked: Instant,
     recorder: Option<Recorder>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
@@ -249,6 +258,9 @@ pub fn run() -> Result<()> {
     let settings = Settings::load();
     let mut app = App {
         settings,
+        remote: Remote::new(),
+        settings_at: Settings::changed_at(),
+        settings_checked: Instant::now(),
         recorder: None,
         recording: None,
         note: None,
@@ -285,9 +297,11 @@ pub fn run() -> Result<()> {
         // On the Frame the dashboard counts as open the whole time you're in
         // the home space, so our own tab being on screen is what matters.
         let tab_visible = tab.is_visible();
+        app.check_settings();
         app.manage_recorder();
         app.auto_pause(tab_visible);
         app.check_recorder();
+        app.check_remote();
         // An update swapped this program out. Restart into it once nothing's
         // being recorded and nobody's using the tab.
         if !tab_visible && app.recording.is_none() && replaced() {
@@ -296,13 +310,18 @@ pub fn run() -> Result<()> {
             break;
         }
         if tab_visible {
-            app.check_sync();
-        } else if matches!(app.screen, Screen::Settings(_)) {
-            // Next time the tab opens it's back on the record button.
-            app.go(Screen::Home);
+            app.check_sync(true);
+        } else if app.sync.pairing.as_ref().is_some_and(|p| p.is_ok()) {
+            // A code that's out keeps working with the tab closed, since the
+            // headset's usually off by the time someone types it on a phone.
+            // It ends when it's used or runs out, and stays on screen till then.
+            app.check_sync(false);
         } else {
-            // The setup stays where it was, just without a code on show.
             app.sync.stop_pairing();
+            if matches!(app.screen, Screen::Settings(_)) {
+                // Next time the tab opens it's back on the record button.
+                app.go(Screen::Home);
+            }
         }
 
         if let (Some((text, ok)), Some(t)) = (app.toast.take(), &toast) {
@@ -444,7 +463,34 @@ impl App {
                 self.retry_at = None;
             }
         }
-        s.save();
+        self.save_settings();
+    }
+
+    fn save_settings(&mut self) -> bool {
+        let saved = self.settings.save();
+        self.settings_at = Settings::changed_at();
+        saved
+    }
+
+    /// Picks up settings a phone changed. Like ones picked here, they take
+    /// effect from the next recording.
+    fn check_settings(&mut self) {
+        if self.settings_checked.elapsed() < SETTINGS_EVERY {
+            return;
+        }
+        self.settings_checked = Instant::now();
+        let at = Settings::changed_at();
+        if at == self.settings_at {
+            return;
+        }
+        self.settings_at = at;
+        let theirs = Settings { onboarded: self.settings.onboarded, ..Settings::load() };
+        if theirs != self.settings {
+            log::info!("the recording settings changed from a phone");
+            self.settings = theirs;
+            self.retry_at = None;
+            self.dirty = true;
+        }
     }
 
     /// Stops the tab (and with it the recorder and the clip buffer) and sync,
@@ -465,7 +511,7 @@ impl App {
     /// from here on the recorder may run.
     fn finish_setup(&mut self) {
         self.settings = Settings { onboarded: true, ..self.settings };
-        if !self.settings.save() {
+        if !self.save_settings() {
             self.note = Some(("Couldn't save your settings, so the setup will show again next time".into(), false));
         }
         self.go(Screen::Home);
@@ -644,8 +690,67 @@ impl App {
         }
     }
 
+    /// Does what a phone asked for, and keeps phones posted on how things stand.
+    fn check_remote(&mut self) {
+        if let Some((command, from)) = self.remote.poll() {
+            log::info!("{from} asked to {command:?}");
+            let result = self.from_phone(command, &from);
+            self.remote.answer(result);
+            self.dirty = true;
+        }
+        let rec = self.recording.as_ref().filter(|r| !r.stopping);
+        let status = remote::Status {
+            ready: self.settings.onboarded,
+            recording: rec.is_some(),
+            running: rec.is_some_and(|r| r.running_since.is_some()),
+            recorded_ms: rec.map_or(0, |r| r.recorded().as_millis() as u64),
+            clips: self.settings.clipping(),
+            clip_ready: self.recording.is_none() && self.recorder.as_ref().is_some_and(|r| r.replay.is_some() && !r.quitting()),
+        };
+        self.remote.publish(&status);
+    }
+
+    /// "ok", or why not, in words for the phone.
+    fn from_phone(&mut self, command: remote::Command, from: &str) -> String {
+        if !self.settings.onboarded {
+            return "finish setting up framecorder on the headset first".into();
+        }
+        match command {
+            remote::Command::Record => {
+                if self.recording.is_none() {
+                    self.toggle_recording();
+                    if self.recording.is_none() {
+                        return self.note.as_ref().map_or("couldn't start recording".into(), |(n, _)| n.to_lowercase());
+                    }
+                    self.toast = Some((format!("Recording, started from {from}"), true));
+                }
+                "ok".into()
+            }
+            remote::Command::Stop => {
+                if self.recording.as_ref().is_some_and(|r| !r.stopping) {
+                    self.toggle_recording();
+                }
+                "ok".into()
+            }
+            remote::Command::Clip => {
+                if self.recording.is_some() {
+                    return "it's recording, so that's all in there already".into();
+                }
+                if self.clipped_at.is_some_and(|t| t.elapsed() < CLIP_COOLDOWN) {
+                    return "just saved one".into();
+                }
+                if !self.recorder.as_ref().is_some_and(|r| r.replay.is_some() && !r.quitting()) {
+                    let why = if self.settings.clipping().is_some() { "clips are still starting up" } else { "clips are off on the headset" };
+                    return why.into();
+                }
+                self.clip(from);
+                "ok".into()
+            }
+        }
+    }
+
     fn go(&mut self, screen: Screen) {
-        // A pairing code is only good while it's on screen.
+        // Leaving the pairing screen takes the code back.
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
         }
@@ -654,10 +759,10 @@ impl App {
         self.dirty = true;
     }
 
-    /// While the tab's on screen: keeps the paired devices up to date, once
-    /// a second while pairing (so the countdown ticks and a new device shows
-    /// up right away), every few seconds otherwise.
-    fn check_sync(&mut self) {
+    /// Keeps the paired devices up to date, once a second while pairing (so
+    /// the countdown ticks and a new device shows up right away), every few
+    /// seconds otherwise. Runs while the tab's on screen, or with a code out.
+    fn check_sync(&mut self, visible: bool) {
         let pairing = self.sync.pairing.is_some();
         let every = if pairing { Duration::from_secs(1) } else { SYNC_POLL };
         if self.sync.checked.elapsed() < every {
@@ -684,9 +789,14 @@ impl App {
         }
         self.sync.available = available;
         self.sync.devices = devices;
-        // Used up by something that didn't get paired, or run out: a fresh one.
+        // Used up by something that didn't get paired, or run out: a fresh
+        // one if someone's looking, otherwise that's the end of it.
         if self.sync.pairing.as_ref().is_some_and(|p| p.as_ref().is_ok_and(|p| !p.waiting())) {
-            self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}")));
+            if visible {
+                self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}")));
+            } else {
+                self.sync.stop_pairing();
+            }
         }
     }
 
