@@ -283,22 +283,26 @@ impl FrameApp {
         cx.notify();
     }
 
+    // gpui hands these to the system off the ui thread. windows' ShellExecute
+    // called straight from a click handler never opened anything.
     pub fn open_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
-        if let Err(e) = opener::open(&clip.location) {
-            self.toast(format!("couldn't open that: {e}"), cx);
+        if clip.location.exists() {
+            cx.open_with_system(&clip.location);
+        } else {
+            self.toast("that file's been moved or deleted", cx);
         }
     }
 
     pub fn reveal_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
-        if let Err(e) = opener::reveal(&clip.location) {
-            self.toast(format!("couldn't show that: {e}"), cx);
+        if clip.location.exists() {
+            cx.reveal_path(&clip.location);
+        } else {
+            self.toast("that file's been moved or deleted", cx);
         }
     }
 
     pub fn open_folder(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = opener::open(&self.core.download_dir) {
-            self.toast(format!("couldn't open the folder: {e}"), cx);
-        }
+        cx.open_with_system(&self.core.download_dir);
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) {
@@ -410,7 +414,7 @@ impl FrameApp {
         match std::mem::replace(&mut self.desktop, DesktopUpdate::None) {
             DesktopUpdate::Available(rel) => match rel.asset.clone() {
                 None => {
-                    let _ = opener::open(&rel.page);
+                    cx.open_url(&rel.page);
                     self.desktop = DesktopUpdate::Available(rel);
                 }
                 Some((url, size)) => self.download_desktop(rel, url, size, cx),

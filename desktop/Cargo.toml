@@ -22,7 +22,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 dirs = "6"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4"
-opener = { version = "0.8", features = ["reveal"] }
 self-replace = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
