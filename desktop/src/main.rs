@@ -105,6 +105,14 @@ fn main() {
     } else {
         None
     };
+    // "start with the computer" goes by the same name as the tauri app's, so
+    // after switching it can still start the old app. pointing it here means
+    // only this one comes up after the next login
+    if demo.is_none() && autostart::is_enabled() == Some(true) {
+        if let Err(e) = autostart::set(true) {
+            log::warn!("couldn't point start with the computer at this app: {e}");
+        }
+    }
     let (core, rx) = match sync::start(rt.handle().clone(), demo.is_some()) {
         Ok(started) => started,
         Err(e) => {
