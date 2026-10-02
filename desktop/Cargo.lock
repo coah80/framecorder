@@ -1976,6 +1976,7 @@ dependencies = [
  "gpui-ce",
  "gpui_ce_platform",
  "image",
+ "libc",
  "log",
  "self-replace",
  "serde",
@@ -1983,7 +1984,9 @@ dependencies = [
  "tokio",
  "tray-icon",
  "ureq",
+ "windows-sys 0.61.2",
  "winresource",
+ "zbus",
 ]
 
 [[package]]
