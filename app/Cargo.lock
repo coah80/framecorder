@@ -1237,6 +1237,7 @@ dependencies = [
  "dirs 6.0.0",
  "env_logger",
  "futures-util",
+ "if-addrs",
  "libc",
  "log",
  "mdns-sd",

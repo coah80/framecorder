@@ -77,15 +77,17 @@ pub async fn app_ready(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Browses mDNS for a few seconds, emitting `discovered` for each Frame.
+/// Looks for Frames for a few seconds, over mDNS and by asking every
+/// address nearby, emitting `discovered` for each one.
 #[tauri::command]
 pub async fn discover(app: AppHandle, seconds: Option<u64>) -> Result<(), String> {
     let window = Duration::from_secs(seconds.unwrap_or(6).clamp(1, 30));
-    discover::browse(window, |found| {
+    discover::look(window, true, |found| {
         let _ = app.emit("discovered", &found);
         true
     })
-    .await
+    .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -108,14 +110,14 @@ pub async fn pair(
         Some(f) => Some(crate::core::tls::normalize_fingerprint(f).ok_or("that fingerprint doesn't look right")?),
         None => None,
     };
-    let host = state.engine.pair(&addr, fp.as_deref(), &code).await?;
+    let host = state.engine.pair(&addr, fp.as_deref(), &code, None).await?;
     Ok(status_of(&state, &host.fingerprint))
 }
 
 #[tauri::command]
 pub async fn pair_link(state: State<'_, AppState>, link: String) -> Result<Status, String> {
     let l = pairlink::parse(&link)?;
-    let host = state.engine.pair(&l.addr, Some(&l.fingerprint), &l.code).await?;
+    let host = state.engine.pair(&l.addr, Some(&l.fingerprint), &l.code, None).await?;
     Ok(status_of(&state, &host.fingerprint))
 }
 

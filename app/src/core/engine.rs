@@ -4,15 +4,16 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
-use super::api::{ApiError, Client, RemoteClip, UpdateStatus};
+use super::api::{About, ApiError, Client, Recording, Remote, RemoteClip, UpdateStatus};
 use super::discover;
 use super::space;
 use super::store::{Entry, Host, Hosts, Index};
@@ -21,7 +22,11 @@ const MIN_BACKOFF: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// A Frame that dropped our token won't change its mind by itself.
 const UNPAIRED_RETRY: Duration = Duration::from_secs(300);
-const FIND_WINDOW: Duration = Duration::from_secs(3);
+/// mDNS plus a sweep of the local network, stopping as soon as it's found.
+const FIND_WINDOW: Duration = Duration::from_secs(6);
+/// A Frame that's asleep doesn't answer anyway, so the sweep for one that
+/// might have moved runs this often at most (unless someone hits retry).
+const SWEEP_EVERY: Duration = Duration::from_secs(120);
 /// How often to look whether there's room again on a full device.
 const FULL_RETRY: Duration = Duration::from_secs(60);
 /// How often to ask a connected Frame whether there's a framecorder update,
@@ -83,6 +88,19 @@ pub trait Listener: Send + Sync {
     fn busy(&self, _busy: bool) {}
     /// A clip disappeared from the Frame.
     fn removed(&self, _host: &str, _id: &str) {}
+    /// What the Frame's tab is up to; `None` once we've lost touch.
+    fn remote(&self, _host: &str, _remote: Option<&Remote>) {}
+    /// The headset's battery and storage; `None` once we've lost touch.
+    fn about(&self, _host: &str, _about: Option<&About>) {}
+}
+
+/// The platform's own way to find a Frame by fingerprint, tried before
+/// mDNS and the sweep. Android asks its system NSD service, which works
+/// without holding a multicast lock.
+pub trait Finder: Send + Sync {
+    /// Addresses (`ip:port`) the Frame with this fingerprint answers at,
+    /// waiting up to `window`. Empty if it isn't around. May block.
+    fn find(&self, fingerprint: &str, window: Duration) -> Vec<String>;
 }
 
 struct Running {
@@ -102,6 +120,11 @@ pub struct Engine {
     updates: Mutex<HashMap<String, UpdateStatus>>,
     /// Wakes the update checks, after asking for an update.
     update_nudge: Arc<Notify>,
+    finder: Mutex<Option<Arc<dyn Finder>>>,
+    /// Off where the platform finder covers mDNS (Android).
+    mdns: AtomicBool,
+    /// Per Frame, when it was last swept for.
+    swept: Mutex<HashMap<String, Instant>>,
 }
 
 pub fn now_unix() -> i64 {
@@ -130,7 +153,21 @@ impl Engine {
             statuses: Mutex::new(HashMap::new()),
             updates: Mutex::new(HashMap::new()),
             update_nudge: Arc::new(Notify::new()),
+            finder: Mutex::new(None),
+            mdns: AtomicBool::new(true),
+            swept: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Lets the platform find Frames its own way; `mdns` says whether our
+    /// own mDNS browsing should still run too.
+    pub fn set_finder(&self, finder: Option<Arc<dyn Finder>>, mdns: bool) {
+        *self.finder.lock().unwrap() = finder;
+        self.mdns.store(mdns, Ordering::SeqCst);
+    }
+
+    pub fn mdns(&self) -> bool {
+        self.mdns.load(Ordering::SeqCst)
     }
 
     pub fn hosts(&self) -> Vec<Host> {
@@ -192,8 +229,9 @@ impl Engine {
         running.insert(fingerprint.to_string(), Running { task, nudge });
     }
 
-    /// Skip the backoff and try every Frame right now.
+    /// Skip the backoff and try every Frame right now, sweep included.
     pub fn retry_now(&self) {
+        self.swept.lock().unwrap().clear();
         for r in self.running.lock().unwrap().values() {
             r.nudge.notify_one();
         }
@@ -210,13 +248,20 @@ impl Engine {
     /// Pairs with the Frame at `addr`. With a fingerprint (QR code, mDNS)
     /// only that exact Frame is accepted, and if `addr` doesn't answer we
     /// look for it by fingerprint. Without one we learn it now and pin it
-    /// from then on.
-    pub async fn pair(self: &Arc<Self>, addr: &str, fingerprint: Option<&str>, code: &str) -> Result<Host, String> {
+    /// from then on. `replaces` is a paired Frame this one is (it got a new
+    /// certificate): its clips carry over and its old pairing goes.
+    pub async fn pair(
+        self: &Arc<Self>,
+        addr: &str,
+        fingerprint: Option<&str>,
+        code: &str,
+        replaces: Option<&str>,
+    ) -> Result<Host, String> {
         let (client, addr) = match fingerprint {
             Some(fp) => match reach(&[addr.to_string()], fp, None).await {
                 Ok(v) => v,
-                Err(e @ ApiError::Unreachable(_)) => match discover::find(fp, FIND_WINDOW).await {
-                    Some(found) => reach(&found.addrs, fp, None).await.map_err(|e| e.to_string())?,
+                Err(e @ ApiError::Unreachable(_)) => match self.locate(fp, true).await {
+                    Some(addrs) => reach(&addrs, fp, None).await.map_err(|e| e.to_string())?,
                     None => return Err(e.to_string()),
                 },
                 Err(e) => return Err(e.to_string()),
@@ -243,8 +288,38 @@ impl Engine {
         };
         self.hosts.lock().unwrap().upsert(host.clone()).map_err(|e| format!("couldn't save the pairing: {e}"))?;
         log::info!("paired with {} at {addr}", host.name);
+        // before syncing starts, or everything it already sent comes over again
+        if let Some(old) = replaces.filter(|old| *old != fingerprint) {
+            match self.index.lock().unwrap().adopt(old, &fingerprint) {
+                Ok(n) => log::info!("{n} clips carried over from its old pairing"),
+                Err(e) => log::warn!("couldn't carry its clips over: {e}"),
+            }
+            if let Err(e) = self.unpair(old) {
+                log::warn!("couldn't drop its old pairing: {e}");
+            }
+        }
         self.start(&fingerprint);
         Ok(host)
+    }
+
+    /// The Frame's recording settings, `None` if its framecorder predates them.
+    pub async fn recording(&self, fingerprint: &str) -> Result<Option<Recording>, String> {
+        let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
+        let client = self.connect(&host).await.map_err(|e| e.to_string())?;
+        client.recording().await.map_err(|e| e.to_string())
+    }
+
+    pub async fn set_recording(&self, fingerprint: &str, settings: &Recording) -> Result<Recording, String> {
+        let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
+        let client = self.connect(&host).await.map_err(|e| e.to_string())?;
+        client.set_recording(settings).await.map_err(|e| e.to_string())
+    }
+
+    /// Asks the Frame to `record`, `stop` or `clip`.
+    pub async fn command(&self, fingerprint: &str, what: &str) -> Result<Remote, String> {
+        let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
+        let client = self.connect(&host).await.map_err(|e| e.to_string())?;
+        client.command(what).await.map_err(|e| e.to_string())
     }
 
     fn set_status(&self, host: &Host, state: State, message: Option<String>) {
@@ -300,7 +375,49 @@ impl Engine {
         }
     }
 
-    /// Finds the Frame, at its last address or wherever mDNS says it is now.
+    /// Where the Frame with this fingerprint is now: the platform finder
+    /// first, then mDNS and a sweep of the local network. `force` sweeps even
+    /// if it was swept for recently.
+    async fn locate(&self, fingerprint: &str, force: bool) -> Option<Vec<String>> {
+        let finder = self.finder.lock().unwrap().clone();
+        if let Some(finder) = finder {
+            let fp = fingerprint.to_string();
+            let addrs = tokio::task::spawn_blocking(move || finder.find(&fp, FIND_WINDOW)).await.unwrap_or_default();
+            if !addrs.is_empty() {
+                return Some(addrs);
+            }
+        }
+        let due = {
+            let mut swept = self.swept.lock().unwrap();
+            let due = force || swept.get(fingerprint).is_none_or(|t| t.elapsed() >= SWEEP_EVERY);
+            if due {
+                swept.insert(fingerprint.to_string(), Instant::now());
+            }
+            due
+        };
+        if !due && !self.mdns() {
+            return None;
+        }
+        // between sweeps, mDNS alone (where it runs) still gets a look
+        let window = if due { FIND_WINDOW } else { Duration::from_secs(3) };
+        let found = if due {
+            discover::find(fingerprint, window, self.mdns()).await
+        } else {
+            let mut hit = None;
+            let _ = discover::browse(window, |f| {
+                let it = f.fingerprint == fingerprint;
+                if it {
+                    hit = Some(f);
+                }
+                !it
+            })
+            .await;
+            hit
+        };
+        found.map(|f| f.addrs)
+    }
+
+    /// Finds the Frame, at its last address or wherever it is now.
     async fn connect(&self, host: &Host) -> Result<Client, ApiError> {
         let token = Some(host.token.as_str());
         let err = match reach(std::slice::from_ref(&host.addr), &host.fingerprint, token).await {
@@ -308,8 +425,8 @@ impl Engine {
             Err(e @ ApiError::Unreachable(_)) | Err(e @ ApiError::WrongFingerprint) => e,
             Err(e) => return Err(e),
         };
-        let Some(found) = discover::find(&host.fingerprint, FIND_WINDOW).await else { return Err(err) };
-        let (client, addr) = reach(&found.addrs, &host.fingerprint, token).await?;
+        let Some(addrs) = self.locate(&host.fingerprint, false).await else { return Err(err) };
+        let (client, addr) = reach(&addrs, &host.fingerprint, token).await?;
         if addr != host.addr {
             log::info!("{} moved to {addr}", host.name);
             if let Err(e) = self.hosts.lock().unwrap().set_addr(&host.fingerprint, &addr) {
@@ -368,6 +485,14 @@ impl Engine {
                             }
                         }
                     }
+                    "remote" => match serde_json::from_str::<Remote>(&ev.data) {
+                        Ok(r) => self.listener.remote(&host.fingerprint, Some(&r)),
+                        Err(e) => log::warn!("odd event from the frame: {e}"),
+                    },
+                    "frame" => match serde_json::from_str::<About>(&ev.data) {
+                        Ok(a) => self.listener.about(&host.fingerprint, Some(&a)),
+                        Err(e) => log::warn!("odd event from the frame: {e}"),
+                    },
                     _ => {}
                 }
             }
@@ -378,6 +503,8 @@ impl Engine {
             e = self.watch_updates(&client, &host) => e,
         };
         self.listener.busy(false);
+        self.listener.remote(&host.fingerprint, None);
+        self.listener.about(&host.fingerprint, None);
         (true, err)
     }
 
