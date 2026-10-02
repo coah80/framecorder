@@ -31,7 +31,15 @@ impl Hub {
     }
 
     pub fn send(&self, change: &Change) {
-        let msg: Arc<str> = sse_message(change).into();
+        self.push(sse_message(change).into());
+    }
+
+    /// Anything that isn't a library change, like the tab starting to record.
+    pub fn broadcast(&self, event: &str, data: &str) {
+        self.push(format!("event: {event}\ndata: {data}\n\n").into());
+    }
+
+    fn push(&self, msg: Arc<str>) {
         self.subs.lock().unwrap().retain(|(_, tx)| match tx.try_send(msg.clone()) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => false,
