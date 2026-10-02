@@ -1,191 +1,224 @@
-# AGENTS.md
+# framecorder
 
-Notes for anyone, person or agent, changing framecorder. Read this before you touch anything. `README.md` is the user-facing overview, `docs/how-it-works.md` the deep dive on the capture pipeline.
+framecorder records what the Steam Frame's panels actually show, without taking frames from the game. It runs on the headset next to SteamVR: a recorder that reads the display's scanout buffer, a tab in the SteamVR dashboard to drive it, and a sync service that hands clips to a desktop or phone app on the same Wi-Fi. It's free, open source and donationware.
 
-## Branches and PRs
+## Before you start
 
-- `dev` is where work happens. Every change goes to `dev`, as a PR or a push there
-- `main` is what's released. The site deploys from it, and installs, updates and app downloads all come from its releases. Nothing goes on `main` except a release merged in from `dev`
-- Pushing to `dev` changes nothing for anyone: no site deploy, no app build, no update reaches a headset
-- Merge into `dev` with a merge commit or rebase (squash is fine for a single-author PR). Releases merge `dev` into `main` with a plain merge commit, never a squash, so every contributor's commits land on `main` with their author
+1. Work on `dev`. `main` only takes releases (see [Branches](#branches)).
+2. Read [the five ways to hurt yourself](#the-five-ways-to-hurt-yourself). Most of them are about a real person's headset.
+3. Find the surfaces your change touches in [Hit every surface](#hit-every-surface) before you write code, not after.
 
-## Project overview
+## What we never compromise on
 
-framecorder records what the Steam Frame's panels actually show, with as little cost to the game as possible. It runs on the headset (SteamOS, arm64, Snapdragon 8 Gen 3 / Adreno 750) next to SteamVR.
+### 1. The game comes first
 
-The pieces:
+framecorder runs on a phone chip next to games that already use all of it. Every millisecond of GPU and every percent of CPU we take is taken from the game. Measure before and after (the `perf summary` log line, or the `.perf.csv` next to a recording) and put the numbers in the commit. Nothing busy-waits, nothing repaints continuously, the tab sleeps when nobody's looking at it, and big buffers go to disk, not RAM.
 
-| piece | where | what |
-|---|---|---|
-| recorder | `src/main.rs` + modules, binary `framecorder` | grabs the scanout buffer every vblank, undoes the lens in one compute shader, encodes on the hardware encoder, muxes with audio |
-| dashboard tab | `src/ui/`, binary `framecorder-ui` | the tab in the SteamVR dashboard: record button, clips, settings, pairing. Starts and talks to the recorder |
-| panel helper | `src/grab.rs`, binary `framecorder-grab` | the only part with a permission (`cap_sys_admin`). Turns a framebuffer id into a dmabuf for the recorder |
-| setup and updater | `src/setup.rs`, binary `framecorder-setup` | installs a release, unlocks the panels (`--unlock`), checks for updates (`--check`) and installs them (`--update`, what the timer runs) |
-| sync service | `sync/` (own crate), binary `framecorder-sync` | HTTPS + mDNS service on the headset that hands clips to paired devices |
-| sync app | `app/` (own crate, Tauri 2) | desktop app (Windows, macOS, Linux) that pairs with the headset and downloads clips |
-| native desktop app | `desktop/` (own crate, gpui-ce) | the desktop app rebuilt in native Rust, no Tauri or webview. Same sync core as `app/` (`app/src/core`, `default-features = false`) and the same state folder, so don't run both. Not shipped yet |
-| installer | `installer/` (Bun + OpenTUI) | the terminal installer `site/install` downloads and runs |
-| site | `site/` | framecorder.coah80.com, static, no build step |
+### 2. It records what you saw
 
-Key tech: Rust everywhere on the headset, Vulkan (`ash`) for the compute shader, DRM/KMS (`drm`) for the scanout, V4L2 (`v4l2r`) for the encoder, FFmpeg (`ffmpeg-sys-next`) for AAC and muxing, PipeWire for audio, OpenVR through function tables (no bindings crate, see `src/openvr.rs`, `src/overlay.rs`, `src/input.rs`, `src/apps.rs`).
+The point is footage that looks like the headset felt: the real panels, level, centered where you look, at a steady frame rate, untorn, with sound. A recording that's tilted, choppy, torn or silent is a broken product even when nothing errored. Judge capture changes by looking at what comes out.
 
-### How the recorder works, in one breath
+### 3. Seamless for normal people
 
-Wait for vblank, find the plane the VR compositor scans out, export that framebuffer as a dmabuf (directly if the recorder has the permission, otherwise through `framecorder-grab`), import it into Vulkan as-is (UBWC compressed), run `shaders/convert.comp` to crop, undistort (per channel, with SteamVR's lens data from `ComputeDistortion`), undo the display cant, scale and convert to NV12 straight into the encoder's input buffer. HEVC or H.264 from the hardware encoder, AAC from PipeWire, muxed into MP4/MKV by a separate writer thread. Clips come from a replay buffer of already encoded packets, kept in segment files on disk.
+Most users aren't developers and won't open a terminal again after installing. One command installs everything and asks for the password once, and updates arrive on their own. If a user has to do a step, ask whether the software could do it instead. Messages say what happened and what to do next, in plain words.
 
-## Setup
+### 4. One product, many surfaces
 
-### On the headset (needs developer mode and ssh)
+The headset tab, the installer, the sync service, the desktop app, the Android app and the site are one product. They should look like it and behave like it, and a feature on one usually belongs on the others.
+
+### 5. Private and safe by default
+
+Clips never leave the user's network: sync is local Wi-Fi only, pinned at pairing, paired devices only. One tiny helper holds the one permission framecorder needs. We never touch a user's videos unless they ask.
+
+## How we like to work
+
+Simple systems that feel obvious. Find the real constraint, then the smallest change that makes the right behavior unsurprising. Don't keep complexity because it's already there (Frame Drop and the flatpak went the day the one-line installer replaced them), and don't add machinery because it looks impressive. Measure twice, cut once, and YAGNI.
+
+Do what the maintainer asked, in the smallest realistic way. Don't quietly widen the task or quietly shrink it. If something outside the task matters, finish the task, then mention it once.
+
+When you talk to us, lead with the next action, number the steps, give real time estimates ("about 10 minutes"), and say plainly what works now. When you need someone in the headset, say exactly what to do and for how long, then do the analysis yourself.
+
+Everything here is a good default, not a law. A maintainer's call in the moment wins.
+
+## A small glossary
+
+- **you**: the agent reading this and changing framecorder.
+- **we, maintainers**: coah and the people building framecorder. Who you're talking to.
+- **user**: the person wearing the Frame and using framecorder.
+- **the Frame, the headset**: Valve's Steam Frame, running SteamOS and SteamVR.
+- **recorder**: the `framecorder` binary. **tab**: the dashboard tab, `framecorder-ui`. **helper**: `framecorder-grab`, the panel helper.
+- **panels**: capture from the display's scanout, the real thing. **SteamVR's view**: the fallback (`--source headset`), SteamVR's level mirror, for when the panels aren't unlocked.
+- **unlocked**: the helper is installed, root owned, with its permission.
+- **clip**: the last N seconds, from the replay buffer. **recording**: started and stopped by hand.
+- **sync service**: `framecorder-sync` on the headset. **app**: the desktop or Android client that pairs with it. **paired device**: a client holding a token.
+- **release**: a `v*` GitHub release from `main`, what the site serves. **dev build**: the `dev-build` prerelease, from `dev`.
+- **cant**: the Frame's displays are rotated (~10.7° roll each way, ~5° yaw and pitch). The recorder undoes it.
+
+## The five ways to hurt yourself
+
+1. **Breaking the live headset.** The Frame you reach over ssh is a real person's, often with someone wearing it. Reading anything is fine. Don't uninstall framecorder, remove the helper, wipe `~/.config/framecorder` (their pairings) or delete anything in `~/Videos/framecorder` unless asked. Copy config to `/tmp` before a test that removes things, and put it back after. Try new builds from `target/release/` or the dev build instead of overwriting the install, and ask before anything that interrupts someone playing: restarting SteamVR, restarting the tab mid-recording, changing the refresh rate.
+2. **Killing by pattern.** Never `pkill -f` or `pgrep | kill` by name over ssh. The pattern is in your own ssh command's arguments, so you kill your own shell, and you can hit the user's installer or recorder too. Kill only a PID you captured at spawn.
+3. **Starting SteamVR yourself.** Never start SteamVR, and never start `framecorder-ui.service` while SteamVR is off (it's bound to `steamvr.service` and pulls it up). A SteamVR started outside its own launcher leaves the headset stuck in passthrough. Never connect a second `framecorder-ui` to SteamVR either: SteamVR counts every copy as the same app, and one leaving takes the other's tab down.
+4. **Spending the user's password.** `sudo` on the headset needs the user's password, and it's theirs. Use it only when a maintainer said so for this task. Never write it anywhere: the repo, scripts, logs, commit messages, notes or memory.
+5. **Shipping by accident.** Anything on `main`, any asset on a `v*` release, and any run of `site.yml` reaches every headset within 6 hours through the updater. Only do those when a maintainer says "release". Test builds go to the dev build.
+
+## Hit every surface
+
+The most common defect here is a change that works on the path you tested and is missing everywhere else. Before calling work done, walk this list and say which entries applied:
+
+- **Surfaces.** Recorder flags (`framecorder --help`), the tab (home tiles, settings, setup flow, footer notes), the sync API, the desktop app (`app/`, and the native `desktop/` that's replacing it), the Android app, the installer, the site, `README.md` and `docs/how-it-works.md`.
+- **Capture paths.** Panels and SteamVR's view. Eye view and both-eyes raw view. 16:9, 1:1 and 9:16. Left and right eye. 72, 90, 120 and 144 Hz.
+- **Recorder states.** Idle with clips on, recording, paused (the tab's on screen), recording while clips are on, clips off, display off (headset off a head).
+- **Lifecycle.** Fresh install, update by the timer (no password, the tab restarts itself when idle), update from the installer or the app, dev build and back, close and reopen, uninstall, SteamVR restarting, PipeWire restarting, the headset sleeping.
+- **Old versions.** An update is installed by the previous release's updater and setup, and old apps talk to new headsets and the other way round. Change the install, update or sync protocol only in ways the old side copes with.
+- **Reverse states.** A way in needs a way out and a way to see it: pair and unpair, close and reopen, install and remove, unlock and the note when it's lost.
+- **Docs.** Does the change make the README, `docs/how-it-works.md` or this file wrong? Fix it (see [Documentation](#documentation)).
+
+## Branches
+
+- `dev` is where work happens. Commit and push there as you go.
+- `main` is what's released. The site deploys from it, and installs, updates and app downloads all come from its releases. It takes nothing but a release merged in from `dev`.
+- Pushing to `dev` changes nothing for anyone: no site deploy, no app build, no update.
+- Merge PRs into `dev` with a merge commit or a rebase. Merge `dev` into `main` with a plain merge commit, never a squash, so every contributor's commits land on `main` under their name.
+
+## Developing
+
+**On the headset** (developer mode and ssh on). SteamOS has the compilers and headers already:
 
 ```sh
 curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 git clone https://github.com/coah80/framecorder && cd framecorder && git switch dev
-cargo build --release            # needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which SteamOS has
-cargo test --release --lib
+cargo build --release
 ```
 
-`./install.sh` builds and installs from source (older path, the installer is the normal one).
-
-### Off the headset
-
-The headset crate won't build on a stock desktop without FFmpeg, PipeWire, libdrm and glslc dev packages. Use the dev container, Debian trixie has FFmpeg 7.1 like SteamOS:
+**Off the headset.** The headset crate needs FFmpeg 7.1, PipeWire, libdrm and glslc. The dev container has them:
 
 ```sh
 docker build -t framecorder-dev tools/dev
 docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-cargo:/root/.cargo/registry framecorder-dev cargo test
 ```
 
-The sync service builds anywhere: `cd sync && cargo build --release`. The app needs WebKitGTK and friends on Linux (see `app/tools/Dockerfile`), or use CI.
+The sync service (`sync/`) builds anywhere. The desktop app (`app/`) needs WebKitGTK on Linux (`app/tools/Dockerfile`), or let CI build it. The native desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails need `ffmpeg` on the PATH; without it the grid shows plain tiles.
 
-The native desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Thumbnails need `ffmpeg` on the PATH, without it the grid shows plain tiles.
-
-### Installer
+**The installer** (`installer/`, Bun and OpenTUI). `--cpu='*' --os='*'` pulls every platform's native package, so it cross-compiles for the headset from x86:
 
 ```sh
-cd installer && bun install --frozen-lockfile --cpu='*' --os='*'
-bunx tsc -p .                    # typecheck
-installer/build.sh dist          # compiles for arm64 Linux, zstd'd, with its sha256
+cd installer && bun install --frozen-lockfile --cpu='*' --os='*' && bunx tsc -p .
+installer/build.sh dist     # arm64 binary, zstd'd, with its sha256
 ```
 
-`--cpu='*' --os='*'` pulls every platform's OpenTUI native package, so it can cross-compile for the headset from an x86 machine.
+## Verifying
 
-## Testing
+- **Smallest proof that the change works.** Run the tests for what you touched, not everything:
 
-| what | command | where |
-|---|---|---|
-| recorder, tab, setup, grab | `cargo test --release --lib` | headset or dev container |
-| sync service | `cd sync && cargo test` | anywhere |
-| app core | `cd app && cargo test` (includes `tests/pinned_tls.rs`) | Linux with the app's deps, or CI |
-| sync end to end | `app/tools/e2e.sh` | one Linux box: real daemon against a temp HOME, the app headless as the client |
-| installer | `cd installer && bunx tsc -p .` | anywhere |
-| tab screens | `framecorder-ui --preview out.rgba <state>` | headset. States: `idle`, `recording`, `saved`, `toast`, `video`, `audio`, `clips`, `sync`, `pair`, `locked`, `relocked`, `setup-*`. Raw RGBA 1280x760: `ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png` |
-| app screens | `app/tools/preview/shots.sh [dir]` | anywhere with Chrome, mocks the Tauri backend (`app/tools/preview/mock.js`) |
-| native desktop app | `cd desktop && cargo test`, and `cargo run -- --demo <screen>` to look at it | anywhere with a display. Screens: `clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`. The demo uses its own temp state, nothing real is touched |
+  | touched | run |
+  |---|---|
+  | recorder, tab, setup, helper | `cargo test --release --lib` (headset or dev container) |
+  | sync service | `cd sync && cargo test` |
+  | app core | `cd app && cargo test`, and `app/tools/e2e.sh` for real daemon-to-client sync |
+  | native desktop app | `cd desktop && cargo test` |
+  | installer | `cd installer && bunx tsc -p .` |
 
-Recording itself can only be tested on a headset: `framecorder --duration 4 --no-audio /tmp/t.mp4` and look at it (`ffprobe`, pull a frame with `ffmpeg -ss 1 -i /tmp/t.mp4 -frames:v 1 f.png`). The log line every 5 s says fps, dropped frames and GPU time; the `.perf.csv` next to the file has the details. Things that only show up under a real game (GPU contention, encoder falling behind) need someone in the headset playing something heavy.
+- **Capture changes need a recording.** On the headset: `framecorder --duration 4 --no-audio /tmp/t.mp4`, then look at it (`ffprobe`, or a frame with `ffmpeg -ss 1 -i /tmp/t.mp4 -frames:v 1 f.png`). A test recorder can run next to the tab's. Keep them short, in `/tmp`, and delete them after.
+- **Measure, don't guess.** The recorder logs fps, dropped frames and GPU time every 5 s, the tab's recorder into `~/.local/state/framecorder/recorder.log`. For frame pacing in a file, look at the gaps between packet timestamps (`ffprobe -show_entries packet=pts_time`).
+- **Some bugs only show up under a real game** (GPU contention, the encoder falling behind, PipeWire restarts). Ask a maintainer to play something heavy, with exact steps, then pull the logs and files and do the analysis yourself.
+- **Screens.** The tab: `framecorder-ui --preview out.rgba <state>`, a raw 1280x760 RGBA frame (`ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png`). The app: `app/tools/preview/shots.sh`. The native desktop app: `cd desktop && cargo run -- --demo <screen>` (`clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`), which runs on its own temporary state. The site: headless Chrome against `python3 -m http.server -d site`. Look at what you made before you call it done.
+- **Installer and update flows** get tested with the dev build, never the public release. The installer runs in a terminal and takes clicks (SGR mouse) as well as keys, so it can be driven through a pty.
+- **Tests stay offline, fast and deterministic.** No headset for `--lib`, no sleeps standing in for synchronization, no tests that only mirror the implementation.
 
-Add or update tests for what you change. Keep tests offline and fast, no headset needed for `--lib`.
+## Shipping
 
-## Code style
-
-- Rust 2021, `cargo fmt`. No `unwrap()` on anything that can fail at runtime, `anyhow` with context (`.context("reading the scanout plane")`) for errors
-- Comments say why, in plain words, not what. Doc comments are full sentences. Match the density of the file you're in
-- User-facing words (tab, installer, site, README, commit messages, log lines) are plain, friendly and mostly lowercase on the site and installer, sentence case in the tab. No jargon where a normal word works, no emoji
-- Keep dependencies few. OpenVR is called through `FnTable:` interface tables with slot numbers from `openvr_capi.h`, not a bindings crate. Write the slot index as a named const with the interface version next to it
-- Small files and modules by job. New headset features usually mean a new module in `src/` and a line in `lib.rs` or `main.rs`
-- Never make the recorder heavier without measuring: `perf summary` in the log, or the `.perf.csv`
-
-## Commits and PRs
-
-- Conventional commits, lowercase: `feat:`, `fix:`, `docs:`, `chore:`, `perf:`, `refactor:`, `test:` (`feat(app):` for the sync app). The subject says what changed for someone using it
-- The body explains why, with the numbers if there are any (fps before and after, ms of GPU, MB of RAM)
-- PRs go to `dev`. Say what you tested and on what (headset model, SteamOS version, phone), and attach screenshots for anything visual
-- Before opening one: `cargo test` for the crates you touched, `bunx tsc -p .` if you touched the installer
-
-## Build, release and deploy
-
-### Dev builds (trying `dev` on a headset)
+**Dev build.** Puts `dev` up as the `dev-build` prerelease (needs `gh`, `bun`, and the headset over ssh as `FRAME`, `frame` by default):
 
 ```sh
-packaging/dev.sh                 # needs gh, bun, and the headset over ssh (FRAME=frame by default)
+packaging/dev.sh
 ```
 
-Builds the headset release on the headset, the installer locally, and uploads both to the `dev-build` prerelease (it never counts as the latest release). Install it on a headset, in Konsole (desktop mode) or over ssh:
+Install it on a headset, in Konsole (desktop mode) or over ssh. That headset then takes its updates from the dev build too, until the normal install command is run again:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/coah80/framecorder/dev/site/install | FRAMECORDER_DL=https://github.com/coah80/framecorder/releases/download/dev-build sh
+curl -fsSL https://framecorder.coah80.com/install | sh     # back to releases
 ```
 
-A headset installed that way stays on dev: its updates come from the dev build (`~/.local/share/framecorder/source` says where from). Going back to releases is the normal command, then update:
+**Release** (only when a maintainer says so):
 
-```sh
-curl -fsSL https://framecorder.coah80.com/install | sh
-```
+1. Merge `dev` into `main` with a merge commit. `main` has its own short `AGENTS.md`; keep `main`'s on a conflict.
+2. Bump the version in `Cargo.toml`, `sync/Cargo.toml`, `app/Cargo.toml` and `app/tauri.conf.json`, and the `Cargo.lock` next to each.
+3. `gh workflow run app.yml --ref main` builds the desktop apps. Download the artifacts.
+4. On the headset, `packaging/release.sh` makes `dist/framecorder-arm64.tar.gz` and its `.sha256`.
+5. `gh release create vX.Y.Z --target main` with the headset tarball and checksum, the three desktop apps and the Android APK.
 
-### Releasing
+Publishing redeploys the site, which serves the release to the installer and every headset's updater. If the site job didn't run: `gh workflow run site.yml --ref main`. Check it's live with `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`.
 
-1. Merge `dev` into `main` with a merge commit (`main` has its own short `AGENTS.md`, keep `main`'s on a conflict)
-2. Bump the version in `Cargo.toml`, `sync/Cargo.toml`, `app/Cargo.toml` and `app/tauri.conf.json`, and the `Cargo.lock` next to each
-3. Build the desktop apps: `gh workflow run app.yml --ref main`, then download the artifacts
-4. On the headset: `packaging/release.sh` (makes `dist/framecorder-arm64.tar.gz` and its `.sha256`)
-5. `gh release create vX.Y.Z --target main` with the headset tarball and checksum, the three desktop apps, and the Android APK
+**CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the desktop apps on a `v*` tag or by hand.
 
-Publishing the release redeploys the site (`.github/workflows/site.yml`), which copies the release into `site/dl/` and builds the installer. That's what the install command and every headset's updater download from. If the site job didn't run, `gh workflow run site.yml --ref main`. Check it's live: `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`.
+## Pull requests and commits
 
-### CI
+- Don't open, merge or close PRs unless a maintainer asks. PRs go to `dev`.
+- Conventional commits, lowercase, saying what changed for the user: `fix: recordings come out level on the frame's canted displays`. Types: `feat`, `fix`, `perf`, `docs`, `chore`, `refactor`, `test`, with a scope for the apps (`feat(app):`).
+- The body says why, with the numbers: fps before and after, ms of GPU, MB of RAM.
+- One concern per PR. If the description says "also", split it.
+- Visual changes need before and after screenshots. Capture changes need before and after numbers, or frames. Say what you tested on (headset, SteamOS version, phone).
 
-- `.github/workflows/site.yml`: on push to `main` touching `site/` or `installer/`, on a published (non-pre)release, or by hand. Builds the installer, copies the latest release's headset tarball into `site/dl`, deploys GitHub Pages. Pages only accepts `main` and `v*` tags
-- `.github/workflows/app.yml`: on a `v*` tag or by hand. Builds the desktop app for macOS, Windows and Linux, attaches them to the tag's release
+## Documentation
 
-## What's installed on a headset
+- `README.md` is for users: what framecorder does, how to install, how to use it. Same voice as the product, no contributor tooling.
+- `docs/how-it-works.md` explains the capture pipeline and the reasons behind it.
+- This file holds what a contributor would get wrong without it. If reading the code answers the question, leave it out. No file catalogs, no feature lists, no PR summaries.
+- When something documented changes, rewrite or remove the old text. Don't append a second account.
 
-| path | what |
-|---|---|
-| `~/.local/bin/framecorder`, `framecorder-ui`, `framecorder-sync`, `framecorder-setup` | the programs, replaced by updates |
-| `~/.local/lib/framecorder/framecorder-grab` | the panel helper, root owned, `cap_sys_admin+ep`, installed once by unlocking, never touched by updates |
-| `~/.config/systemd/user/framecorder-{ui,sync,update}.service`, `framecorder-update.timer` | services: the tab starts with SteamVR, sync runs whenever the headset's on, the update timer every 6 hours |
-| `~/.config/framecorder/ui.conf` | the tab's settings |
-| `~/.config/framecorder/sync/` | the sync service's certificate, key and paired devices |
-| `~/.local/share/framecorder/` | the unpacked release, `installed.sha256`, `source` (dev builds), `relock`, the SteamVR manifest and input bindings |
-| `~/.local/state/framecorder/recorder.log` | the recorder's log (the tab's is in the journal: `journalctl --user -u framecorder-ui`) |
-| `~/.local/share/applications/framecorder.desktop` | so it's in the app bar's "launch program" and desktop mode's menu |
-| `~/Videos/framecorder/`, `clips/` | recordings and clips |
+## Plans and work artifacts
 
-Remove everything but the videos: `framecorder-ui --uninstall`, or the installer's remove.
+Don't commit plans, research notes, test recordings, screenshots or scratch files. Keep them in `/tmp`. `dist/` is gitignored. A merged commit is the record of the work.
 
-## Security
+## How it works
 
-- Only `framecorder-grab` holds a permission, and it only exports scanout buffers of a `/dev/dri/card*` device, nothing else. Keep it that small. Updates never replace it, the installer does, with the user's password
-- The sync service is HTTPS with a self-signed certificate that devices pin at pairing (no CA). Every route but `/hello` and `/pair` needs a paired device's bearer token. Anything that can start a recording or change settings over the network must stay behind that check and take only whitelisted values
-- Never commit keys, keystores or tokens, or anything from a real headset's config (certificates, paired devices, calibration)
-- Downloads (installer, release, updates) are checked against their sha256 before anything runs
+Every vblank, the recorder finds the plane the VR compositor scans out and exports that framebuffer as a dmabuf, directly if it holds the permission, otherwise through the helper. Vulkan imports it as-is (UBWC compressed), and one compute shader (`shaders/convert.comp`) crops it, undoes the lens per color channel with SteamVR's own distortion data, undoes the cant, scales it and converts it to NV12 straight into the hardware encoder's input. HEVC or H.264 comes out of the encoder, AAC from PipeWire, and a writer thread muxes them. Clips are cut from a replay buffer of already encoded packets, kept in segment files on disk. The tab owns the recorder process and talks to it over stdin and stdout. The sync service watches `~/Videos/framecorder` and serves new files over HTTPS to paired devices, announcing itself over mDNS (`_framecorder._tcp`).
 
-## Gotchas (learned the hard way on the Frame)
+## Where code lives
+
+- `src/main.rs` and its modules: the recorder (`kms.rs` scanout, `gpu.rs` Vulkan, `lut.rs` lens and cant, `encoder.rs` V4L2, `audio.rs` PipeWire, `mux.rs` and `writer.rs` files, `replay.rs` clips).
+- `src/ui/`: the tab. Drawn by hand into a pixel canvas (`paint.rs`, `text.rs`), no UI toolkit, so every effect costs CPU.
+- `src/grab.rs`, `src/setup.rs`, `src/apps.rs`: the helper and its protocol, install, unlock, update and uninstall, SteamVR app registration. Their binaries are in `src/bin/`.
+- `src/openvr.rs`, `src/overlay.rs`, `src/input.rs`: OpenVR through `FnTable:` interface tables, no bindings crate. Slot indices come from `openvr_capi.h`, as named consts next to the interface version.
+- `sync/`: the sync service, its own crate. `app/`: the desktop app (Tauri 2), `app/src/core/` is the sync client with no UI in it. `desktop/`: the desktop app rebuilt natively on gpui-ce, not shipped yet. It runs the same sync core (`app/src/core`, `default-features = false`) and the same state folder as `app/`, so pairings carry over, and you must never run both at once. `installer/`: the terminal installer. `site/`: the website. `packaging/`: services and the build scripts.
+
+## What the code can't tell you
+
+The traps below come from the Frame itself, and each one cost real time to find.
 
 **The display**
-- The compositor draws every frame into one scanout buffer (front buffer rendering). Read it late and you get torn frames, or green UBWC garbage. The recorder's GPU queue is high priority for that reason, don't lower the default
-- The displays are canted (~10.7° roll each way, ~5° yaw and pitch). SteamVR doesn't tell apps: `GetEyeToHeadTransform` is level, the compositor applies the cant itself from the headset's factory calibration (`~/.config/openvr/config/cv/*/config.json`, `tracking_to_eye_transform[eye].eye_to_head`, what `vrcmd --info` calls the compositor residual). `src/lut.rs` undoes it. The calibration's x and y point the other way from ours
-- The hidden area mesh and render target are the game's (level) space, the distortion is the compositor's (canted) space. Check visibility in the right one, or rotated corners come out black
-- The lens shows more up than down, so center the video ~16° above straight ahead, like SteamVR's own headset view
+- The compositor draws every frame into the one buffer the panels are showing. Read it late and you get torn frames or green UBWC garbage. That's why the recorder's GPU queue is high priority. Don't lower the default.
+- SteamVR tells apps the eyes are level (`GetEyeToHeadTransform`). The compositor applies the cant itself, from the headset's factory calibration: `~/.config/openvr/config/cv/*/config.json`, `tracking_to_eye_transform[eye].eye_to_head` (what `vrcmd --info` shows as "compositor residual"). The calibration's x and y point the other way from ours.
+- The game's render target and hidden area mesh are level. The distortion data is canted. Check visibility in the right one, or rotated corners come out black.
+- The lens shows more above than below, so the video centers ~16° above straight ahead, like SteamVR's own view.
 
 **SteamVR**
-- Never start SteamVR from outside its own launcher. Connecting as an overlay app can launch `vrserver`, and a server started that way leaves the headset stuck in passthrough. The tab waits for SteamVR instead
-- framecorder is registered as `coah80.framecorder` (`src/apps.rs`). SteamVR counts every `framecorder-ui` process as that app, and one leaving takes the other's dashboard tab with it. A second launch must never connect to SteamVR: the lock in `src/ui/mod.rs` makes it signal the running one to show its tab and leave
-- In a `.vrmanifest` on this headset the binary key is `binary_path_linux_arm` (SteamVR skips the app without it)
-- Overlay error 17 is `KeyInUse`
-- The app bar's "launch program" lists desktop entries, not SteamVR apps. That's what `framecorder.desktop` is for
+- framecorder is registered as `coah80.framecorder`. In a `.vrmanifest` on this headset the binary key is `binary_path_linux_arm`, and SteamVR skips the app without it.
+- Overlay error 17 is `KeyInUse`.
+- The app bar's "launch program" lists desktop entries, not SteamVR apps. That's what `framecorder.desktop` is for.
 
 **SteamOS**
-- Desktop mode is a nested Plasma session with its own `XDG_RUNTIME_DIR` and session bus. `systemctl --user` from Konsole there can't find the user's systemd unless pointed at `/run/user/<uid>` (`use_user_manager` in `src/setup.rs`)
-- A permission lives on a file, and replacing the file drops it. That's why the permission is on the helper, not the recorder
-- There's no polkit rule that allows `setcap` without a password, and SteamOS has no password until the user sets one. The installer asks for it (and helps set one)
-- `/home` survives SteamOS updates. `/usr` is read-only, `/var` is per OS slot
-- Starting a game can restart PipeWire. Anything holding a PipeWire stream has to notice and reconnect (`src/audio.rs`)
-- Memory is tight and swap is compressed. Big buffers (the clip buffer, files being written) go to disk at the disk's pace, not into RAM, or PipeWire's realtime thread gets swapped out and killed
-- The headset doesn't answer ping, check port 22 instead
+- Desktop mode is a nested Plasma session with its own `XDG_RUNTIME_DIR` and session bus. `systemctl --user` from Konsole there misses the real user session unless pointed at `/run/user/<uid>` (`use_user_manager` in `src/setup.rs`).
+- A file capability lives on the file, and replacing the file drops it. That's why the permission is on the helper, which updates never touch, and not on the recorder.
+- No polkit rule allows `setcap` without a password, and SteamOS has no password until the user sets one. The installer asks for it, and helps set one.
+- `/home` survives SteamOS updates. `/usr` is read-only, and `/var` belongs to one OS slot.
+- Starting a game can restart PipeWire. Anything holding a stream has to notice and reconnect (`src/audio.rs`).
+- Memory is tight and swap is compressed. Holding hundreds of MB lets the kernel swap out PipeWire's realtime thread, which gets it killed and silences the whole headset. Big buffers go to disk at the disk's pace.
+- The headset doesn't answer ping. Check port 22, and if it's gone, it's asleep: ask someone to wake it.
 
 **Tooling**
-- `pkill -f <pattern>` over ssh can match the ssh command's own shell and kill it. Use `pgrep` with a `[b]racket` trick or keep the PID
-- `gh release` in scripts: give it `</dev/null` or it can sit waiting for input
-- `bun build --compile` straight into `/tmp` produced a broken binary once, build into the project's `dist/`
-- Frame Drop and the flatpak are gone on purpose, don't bring them back: neither can ask for the password the panels need
+- `gh release` in a script waits for input unless given `</dev/null`.
+- `bun build --compile` straight into `/tmp` once produced a broken binary. Build into the project's `dist/`.
+- Frame Drop and the flatpak are gone on purpose. Neither could ask for the password the panels need, so don't bring them back.
+
+## Taste
+
+- Complexity lives at the edges: OpenVR and DRM wrappers, the helper protocol, the sync API. The capture loop stays straight-line and the tab stays dumb.
+- Errors use `anyhow` with context that reads well in a log (`.context("reading the scanout plane")`). No `unwrap()` on anything that can fail at runtime.
+- Comments say why, in plain words, and move with the code. Doc comments are full sentences. Match the file you're in.
+- User-facing words are plain and friendly: mostly lowercase on the site and in the installer, sentence case in the tab, no jargon, no emoji. Say what happened and what to do.
+- Few dependencies. Reach for a crate only when it's clearly better than the small thing you'd write.
+- The brand is one look everywhere: dark, mauve `#cba6f7`, Montserrat for headings, Poppins for text, Space Grotesk for numbers.
+- If a rule here fights the task, say so plainly and get a maintainer's sign-off before breaking it.
