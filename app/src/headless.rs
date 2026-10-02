@@ -112,11 +112,11 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     if discover {
         println!("looking for frames for {discover_secs}s...");
-        discover::browse(Duration::from_secs(discover_secs), |f| {
-            println!("{}  {}  fp={}", f.name, f.addr, f.fingerprint);
+        discover::look(Duration::from_secs(discover_secs), true, |f| {
+            println!("{}  {}  fp={}", f.name, f.addrs.join(","), f.fingerprint);
             true
         })
-        .await?;
+        .await;
         return Ok(());
     }
 
@@ -133,7 +133,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     if let Some(link) = link {
         let l = pairlink::parse(&link)?;
-        let h = engine.pair(&l.addr, Some(&l.fingerprint), &l.code).await?;
+        let h = engine.pair(&l.addr, Some(&l.fingerprint), &l.code, None).await?;
         println!("paired with {} ({})", h.name, h.fingerprint);
     } else if let Some(addr) = host {
         let code = code.ok_or("--host needs --code too")?;
@@ -144,7 +144,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
             Some(f) => Some(crate::core::tls::normalize_fingerprint(&f).ok_or("that fingerprint doesn't look right")?),
             None => None,
         };
-        let h = engine.pair(&addr, fp.as_deref(), &code).await?;
+        let h = engine.pair(&addr, fp.as_deref(), &code, None).await?;
         println!("paired with {} ({})", h.name, h.fingerprint);
     }
 

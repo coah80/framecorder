@@ -1,8 +1,10 @@
 # framecorder app
 
 Gets clips and recordings off your Steam Frame over Wi-Fi, onto your desktop
-(Linux, Windows, macOS later) or Android phone. It talks to `framecorder-sync`
-on the headset (see `../sync`).
+(Linux, Windows, macOS). It talks to `framecorder-sync` on the headset (see
+`../sync`). The Android app is native now, in `../android`; it runs the same
+sync core from `src/core` through UniFFI. The Tauri Android build below
+(`gen/android`, `plugins/framesync`) is what it replaces.
 
 **It only syncs while the Frame is on (awake), on the same Wi-Fi, and
 framecorder is running on it.** If the app is closed (or Android stops it),
@@ -12,7 +14,9 @@ Frame.
 
 ## What it does
 
-- Finds Frames with mDNS (`_framecorder._tcp`), or takes an address.
+- Finds Frames with mDNS (`_framecorder._tcp`) and, for networks that drop
+  multicast, by asking every address in the local /24 on port 38619
+  (`discover::look`); or takes an address.
 - Pairs with the 6-digit code from "pair a device" on the Frame. Desktop: pick
   the Frame from the list and type the code. Android: scan the QR code (or
   type it). Pasting the `framecorder://pair?...` link works everywhere.
@@ -153,5 +157,5 @@ Pairs if asked to, then syncs into `<dir>` until killed. Without `--fp`,
   WebKitGTK needs a GStreamer HEVC decoder. Without one you get a placeholder.
 - Android 15 limits `dataSync` foreground services to 6 h a day; after that
   the service stops and syncing continues only while the app is in front.
-- Scanning a QR code with the phone's own camera app doesn't open the app
-  (no deep link handler yet), use the scan button in the app.
+- Scanning a QR code with the phone's own camera app doesn't open the Tauri
+  Android build (the native one in `../android` handles the link).
