@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "com.framecorder.core"
+cdylib_name = "framecorder_ffi"
+android = true

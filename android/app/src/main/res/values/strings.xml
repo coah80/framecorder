@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">framecorder</string>
+    <string name="channel_sync">syncing</string>
+    <string name="channel_sync_about">shows while framecorder keeps syncing in the background</string>
+    <string name="channel_clips">new clips</string>
+    <string name="channel_clips_about">a clip or recording from your frame just landed</string>
+    <string name="tile_clip">save clip</string>
+    <string name="tile_record">record</string>
+</resources>

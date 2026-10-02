@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- dark from the first frame, so nothing flashes white before Compose draws -->
+    <style name="Theme.Framecorder" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <color name="surface">#141218</color>
+    <color name="icon_background">#2C2142</color>
+    <color name="icon_bracket">#E8DEF8</color>
+    <color name="icon_dot">#CBA6F7</color>
+</resources>
