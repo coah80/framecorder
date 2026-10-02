@@ -35,7 +35,7 @@ UninstallDisplayIcon={app}\framecorder.exe
 UninstallDisplayName=framecorder
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; an update closes the running app for us, the updater starts it again
+; CloseApp below closes the running app first, this is the backstop
 CloseApplications=force
 RestartApplications=no
 OutputDir={#OutDir}
@@ -54,11 +54,35 @@ Name: "{userdesktop}\framecorder"; Filename: "{app}\framecorder.exe"
 Filename: "{app}\framecorder.exe"; Description: "open framecorder"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\framecorder.exe"; Parameters: "--after-update"; Flags: nowait; Check: WizardSilent
 
-[UninstallRun]
-; close this install's app, and only it, before its files go
-Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-Process framecorder -ErrorAction SilentlyContinue | Where-Object Path -eq '{app}\framecorder.exe' | Stop-Process -Force"""; Flags: runhidden waituntilterminated; RunOnceId: "CloseApp"
-
 [Registry]
 ; the app's "start with the computer" setting goes with it. this never writes
 ; the value, it only removes it on uninstall
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "framecorder"; Flags: uninsdeletevalue dontcreatekey
+
+[Code]
+// closes this install's app, and only it, before installing over it or
+// removing it. it lives in the tray and doesn't answer windows' restart
+// manager, which would wait 30 s before forcing it
+procedure CloseApp();
+var
+  Exe: String;
+  Code: Integer;
+begin
+  Exe := ExpandConstant('{app}\framecorder.exe');
+  // a quote in the path (a user called o'brien) is doubled for powershell
+  StringChangeEx(Exe, '''', '''''', True);
+  Exec('powershell.exe', '-NoProfile -Command "Get-Process framecorder -ErrorAction SilentlyContinue | Where-Object Path -eq ''' + Exe + ''' | Stop-Process -Force"',
+    '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  CloseApp();
+  Result := '';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    CloseApp();
+end;
