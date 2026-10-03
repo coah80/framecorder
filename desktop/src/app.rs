@@ -74,6 +74,9 @@ pub struct FrameApp {
     /// the library itself holds the keyboard when nothing else does, for ctrl+f
     pub library: FocusHandle,
     pub statuses: Vec<Status>,
+    /// the frame "unpair" was clicked on, while settings asks if we mean it
+    pub unpairing: Option<String>,
+    pub confirm: FocusHandle,
     pub clips: Vec<Clip>,
     pub progress: Option<Progress>,
     pub batch: Option<Batch>,
@@ -158,6 +161,8 @@ impl FrameApp {
             search: cx.focus_handle(),
             library: cx.focus_handle(),
             statuses: Vec::new(),
+            unpairing: None,
+            confirm: cx.focus_handle(),
             clips: Vec::new(),
             progress: None,
             batch: None,
@@ -336,11 +341,53 @@ impl FrameApp {
         self.toast("trying again", cx);
     }
 
-    pub fn forget(&mut self, fingerprint: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.core.engine.unpair(fingerprint) {
-            self.toast(format!("couldn't forget it: {e}"), cx);
+    // unpairing a frame
+
+    /// "unpair" in settings asks first. the question takes the keyboard, so
+    /// esc keeps the frame and enter lets it go
+    pub fn ask_unpair(&mut self, fingerprint: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.unpairing = Some(fingerprint);
+        self.confirm.focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn keep_frame(&mut self, cx: &mut Context<Self>) {
+        self.unpairing = None;
+        cx.notify();
+    }
+
+    pub fn confirm_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        match ev.keystroke.key.as_str() {
+            "escape" => self.keep_frame(cx),
+            "enter" => {
+                if let Some(fp) = self.unpairing.take() {
+                    self.unpair(&fp, cx);
+                }
+            }
+            _ => return,
         }
+        cx.stop_propagation();
+    }
+
+    pub fn unpair(&mut self, fingerprint: &str, cx: &mut Context<Self>) {
+        self.unpairing = None;
+        let name = self.statuses.iter().find(|s| s.fingerprint == fingerprint).map(|s| s.name.clone());
+        let done = if self.demo {
+            self.statuses.retain(|s| s.fingerprint != fingerprint);
+            true
+        } else {
+            match self.core.engine.unpair(fingerprint) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.toast(format!("couldn't unpair it: {e}"), cx);
+                    false
+                }
+            }
+        };
         self.refresh();
+        if let Some(name) = name.filter(|_| done) {
+            self.toast(format!("unpaired {name}"), cx);
+        }
         if self.statuses.is_empty() && !self.demo {
             self.open_pair(cx);
         }

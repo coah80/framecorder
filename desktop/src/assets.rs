@@ -52,6 +52,7 @@ const ICONS: &[(&str, &str)] = &[
     ("disk", r#"<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 14h.01M11 14h6"/>"#),
     ("x", r#"<path d="M6 6l12 12M18 6 6 18"/>"#),
     ("search", r#"<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>"#),
+    ("unlink", r#"<path d="m10 6 1-1a4 4 0 0 1 5.7 5.7l-1 1M14 18l-1 1a4 4 0 0 1-5.7-5.7l1-1M4 4l16 16"/>"#),
 ];
 
 pub struct Assets;
