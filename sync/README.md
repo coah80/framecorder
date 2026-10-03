@@ -112,6 +112,11 @@ if it's taken another one is picked and written to info.json).
 | `GET\|HEAD /clips/{id}/file` | the MP4. `Range: bytes=` (single range, open-ended and suffix too) gets a 206 with `Content-Range`; unsatisfiable gets 416. `ETag` + `If-Range` supported. `Content-Type: video/mp4` |
 | `GET /events` | Server-Sent Events: `event: new` + clip JSON when a file finishes, `event: removed` + `{"id"}`, `: keepalive` every 25 s. One stream per device; a new one replaces the old |
 | `DELETE /clips/{id}` | 204 only if `delete_after_sync` is true in settings.json, else 403. The app calls this after a verified download, so the setting means what it says |
+| `GET /recording` | the recording settings from the dashboard tab's `ui.conf`: `{"shape":"wide"\|"square"\|"tall"\|"both","quality":"standard"\|"high"\|"max","fps":"auto"\|"60"\|"30","game_audio","mic","clips","clip":15\|30\|60\|120}`. Defaults when the tab hasn't saved any |
+| `GET /frame` | how the headset's doing: `{"battery":{"percent","charging"}\|null,"storage":{"free","total","videos"}\|null}`, bytes. The battery is the headset's own from `/sys/class/power_supply` (`FRAMECORDER_POWER_SUPPLY` points elsewhere, for trying it off a headset). `/events` sends it as `event: frame` when the stream opens and when it changes, looked at every 25 s |
+| `GET /remote` | what the dashboard tab is up to: `{"available","ready","recording","running","elapsed_ms","clips":secs\|null,"clip_ready"}`. `available` is false when the tab isn't running. `/events` sends the same as `event: remote` when the stream opens and whenever it changes |
+| `POST /remote` `{"do":"record"\|"stop"\|"clip"}` | passes it to the tab (`command.json` in, `status.json` back) and answers once the tab has: the new status, 409 with the tab's reason, 503 when it isn't running, 504 if it didn't answer within 4 s |
+| `PATCH /recording` | any of those keys; writes `ui.conf` (other lines kept) and returns them all, 400 for a value the tab wouldn't take. The tab picks the change up within a second and uses it from the next recording |
 
 A file counts as finished when it's renamed (or written and closed) to
 `*.mp4` in `~/Videos/framecorder/` or `.../clips/`. `*.part`, `*.perf.csv`,

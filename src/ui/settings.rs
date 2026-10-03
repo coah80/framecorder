@@ -2,6 +2,7 @@
 //! recorder arguments.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
@@ -132,10 +133,13 @@ impl Settings {
             log::warn!("couldn't save settings: no config directory");
             return false;
         };
+        // Written whole and renamed over, since framecorder-sync reads it too.
+        let tmp = path.with_extension("conf.tmp");
         let result = path
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|_| std::fs::write(&path, self.text()));
+            .and_then(|_| std::fs::write(&tmp, self.text()))
+            .and_then(|_| std::fs::rename(&tmp, &path));
         if let Err(e) = &result {
             log::warn!("couldn't save settings to {}: {e}", path.display());
         }
@@ -171,6 +175,11 @@ impl Settings {
             self.clip_secs,
             self.onboarded
         )
+    }
+
+    /// When the file last changed. A phone changes it through framecorder-sync.
+    pub fn changed_at() -> Option<SystemTime> {
+        config_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
     }
 
     pub fn clipping(&self) -> Option<u32> {

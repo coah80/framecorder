@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The viewfinder: four corners and the record dot, all inside the 66dp
+     safe zone, nothing baked in behind them. Vector, so every mask and size
+     gets clean edges. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M34,45v-7a4,4 0,0 1,4 -4h7M63,34h7a4,4 0,0 1,4 4v7M74,63v7a4,4 0,0 1,-4 4h-7M45,74h-7a4,4 0,0 1,-4 -4v-7"
+        android:strokeWidth="5"
+        android:strokeColor="@color/icon_bracket"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="@color/icon_dot"
+        android:pathData="M54,43a11,11 0,1 1,0 22a11,11 0,1 1,0 -22z" />
+</vector>

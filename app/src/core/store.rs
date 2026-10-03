@@ -150,6 +150,22 @@ impl Index {
         self.entries.iter().find(|e| e.key() == key)
     }
 
+    /// Hands everything synced from `from` over to `to`, for a Frame that was
+    /// paired again with a new certificate. Clips `to` already has stay where
+    /// they are. Returns how many moved.
+    pub fn adopt(&mut self, from: &str, to: &str) -> io::Result<usize> {
+        let have: Vec<String> = self.entries.iter().filter(|e| e.host == to).map(|e| e.id.clone()).collect();
+        let mut moved = 0;
+        for e in self.entries.iter_mut().filter(|e| e.host == from && !have.contains(&e.id)) {
+            e.host = to.to_string();
+            moved += 1;
+        }
+        if moved > 0 {
+            self.save()?;
+        }
+        Ok(moved)
+    }
+
     /// Newest first.
     pub fn list(&self) -> Vec<Entry> {
         let mut list = self.entries.clone();
@@ -203,6 +219,25 @@ mod tests {
         assert!(again.contains("fp1", "c-a"));
         assert!(!again.contains("fp1", "c-b"));
         assert!(again.get(&entry("fp2", "c-b").key()).is_some());
+    }
+
+    #[test]
+    fn a_new_certificate_keeps_what_came_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut index = Index::load(dir.path());
+        index.insert(entry("old", "c-a")).unwrap();
+        index.insert(entry("old", "c-b")).unwrap();
+        index.insert(entry("new", "c-b")).unwrap();
+        index.insert(entry("other", "c-c")).unwrap();
+
+        assert_eq!(index.adopt("old", "new").unwrap(), 1);
+        let again = Index::load(dir.path());
+        assert!(again.contains("new", "c-a"));
+        // already there under the new one, so the old copy stays put
+        assert!(again.contains("old", "c-b"));
+        assert!(again.contains("other", "c-c"));
+        let remote = vec![remote("c-a", "clip", 1), remote("c-b", "clip", 2)];
+        assert!(again.missing("new", &remote).is_empty());
     }
 
     #[test]

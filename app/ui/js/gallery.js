@@ -1,11 +1,10 @@
 // the clips: newest first, a day at a time, one row each.
 
-import { $, ui, el, icon, android, invoke, convertFileSrc, toast } from "./state.js";
+import { $, ui, el, icon, invoke, convertFileSrc, toast } from "./state.js";
 import { size, length, time, day, dayKey } from "./format.js";
 
 const PLAY = '<path d="m9 7 9 5-9 5z"/>';
 const FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
-const SHARE = '<path d="M12 15V4M8 8l4-4 4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>';
 
 // rows are kept between renders so thumbnails don't reload
 const rows = new Map();
@@ -48,7 +47,6 @@ function row(c, fresh) {
   const text = el("div", "clip-text");
   const sub = el("div", "sub");
   sub.append(el("span", "kind", c.kind === "clip" ? "clip" : "recording"));
-  if (c.duration_s != null) sub.append(el("span", "data len-text", length(c.duration_s)));
   sub.append(el("span", "data", c.exists ? size(c.size) : "moved or deleted"));
   text.append(el("b", null, time(c.created)), sub);
   li.append(thumb, text);
@@ -60,19 +58,17 @@ function row(c, fresh) {
     li.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && run("open_clip", c);
 
     const more = el("button", "btn icon");
-    more.append(icon(android() ? SHARE : FOLDER));
-    more.title = android() ? "share" : "show in folder";
+    more.append(icon(FOLDER));
+    more.title = "show in folder";
     more.setAttribute("aria-label", more.title);
     more.onclick = (e) => {
       e.stopPropagation();
-      run(android() ? "share_clip" : "reveal_clip", c);
+      run("reveal_clip", c);
     };
     li.append(more);
 
-    if (!android()) {
-      thumb.dataset.location = c.location;
-      thumbs.observe(thumb);
-    }
+    thumb.dataset.location = c.location;
+    thumbs.observe(thumb);
   } else {
     li.classList.add("missing");
   }

@@ -71,6 +71,10 @@ impl Devices {
         list.iter().find(|d| same(d.token_sha256.as_bytes(), hash.as_bytes())).map(|d| d.id.clone())
     }
 
+    pub fn name(&self, id: &str) -> Option<String> {
+        self.list.lock().unwrap().iter().find(|d| d.id == id).map(|d| d.name.clone())
+    }
+
     pub fn touch(&self, id: &str) {
         let now = now_unix();
         self.update(|list| {
@@ -156,7 +160,11 @@ impl Pairing {
 
         let result = self.verify(code, unix);
         if let Err(e) = result {
-            failures.push_back(now);
+            // only wrong guesses count: with no code out, or an expired one,
+            // there's nothing to guess, and retrying shouldn't lock anyone out
+            if e == PairError::Wrong {
+                failures.push_back(now);
+            }
             return Err(e);
         }
         drop(failures);
@@ -275,6 +283,21 @@ mod tests {
         // and it lets up after the window
         let later = start + FAILURE_WINDOW + Duration::from_secs(1);
         assert!(pairing.pair_at("123456", "x", &devices, 1000, later).is_ok());
+    }
+
+    #[test]
+    fn missing_or_expired_codes_dont_lock_pairing() {
+        let (dir, devices, pairing) = setup();
+        let now = Instant::now();
+        for _ in 0..MAX_FAILURES * 2 {
+            assert_eq!(pairing.pair_at("123456", "x", &devices, 1000, now).err(), Some(PairError::NoCode));
+        }
+        write_code(dir.path(), "123456", 900);
+        for _ in 0..MAX_FAILURES * 2 {
+            assert_eq!(pairing.pair_at("123456", "x", &devices, 1000, now).err(), Some(PairError::Expired));
+        }
+        write_code(dir.path(), "123456", 2000);
+        assert!(pairing.pair_at("123456", "x", &devices, 1000, now).is_ok());
     }
 
     #[test]

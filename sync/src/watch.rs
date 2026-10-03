@@ -112,6 +112,10 @@ impl Watcher {
             if name == "devices.json" {
                 self.devices.reload();
             }
+            // the tab writes it whole and renames it into place
+            if name == "status.json" && mask.contains(EventMask::MOVED_TO) {
+                self.hub.broadcast("remote", &crate::remote::status(&self.paths).to_string());
+            }
             return;
         }
 
