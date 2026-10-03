@@ -1,11 +1,12 @@
 //! what a frame's tab is up to, as the app keeps it: what the frame pushes,
 //! the words for it, and asking it to record, stop or save a clip.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use framecorder_app_lib::core::api::{About, Recording, Remote};
 use framecorder_app_lib::core::engine::{State, Status};
-use gpui::Context;
+use gpui::{Context, SystemNotification};
 
 use crate::app::{FrameApp, Page};
 use crate::format;
@@ -39,6 +40,11 @@ impl Live {
     pub fn recording(&self) -> bool {
         self.remote.as_ref().is_some_and(|r| r.recording)
     }
+
+    /// the tab's there and set up, so it takes commands
+    pub fn usable(&self) -> bool {
+        self.remote.as_ref().is_some_and(|r| r.available && r.ready)
+    }
 }
 
 /// the headline on the frame page, and the line under it
@@ -67,6 +73,14 @@ pub fn words(s: &Status, remote: Option<&Remote>) -> (&'static str, String) {
             Some(_) => ("ready", said("clips are starting up...")),
         },
     }
+}
+
+/// the frame the tray acts on: the first connected one whose tab takes commands
+pub fn target<'a>(statuses: &'a [Status], live: &'a HashMap<String, Live>) -> Option<(&'a Status, &'a Remote)> {
+    statuses.iter().find_map(|s| {
+        let l = live.get(&s.fingerprint).filter(|l| s.state == State::Connected && l.usable())?;
+        Some((s, l.remote.as_ref()?))
+    })
 }
 
 impl FrameApp {
@@ -117,7 +131,7 @@ impl FrameApp {
 
     pub fn sync_tray(&self) {
         if let Some(t) = &self.tray {
-            t.set_status(&self.statuses);
+            t.refresh(&self.statuses, target(&self.statuses, &self.live));
         }
     }
 
@@ -203,8 +217,9 @@ impl FrameApp {
 
     // commands
 
-    /// asks a frame to `record`, `stop` or `clip`, and says how it went
-    pub fn command(&mut self, fingerprint: &str, what: &'static str, cx: &mut Context<Self>) {
+    /// asks a frame to `record`, `stop` or `clip`. from the tray the window
+    /// may be closed, so how it went is said in a notification
+    pub fn command(&mut self, fingerprint: &str, what: &'static str, from_tray: bool, cx: &mut Context<Self>) {
         let l = self.live_mut(fingerprint);
         if l.sending.is_some() {
             return;
@@ -230,12 +245,37 @@ impl FrameApp {
                     Err(e) => Some(e),
                 };
                 if let Some(said) = said {
-                    app.toast(said, cx);
+                    if from_tray {
+                        cx.show_system_notification(SystemNotification {
+                            tag: "framecorder-remote".into(),
+                            title: "framecorder".into(),
+                            body: said.into(),
+                            actions: Vec::new(),
+                        });
+                    } else {
+                        app.toast(said, cx);
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// record or stop, whichever the tray's frame is up for
+    pub fn tray_record(&mut self, cx: &mut Context<Self>) {
+        if let Some((s, r)) = target(&self.statuses, &self.live) {
+            let fp = s.fingerprint.clone();
+            let what = if r.recording { "stop" } else { "record" };
+            self.command(&fp, what, true, cx);
+        }
+    }
+
+    pub fn tray_clip(&mut self, cx: &mut Context<Self>) {
+        if let Some((s, _)) = target(&self.statuses, &self.live) {
+            let fp = s.fingerprint.clone();
+            self.command(&fp, "clip", true, cx);
+        }
     }
 
     /// a demo frame does what it's told, right here
@@ -293,4 +333,16 @@ mod tests {
         assert_eq!(l.elapsed_ms(at + Duration::from_secs(3)), 5_000);
     }
 
+    #[test]
+    fn the_tray_follows_a_frame_that_takes_commands() {
+        let mut live = HashMap::new();
+        live.insert("a".to_string(), Live { remote: Some(remote(false, false, false, false, None, false)), ..Default::default() });
+        live.insert("b".to_string(), Live { remote: Some(remote(true, true, false, false, Some(30), true)), ..Default::default() });
+        let mut b = status(State::Connected);
+        b.fingerprint = "b".into();
+        let statuses = [status(State::Connected), b];
+        assert_eq!(target(&statuses, &live).map(|(s, _)| s.fingerprint.as_str()), Some("b"));
+        live.remove("b");
+        assert!(target(&statuses, &live).is_none());
+    }
 }
