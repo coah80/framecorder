@@ -34,7 +34,7 @@ fn clips() -> Vec<Clip> {
     let today = now.date_naive();
     let at = |days_ago: i64, h: u32, m: u32| {
         let d = today - chrono::Duration::days(days_ago);
-        d.and_hms_opt(h, m, 0).unwrap().and_local_timezone(chrono::Local).unwrap().timestamp()
+        d.and_hms_opt(h, m, 0).unwrap().and_local_timezone(chrono::Local).unwrap()
     };
     let rows: [(i64, u32, u32, bool, f64, u64); 9] = [
         (0, 15, 42, true, 30., 48_000_000),
@@ -51,9 +51,11 @@ fn clips() -> Vec<Clip> {
         .enumerate()
         .map(|(i, &(d, h, m, is_clip, len, size))| Clip {
             key: format!("demo/{i}"),
+            // named the way the frame names them
+            name: at(d, h, m).format("%Y-%m-%d_%H-%M-%S.mp4").to_string(),
             is_clip,
             size,
-            created: at(d, h, m),
+            created: at(d, h, m).timestamp(),
             duration_s: Some(len),
             location: PathBuf::from("/nonexistent"),
         })

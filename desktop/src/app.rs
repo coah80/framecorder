@@ -68,6 +68,11 @@ pub struct FrameApp {
     pub page: Page,
     pub filter: Filter,
     pub grid: bool,
+    /// what's typed in the library's search box
+    pub query: String,
+    pub search: FocusHandle,
+    /// the library itself holds the keyboard when nothing else does, for ctrl+f
+    pub library: FocusHandle,
     pub statuses: Vec<Status>,
     pub clips: Vec<Clip>,
     pub progress: Option<Progress>,
@@ -149,6 +154,9 @@ impl FrameApp {
             page: Page::Clips,
             filter: Filter::All,
             grid: prefs.grid,
+            query: String::new(),
+            search: cx.focus_handle(),
+            library: cx.focus_handle(),
             statuses: Vec::new(),
             clips: Vec::new(),
             progress: None,
@@ -347,6 +355,59 @@ impl FrameApp {
         if let Err(e) = prefs::save(&self.core.state_dir, &p) {
             self.toast(format!("couldn't save that: {e}"), cx);
         }
+    }
+
+    // the library's search box
+
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.query.clear();
+        cx.notify();
+    }
+
+    /// keys that reach the library page itself: ctrl+f (cmd+f on a mac) goes
+    /// to the search box, esc clears what was searched
+    pub fn library_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        if (k.modifiers.control || k.modifiers.platform) && k.key == "f" {
+            self.focus_search(window, cx);
+        } else if k.key == "escape" && !self.query.is_empty() {
+            self.clear_search(cx);
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+    }
+
+    /// typing in the search box. esc clears it, and leaves it once it's empty
+    pub fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        let shortcut = k.modifiers.control || k.modifiers.platform;
+        if shortcut && k.key == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                self.query.push_str(text.split_whitespace().collect::<Vec<_>>().join(" ").as_str());
+            }
+        } else if shortcut && k.key == "backspace" {
+            self.query.clear();
+        } else if k.key == "backspace" {
+            self.query.pop();
+        } else if k.key == "escape" && !self.query.is_empty() {
+            self.query.clear();
+        } else if k.key == "escape" || k.key == "enter" {
+            self.library.focus(window, cx);
+        } else if let Some(ch) = k.key_char.as_deref().filter(|_| !shortcut) {
+            if ch.chars().all(|c| !c.is_control()) {
+                self.query.push_str(ch);
+            }
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+        cx.notify();
     }
 
     pub fn set_grid(&mut self, grid: bool, cx: &mut Context<Self>) {
@@ -635,7 +696,7 @@ impl Render for FrameApp {
                 .child(sidebar::render(self, cx))
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
-                    _ => clips::render(self, cx).into_any_element(),
+                    _ => clips::render(self, window, cx).into_any_element(),
                 })
                 .into_any_element()
         };

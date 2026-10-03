@@ -26,7 +26,7 @@ pub fn length(secs: f64) -> String {
     }
 }
 
-fn local(unix: i64) -> DateTime<Local> {
+pub fn local(unix: i64) -> DateTime<Local> {
     Local.timestamp_opt(unix, 0).single().unwrap_or_else(Local::now)
 }
 
@@ -42,8 +42,12 @@ pub fn day_key(unix: i64) -> chrono::NaiveDate {
 
 /// "today", "yesterday", then "tue 29 sep"
 pub fn day(unix: i64) -> String {
+    day_on(unix, Local::now().date_naive())
+}
+
+/// the same, seen from a given day
+pub fn day_on(unix: i64, today: chrono::NaiveDate) -> String {
     let d = day_key(unix);
-    let today = Local::now().date_naive();
     match (today - d).num_days() {
         0 => "today".into(),
         1 => "yesterday".into(),
