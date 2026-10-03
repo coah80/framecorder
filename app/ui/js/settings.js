@@ -1,6 +1,6 @@
 // settings: the frames paired, where clips go, how syncing works.
 
-import { $, ui, el, android, invoke, toast } from "./state.js";
+import { $, ui, el, invoke, toast } from "./state.js";
 
 const STATE_TEXT = {
   connected: "connected",
@@ -56,14 +56,10 @@ export function renderSettings(refresh) {
   $("autostart").checked = !!ui.autostart;
   renderBackground();
   $("where").textContent = ui.downloadDir;
-  $("open-folder-2").hidden = android();
 }
 
-// desktop only: whether it stays in the tray, and leaving it
+// whether it stays in the tray
 function renderBackground() {
-  const desktop = ui.background != null;
-  $("background-row").hidden = !desktop;
-  $("quit-row").hidden = !desktop;
   $("background").checked = !!ui.background;
   const tray = ui.platform === "macos" ? "menu bar" : "tray";
   $("autostart-what").textContent = ui.background

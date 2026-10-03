@@ -102,17 +102,4 @@ export function initPairing(paired) {
     if ($("code").value.length < 6) return error("the code is 6 digits");
     pair(invoke("pair", { ...selected, code: $("code").value }), $("pair-go"));
   });
-  $("scan").addEventListener("click", async () => {
-    const scanner = window.__TAURI__.barcodeScanner;
-    if (!scanner) return error("the scanner isn't available, type the code instead");
-    try {
-      let perm = await scanner.checkPermissions();
-      if (perm !== "granted") perm = await scanner.requestPermissions();
-      if (perm !== "granted") return error("framecorder needs the camera to scan. or type the code instead.");
-      const res = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] });
-      await pair(invoke("pair_link", { link: res.content }), $("scan"));
-    } catch (e) {
-      error(e);
-    }
-  });
 }

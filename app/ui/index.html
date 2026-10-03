@@ -30,11 +30,6 @@
         <button class="link" id="pair-cancel" hidden>cancel</button>
       </div>
 
-      <button class="btn primary wide" id="scan" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>
-        scan the qr code instead
-      </button>
-
       <ol class="steps">
         <li class="card step">
           <span class="num">1</span>
@@ -87,7 +82,7 @@
           <button data-kind="clip">clips <span class="n"></span></button>
           <button data-kind="recording">recordings <span class="n"></span></button>
         </div>
-        <button class="btn small" id="open-folder" hidden>
+        <button class="btn small" id="open-folder">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           open folder
         </button>
@@ -121,14 +116,14 @@
           </div>
           <label class="switch"><input type="checkbox" id="autostart"><span></span></label>
         </div>
-        <div class="row setting" id="background-row" hidden>
+        <div class="row setting">
           <div>
             <b>keep running when closed</b>
             <p class="muted small" id="background-what"></p>
           </div>
           <label class="switch"><input type="checkbox" id="background"><span></span></label>
         </div>
-        <div class="row setting" id="quit-row" hidden>
+        <div class="row setting">
           <div>
             <b>quit framecorder</b>
             <p class="muted small">stops syncing until you open it again. clips catch up then</p>
@@ -140,7 +135,7 @@
             <b>clips are saved to</b>
             <p class="muted small data" id="where"></p>
           </div>
-          <button class="btn" id="open-folder-2" hidden>open</button>
+          <button class="btn" id="open-folder-2">open</button>
         </div>
       </div>
 

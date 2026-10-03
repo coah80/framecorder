@@ -1,8 +1,0 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- always dark, matching the app (catppuccin mocha base) -->
-    <style name="Theme.framecorder_app" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="android:windowBackground">#1e1e2e</item>
-        <item name="android:statusBarColor">#181825</item>
-        <item name="android:navigationBarColor">#1e1e2e</item>
-    </style>
-</resources>

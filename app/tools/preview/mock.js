@@ -1,9 +1,8 @@
 // stands in for tauri so the ui runs in a plain browser.
-// pick a state with ?s=connected|update|updating|syncing|unreachable|full|forgot|empty|pair|pair-found|settings and &p=android
+// pick a state with ?s=connected|update|updating|syncing|unreachable|full|forgot|empty|pair|pair-found|settings
 (() => {
   const q = new URLSearchParams(location.search);
   const state = q.get("s") || "connected";
-  const platform = q.get("p") || "windows";
   const listeners = {};
   const emit = (name, payload) => (listeners[name] || []).forEach((cb) => cb({ payload }));
   const now = Math.floor(Date.now() / 1000);
@@ -32,8 +31,7 @@
   }[state];
 
   const commands = {
-    overview: () => ({ platform, hosts, clips: state === "empty" || !hosts.length ? [] : clips, download_dir: platform === "android" ? "Movies/framecorder" : "C:\\Users\\you\\Videos\\framecorder", autostart: platform === "android" ? null : true, background: platform === "android" ? null : true }),
-    app_ready: () => null,
+    overview: () => ({ platform: "windows", hosts, clips: state === "empty" || !hosts.length ? [] : clips, download_dir: "C:\\Users\\you\\Videos\\framecorder", autostart: true, background: true }),
     discover: () => new Promise((done) => {
       if (state === "pair-found") setTimeout(() => emit("discovered", { name: "frame", addr: "192.168.1.20:38619", fingerprint: "d2b7" }), 150);
       setTimeout(done, 400);

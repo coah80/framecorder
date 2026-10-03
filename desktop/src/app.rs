@@ -707,7 +707,7 @@ impl FrameApp {
         } else {
             format!("{}:38619", found.addr)
         };
-        let job = self.core.rt.spawn(async move { engine.pair(&addr, Some(&found.fingerprint), &code).await });
+        let job = self.core.rt.spawn(async move { engine.pair(&addr, Some(&found.fingerprint), &code, None).await });
         cx.spawn(async move |this, cx| {
             let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |app, cx| {

@@ -1,14 +1,12 @@
 // how each frame is doing: a card per frame.
 
-import { $, ui, el, android, invoke, toast } from "./state.js";
+import { $, ui, el, invoke, toast } from "./state.js";
 
 const NEEDS = ["your frame is on", "it's on this wi-fi", "framecorder is running on it"];
 
 // what happens to clips saved while the app isn't running, in settings
 export function renderNeeds() {
-  $("how-closed").textContent = android()
-    ? "if the app is closed or android stops it, clips catch up the next time it's open."
-    : "if the app is closed (not just the window), clips catch up the next time it's open.";
+  $("how-closed").textContent = "if the app is closed (not just the window), clips catch up the next time it's open.";
 }
 
 function ok(h) {
@@ -55,7 +53,7 @@ function problem(h, showPairing) {
   const button = el("button", "btn");
   if (h.state === "full") {
     text.append(
-      el("h3", null, android() ? "this phone is out of space" : "this computer is out of space"),
+      el("h3", null, "this computer is out of space"),
       el("p", "state", `the clips are still on ${h.name}, nothing is lost. free up some space and they sync on their own.`),
     );
     if (h.message) text.append(el("p", "detail", `the next one ${h.message}`));

@@ -9,7 +9,7 @@ use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use serde::Deserialize;
@@ -17,8 +17,11 @@ use serde::Deserialize;
 use crate::config::{Paths, Settings, PROTOCOL_VERSION};
 use crate::devices::{Devices, PairError, Pairing};
 use crate::events::{clip_json, Hub};
+use crate::frame;
 use crate::http::{self, parse_range, read_request, write_error, write_head, write_json, Range, ReadError, Request};
 use crate::library::{Change, Library};
+use crate::recording;
+use crate::remote::{self, Remote};
 use crate::throttle::Throttle;
 
 const MAX_CONNECTIONS: usize = 32;
@@ -44,6 +47,7 @@ pub struct State {
     pub pairing: Pairing,
     pub throttle: Arc<Throttle>,
     pub updates: crate::update::Updates,
+    pub remote: Remote,
     pub connections: AtomicUsize,
 }
 
@@ -177,7 +181,46 @@ fn handle(req: &Request, w: &mut Tls, state: &State) -> io::Result<bool> {
             events(w, state, &device, req.bearer().unwrap_or(""))?;
             Ok(false)
         }
-        (_, ["hello" | "pair" | "clips" | "events" | "update", ..]) => {
+        ("GET", ["recording"]) => {
+            write_json(w, 200, &recording::read(&state.paths.recording()).to_string(), keep)?;
+            Ok(true)
+        }
+        ("PATCH", ["recording"]) => {
+            let changes = serde_json::from_slice(&req.body).unwrap_or(serde_json::Value::Null);
+            match recording::change(&state.paths.recording(), &changes) {
+                Ok(now) => {
+                    log::info!("device {device} changed the recording settings: {changes}");
+                    write_json(w, 200, &now.to_string(), keep)?;
+                }
+                Err(why) => write_error(w, 400, &why, keep)?,
+            }
+            Ok(true)
+        }
+        ("GET", ["frame"]) => {
+            write_json(w, 200, &frame::about(&state.paths, &state.library).to_string(), keep)?;
+            Ok(true)
+        }
+        ("GET", ["remote"]) => {
+            write_json(w, 200, &remote::status(&state.paths).to_string(), keep)?;
+            Ok(true)
+        }
+        ("POST", ["remote"]) => {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let what = body["do"].as_str().unwrap_or("");
+            let from = state.devices.name(&device).unwrap_or_else(|| "a phone".into());
+            match state.remote.send(&state.paths, what, &from) {
+                Ok(now) => {
+                    log::info!("{from} asked the tab to {what}");
+                    write_json(w, 200, &now.to_string(), keep)?;
+                }
+                Err((status, why)) => {
+                    log::info!("{from} asked the tab to {what}: {why}");
+                    write_error(w, status, &why, keep)?;
+                }
+            }
+            Ok(true)
+        }
+        (_, ["hello" | "pair" | "clips" | "events" | "update" | "recording" | "remote" | "frame", ..]) => {
             write_error(w, 405, "method not allowed", keep)?;
             Ok(true)
         }
@@ -341,15 +384,29 @@ fn events(w: &mut Tls, state: &State, device: &str, token: &str) -> io::Result<(
         false,
     )?;
     w.write_all(b"retry: 3000\n\n")?;
+    // where the tab's at and how the headset's doing, so the phone doesn't have to ask
+    w.write_all(format!("event: remote\ndata: {}\n\n", remote::status(&state.paths)).as_bytes())?;
+    let mut about = frame::about(&state.paths, &state.library);
+    w.write_all(format!("event: frame\ndata: {about}\n\n").as_bytes())?;
     w.flush()?;
     let rx = state.hub.subscribe(device);
     state.devices.touch(device);
     log::info!("device {device} is listening");
+    let mut looked = Instant::now();
     loop {
         match rx.recv_timeout(KEEPALIVE) {
             Ok(msg) => w.write_all(msg.as_bytes())?,
             Err(RecvTimeoutError::Timeout) => w.write_all(b": keepalive\n\n")?,
             Err(RecvTimeoutError::Disconnected) => break,
+        }
+        // the battery and the disk move slowly, a look now and then is plenty
+        if looked.elapsed() >= KEEPALIVE {
+            looked = Instant::now();
+            let now = frame::about(&state.paths, &state.library);
+            if now != about {
+                w.write_all(format!("event: frame\ndata: {now}\n\n").as_bytes())?;
+                about = now;
+            }
         }
         w.flush()?;
         if state.devices.check(token).is_none() {
