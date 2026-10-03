@@ -27,11 +27,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/__mock.js":
             return self.send((HERE / "mock.js").read_bytes(), "text/javascript")
-        if path == "/__phone":
-            # headless chrome won't go narrower than 500, so: a phone sized frame
-            query = self.path.partition("?")[2]
-            page = f'<body style="margin:0;background:#000"><iframe src="/?{query}" style="border:0;width:400px;height:820px"></iframe>'
-            return self.send(page.encode(), "text/html; charset=utf-8")
         if path in ("/", "/index.html"):
             page = (UI / "index.html").read_text().replace('<script type="module"', MOCK, 1)
             return self.send(page.encode(), "text/html; charset=utf-8")

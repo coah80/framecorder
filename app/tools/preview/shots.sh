@@ -1,5 +1,5 @@
 #!/bin/sh
-# screenshots of every screen into a folder, desktop and phone sized.
+# screenshots of every screen into a folder.
 # usage: tools/preview/shots.sh [out dir]
 set -eu
 OUT=${1:-/tmp/fcapp}
@@ -17,14 +17,5 @@ shot() {
 }
 for s in connected syncing unreachable full forgot empty pair pair-found settings; do
     shot "desktop-$s" "?s=$s" 920,860
-done
-for s in connected unreachable full pair-found settings; do
-    shot "phone-$s" "__phone?s=$s&p=android" 500,960
-    python3 - "$OUT/phone-$s.png" <<'PY'
-import sys
-from PIL import Image
-path = sys.argv[1]
-Image.open(path).crop((0, 0, 400, 820)).save(path)
-PY
 done
 ls "$OUT"

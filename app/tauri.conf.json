@@ -49,9 +49,6 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "signingIdentity": "-"
-    },
-    "android": {
-      "minSdkVersion": 29
     }
   }
 }

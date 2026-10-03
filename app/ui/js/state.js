@@ -10,15 +10,13 @@ export const ui = {
   clips: [],
   downloadDir: "",
   autostart: null,
-  background: null,
+  background: false,
   view: "clips", // clips | settings
   pairing: false,
   filter: "all", // all | clip | recording
   progress: null,
   busy: false,
 };
-
-export const android = () => ui.platform === "android";
 
 export function el(tag, className, text) {
   const node = document.createElement(tag);

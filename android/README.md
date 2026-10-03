@@ -3,8 +3,7 @@
 The phone side of framecorder: gets clips and recordings off your Steam Frame
 over Wi-Fi, into the phone's gallery. Native Jetpack Compose with Material 3
 Expressive, on top of the same Rust sync core the desktop app runs
-(`../app/src/core`), through UniFFI. It replaces the Tauri Android build in
-`../app/gen/android`.
+(`../app/src/core`), through UniFFI.
 
 **It only syncs while the Frame is on, on the same Wi-Fi, with framecorder
 running on it.** Anything saved meanwhile waits on the Frame and catches up.

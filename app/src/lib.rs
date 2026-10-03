@@ -6,7 +6,6 @@ mod gui;
 pub mod headless;
 
 #[cfg(feature = "gui")]
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     gui::run()
 }

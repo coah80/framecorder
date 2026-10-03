@@ -1,6 +1,6 @@
 // framecorder app UI. plain js on purpose: no build step, tiny bundle.
 
-import { $, ui, android, invoke, listen } from "./state.js";
+import { $, ui, invoke, listen } from "./state.js";
 import { renderStatus, renderProgress, renderNeeds } from "./status.js";
 import { renderGallery, initGallery } from "./gallery.js";
 import { initPairing, startPairing, stopPairing } from "./pairing.js";
@@ -24,14 +24,11 @@ function show(view) {
 function render() {
   const paired = ui.hosts.length > 0;
   const pairing = ui.pairing || !paired;
-  document.body.classList.toggle("android", android());
   $("tabs").hidden = !paired;
   $("view-pair").hidden = !pairing;
   $("view-clips").hidden = pairing || ui.view !== "clips";
   $("view-settings").hidden = pairing || ui.view !== "settings";
   $("pair-cancel").hidden = !paired;
-  $("scan").hidden = !android();
-  $("open-folder").hidden = android();
   for (const t of document.querySelectorAll(".tab")) {
     if (!pairing && t.dataset.view === ui.view) t.setAttribute("aria-current", "page");
     else t.removeAttribute("aria-current");
@@ -104,6 +101,4 @@ initPairing(async () => {
   await refresh();
 });
 
-refresh()
-  .then(() => invoke("app_ready"))
-  .catch((e) => console.error(e));
+refresh().catch((e) => console.error(e));

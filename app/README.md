@@ -2,24 +2,21 @@
 
 Gets clips and recordings off your Steam Frame over Wi-Fi, onto your desktop
 (Linux, Windows, macOS). It talks to `framecorder-sync` on the headset (see
-`../sync`). The Android app is native now, in `../android`; it runs the same
-sync core from `src/core` through UniFFI. The Tauri Android build below
-(`gen/android`, `plugins/framesync`) is what it replaces.
+`../sync`). The Android app is native, in `../android`; it runs the same sync
+core from `src/core` through UniFFI.
 
 **It only syncs while the Frame is on (awake), on the same Wi-Fi, and
-framecorder is running on it.** If the app is closed (or Android stops it),
-clips sync the next time it's open and the Frame is reachable. The app says
-this on the main screen, in pairing, and loudly whenever it can't reach the
-Frame.
+framecorder is running on it.** If the app is closed, clips sync the next
+time it's open and the Frame is reachable. The app says this on the main
+screen, in pairing, and loudly whenever it can't reach the Frame.
 
 ## What it does
 
 - Finds Frames with mDNS (`_framecorder._tcp`) and, for networks that drop
   multicast, by asking every address in the local /24 on port 38619
   (`discover::look`); or takes an address.
-- Pairs with the 6-digit code from "pair a device" on the Frame. Desktop: pick
-  the Frame from the list and type the code. Android: scan the QR code (or
-  type it). Pasting the `framecorder://pair?...` link works everywhere.
+- Pairs with the 6-digit code from "pair a device" on the Frame. Pick the
+  Frame from the list and type the code.
 - Pins the Frame's certificate: TLS only succeeds against the SHA-256 we got
   from the QR code / mDNS at pairing time, no CA store involved. The server
   still has to prove it holds the key (handshake signatures are verified).
@@ -29,30 +26,16 @@ Frame.
 - On every (re)connect it diffs `GET /clips` against a local index, so
   nothing is missed and nothing downloads twice. Clips go first, newest first.
 - Downloads go to a `.part` file and resume with `Range` after a drop or a
-  kill, then get renamed into place (desktop) or handed to MediaStore
-  (Android). Existing files are never overwritten (`name (2).mp4`).
+  kill, then get renamed into place. Existing files are never overwritten
+  (`name (2).mp4`).
 - If "delete after sync" is on for the Frame, it asks the Frame to delete a
   clip once it's safely here (the Frame refuses otherwise).
 
-Desktop: tray icon (closing the window keeps syncing; tray menu has open /
+It has a tray icon (closing the window keeps syncing; tray menu has open /
 sync now / quit), optional start-with-the-computer (starts hidden in the
 tray), a notification per new clip, gallery with open / show in folder and a
 thumbnail from the video itself when the webview can decode it. Files land in
 `~/Videos/framecorder` (`~/Movies/framecorder` on macOS), clips in `clips/`.
-
-Android: a foreground service ("framecorder is syncing", type `dataSync`)
-keeps the process alive in the background, with a Wi-Fi multicast lock for
-mDNS and a partial wake lock only while a download runs. Back sends the app
-to the background instead of closing it. Swiping it out of recents closes it
-for real. Files go into MediaStore `Movies/framecorder` (and `/clips`), so
-they show up in the gallery; the app can open or share them. Needs Android
-10+ (minSdk 29).
-
-Android permissions: INTERNET, ACCESS_WIFI_STATE, CHANGE_WIFI_MULTICAST_STATE,
-POST_NOTIFICATIONS, FOREGROUND_SERVICE(_DATA_SYNC), CAMERA (QR scanner,
-optional hardware), WAKE_LOCK (only held during downloads). VIBRATE and
-RECEIVE_BOOT_COMPLETED that plugins bring along are stripped in the manifest.
-ACCESS_NETWORK_STATE still comes in through a library dependency.
 
 ## Layout
 
@@ -64,10 +47,6 @@ ACCESS_NETWORK_STATE still comes in through a library dependency.
 - `src/gui/`: Tauri commands, tray, notifications, platform glue.
 - `ui/`: plain HTML/CSS/JS, no build step (Catppuccin Mocha, Space Grotesk +
   Poppins, both OFL, licenses in `ui/fonts/`).
-- `plugins/framesync/`: the Android side (Kotlin): foreground service,
-  MediaStore, share sheet, wake/multicast locks.
-- `gen/android/`: the Android Studio project from `tauri android init`, with
-  our manifest tweaks, dark theme and back-button behaviour.
 
 State (paired Frames, tokens, index) lives in the app config dir,
 `com.framecorder.app` (e.g. `~/.config/com.framecorder.app/`), files 0600.
@@ -104,20 +83,6 @@ hand: `cargo tauri build --target universal-apple-darwin --bundles dmg`.
 downloads go to `~/Movies/framecorder`, and `Info.plist` has the text macOS
 shows when it asks for local network access (needed to find the Frame).
 
-Android (SDK, NDK and a JDK 17 anywhere, e.g. `~/Android`):
-
-```sh
-export JAVA_HOME=~/Android/jdk ANDROID_HOME=~/Android/sdk NDK_HOME=~/Android/sdk/ndk/27.2.12479018
-rustup target add aarch64-linux-android x86_64-linux-android
-cargo install tauri-cli --version "^2" --locked
-cd app
-cargo tauri android build --apk --debug --target aarch64            # debug-signed
-# -> gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
-cargo tauri android build --apk --target aarch64                    # release, unsigned: sign with apksigner
-```
-
-SDK packages used: `platform-tools platforms;android-37.0 build-tools;37.0.0 ndk;27.2.12479018`.
-
 Only the sync core, no webkit needed (runs anywhere Rust does):
 
 ```sh
@@ -142,7 +107,7 @@ Pairs if asked to, then syncs into `<dir>` until killed. Without `--fp`,
   SSE parsing, Content-Range, safe file names, no-overwrite finishing, plus
   `tests/pinned_tls.rs` against a real rustls server (right fingerprint
   connects, wrong one fails before any HTTP is sent, capture mode).
-- `tools/preview/shots.sh [dir]`: screenshots of every screen (desktop and phone sized) in headless chrome, with tauri mocked. `python3 tools/preview/serve.py` to click around in a browser instead, `?s=connected|syncing|unreachable|full|forgot|empty|pair|pair-found|settings`, `&p=android` for the phone
+- `tools/preview/shots.sh [dir]`: screenshots of every screen in headless chrome, with tauri mocked. `python3 tools/preview/serve.py` to click around in a browser instead, `?s=connected|syncing|unreachable|full|forgot|empty|pair|pair-found|settings`
 - `tools/e2e.sh` (from the repo root): real daemon on a temp HOME + headless
   app. Wrong fingerprint refused (code not used up), pairing, catch-up of an
   existing file, `.part` -> `.mp4` rename synced in ~25 ms, a download killed
@@ -155,7 +120,3 @@ Pairs if asked to, then syncs into `<dir>` until killed. Without `--fp`,
 - Tokens are stored in the app's config dir, not the OS keychain.
 - HEVC thumbnails depend on the platform: WebView2 needs the HEVC extension,
   WebKitGTK needs a GStreamer HEVC decoder. Without one you get a placeholder.
-- Android 15 limits `dataSync` foreground services to 6 h a day; after that
-  the service stops and syncing continues only while the app is in front.
-- Scanning a QR code with the phone's own camera app doesn't open the Tauri
-  Android build (the native one in `../android` handles the link).

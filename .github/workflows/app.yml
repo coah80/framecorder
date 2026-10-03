@@ -1,6 +1,6 @@
 # builds the sync app for macos, windows and linux. push a tag like v0.1.0 and
 # they land on that tag's release, named how the website links to them.
-# android is built and signed locally, see app/README.md
+# android is built and signed locally, see android/README.md
 #
 # macos is ad-hoc signed unless these repo secrets exist, then it's signed and
 # notarized properly (needs a paid apple developer account):
