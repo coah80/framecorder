@@ -93,6 +93,7 @@ pub fn start(rt: tokio::runtime::Handle, demo: bool) -> Result<(Core, async_chan
 #[derive(Clone)]
 pub struct Clip {
     pub key: String,
+    pub name: String,
     pub is_clip: bool,
     pub size: u64,
     pub created: i64,
@@ -104,6 +105,7 @@ impl Clip {
     pub fn from(e: &Entry) -> Self {
         Self {
             key: e.key(),
+            name: e.name.clone(),
             is_clip: e.kind == "clip",
             size: e.size,
             created: e.created,

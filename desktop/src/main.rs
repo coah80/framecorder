@@ -15,6 +15,7 @@ mod format;
 mod oldapp;
 mod pair;
 mod prefs;
+mod search;
 mod selfupdate;
 mod settings;
 mod sidebar;

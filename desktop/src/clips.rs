@@ -1,40 +1,59 @@
 //! the library: everything from the frame, a day at a time, as a grid or a list.
 
-use gpui::{div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString};
+use gpui::{
+    div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString, Window,
+};
 
 use crate::app::{Filter, FrameApp, Page, Thumb};
-use crate::format;
 use crate::sync::Clip;
 use crate::theme::{self, a, c};
-use crate::widgets::{card, data, icon, kind_chip, label, primary, spinner, title};
+use crate::widgets::{card, data, icon, kind_chip, label, outline, primary, spinner, title};
+use crate::{format, search};
 use framecorder_app_lib::core::engine::{State, Status};
 
-pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
+pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    // the page holds the keyboard when nothing else does, so ctrl+f works right away
+    if window.focused(cx).is_none() {
+        app.library.focus(window, cx);
+    }
+    let searching = app.search.is_focused(window);
+    let today = chrono::Local::now().date_naive();
+    let found: Vec<&Clip> = app.clips.iter().filter(|c| search::hit(c, &app.query, today)).collect();
     let problems: Vec<AnyElement> =
         app.problems().into_iter().cloned().collect::<Vec<_>>().iter().map(|s| problem(s, cx)).collect();
-    div().flex_1().min_w_0().h_full().flex().flex_col().child(header(app, cx)).child(
-        div()
-            .id("gallery")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .px(px(28.))
-            .pt(px(4.))
-            .pb(px(28.))
-            .flex()
-            .flex_col()
-            .gap(px(26.))
-            .children(problems)
-            .children(days(app, cx)),
-    )
+    div()
+        .id("library")
+        .track_focus(&app.library)
+        .on_key_down(cx.listener(|app, ev, window, cx| app.library_key(ev, window, cx)))
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .child(header(app, &found, searching, cx))
+        .child(
+            div()
+                .id("gallery")
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .px(px(28.))
+                .pt(px(4.))
+                .pb(px(28.))
+                .flex()
+                .flex_col()
+                .gap(px(26.))
+                .children(problems)
+                .children(days(app, &found, today, cx)),
+        )
 }
 
-fn header(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
-    let clips = app.clips.iter().filter(|c| c.is_clip).count();
+fn header(app: &FrameApp, found: &[&Clip], searching: bool, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let clips = found.iter().filter(|c| c.is_clip).count();
     let counts = [
-        (Filter::All, "all", app.clips.len()),
+        (Filter::All, "all", found.len()),
         (Filter::Clip, "clips", clips),
-        (Filter::Recording, "recordings", app.clips.len() - clips),
+        (Filter::Recording, "recordings", found.len() - clips),
     ];
     div()
         .flex()
@@ -44,9 +63,15 @@ fn header(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
         .px(px(28.))
         .pt(px(26.))
         .pb(px(18.))
-        .child(div().flex().flex_col().gap(px(4.)).child(title("clips", 26.)).child(
-            div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child("everything from your frame, newest first"),
-        ))
+        .child(div().flex().flex_col().gap(px(10.)).child(title("clips", 26.)).child(if app.clips.is_empty() {
+            div()
+                .text_size(px(13.))
+                .text_color(c(theme::SUBTEXT0))
+                .child("everything from your frame, newest first")
+                .into_any_element()
+        } else {
+            search_box(app, searching, cx).into_any_element()
+        }))
         .child(
             div()
                 .flex()
@@ -85,6 +110,70 @@ fn header(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
 
 fn seg() -> Div {
     div().flex().gap(px(2.)).p(px(3.)).rounded(px(12.)).bg(theme::card()).border_1().border_color(theme::card_line())
+}
+
+/// the search box, under the title. typed into directly, so it draws its own
+/// caret, and the shortcut sits in it until it's used
+fn search_box(app: &FrameApp, focused: bool, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let empty = app.query.is_empty();
+    let lit = focused || !empty;
+    div()
+        .id("search")
+        .track_focus(&app.search)
+        .on_key_down(cx.listener(|app, ev, window, cx| app.search_key(ev, window, cx)))
+        .flex()
+        .items_center()
+        .gap(px(9.))
+        .h(px(40.))
+        .w(px(300.))
+        .px(px(12.))
+        .rounded(px(12.))
+        .bg(theme::card())
+        .border_1()
+        .border_color(if focused { c(theme::MAUVE) } else { theme::card_line() })
+        .cursor_text()
+        .child(icon("search", 15., c(if lit { theme::MAUVE } else { theme::OVERLAY2 })))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .text_size(px(13.))
+                .child(if empty {
+                    div().truncate().text_color(c(theme::OVERLAY2)).child("search by time, day or name")
+                } else {
+                    div().truncate().child(app.query.clone())
+                })
+                .when(focused, |d| d.child(div().flex_none().w(px(1.5)).h(px(16.)).ml(px(1.)).bg(c(theme::MAUVE)))),
+        )
+        .when(!empty, |d| {
+            d.child(
+                div()
+                    .id("search-clear")
+                    .size(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(c(theme::SURFACE1)))
+                    .on_click(cx.listener(|app, _, _, cx| app.clear_search(cx)))
+                    .child(icon("x", 12., c(theme::SUBTEXT0))),
+            )
+        })
+        .when(empty && !focused, |d| {
+            d.child(
+                data(if cfg!(target_os = "macos") { "cmd f" } else { "ctrl f" })
+                    .px(px(6.))
+                    .py(px(1.))
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(theme::card_line())
+                    .text_size(px(11.))
+                    .text_color(c(theme::OVERLAY2)),
+            )
+        })
 }
 
 fn layout_button(name: &'static str, on: bool, grid: bool, cx: &mut Context<FrameApp>) -> impl IntoElement {
@@ -216,10 +305,10 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
         .into_any_element()
 }
 
-fn days(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
-    let shown: Vec<&Clip> = app
-        .clips
+fn days(app: &FrameApp, found: &[&Clip], today: chrono::NaiveDate, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
+    let shown: Vec<&Clip> = found
         .iter()
+        .copied()
         .filter(|c| match app.filter {
             Filter::All => true,
             Filter::Clip => c.is_clip,
@@ -227,30 +316,44 @@ fn days(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
         })
         .collect();
 
-    let incoming = app.progress.is_some();
+    // a search shows what it found and nothing else, the download included
+    let query = app.query.trim();
+    let incoming = app.progress.is_some() && query.is_empty();
     if shown.is_empty() && !incoming {
         let text = if app.clips.is_empty() {
-            "nothing yet. save a clip or a recording on your frame and it shows up here."
+            "nothing yet. save a clip or a recording on your frame and it shows up here.".to_string()
+        } else if !query.is_empty() {
+            match app.filter {
+                Filter::All => format!("nothing matches \"{query}\"."),
+                Filter::Clip => format!("no clips match \"{query}\"."),
+                Filter::Recording => format!("no recordings match \"{query}\"."),
+            }
         } else if app.filter == Filter::Clip {
-            "no clips yet, just recordings."
+            "no clips yet, just recordings.".to_string()
         } else {
-            "no recordings yet, just clips."
+            "no recordings yet, just clips.".to_string()
         };
         return vec![div()
             .py(px(56.))
             .px(px(20.))
             .flex()
-            .justify_center()
+            .flex_col()
+            .items_center()
+            .gap(px(16.))
             .rounded(px(16.))
             .border_1()
             .border_dashed()
             .border_color(theme::card_line())
             .text_color(c(theme::SUBTEXT0))
             .child(text)
+            .when(!query.is_empty(), |d| {
+                d.child(
+                    outline("clear-search", "clear search").on_click(cx.listener(|app, _, _, cx| app.clear_search(cx))),
+                )
+            })
             .into_any_element()];
     }
 
-    let today = chrono::Local::now().date_naive();
     let mut groups: Vec<(chrono::NaiveDate, Vec<&Clip>)> = Vec::new();
     for clip in shown {
         let key = format::day_key(clip.created);
