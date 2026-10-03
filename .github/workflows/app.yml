@@ -1,5 +1,6 @@
-# builds the sync app for macos, windows and linux. push a tag like v0.1.0 and
-# they land on that tag's release, named how the website links to them.
+# builds the sync app (and the native desktop app) for macos, windows and
+# linux. push a tag like v0.1.0 and they land on that tag's release, named how
+# the website links to them.
 # android is built and signed locally, see android/README.md
 #
 # macos is ad-hoc signed unless these repo secrets exist, then it's signed and
@@ -85,9 +86,107 @@ jobs:
           path: ${{ matrix.file }}
           if-no-files-found: error
 
+  # the native desktop app (desktop/, gpui-ce): an AppImage on linux, an
+  # installer on windows and a dmg on macos, named what the site links and its self
+  # updater looks for
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            file: framecorder-desktop-macos.dmg
+          - os: windows-latest
+            file: framecorder-setup.exe
+          - os: ubuntu-22.04
+            file: framecorder-x86_64.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
+
+      - name: test
+        run: cargo test --release
+
+      # an AppImage, built on the oldest ubuntu ci has so it runs on most
+      # distros. linuxdeploy bundles the libraries a distro might not have and
+      # leaves out the ones that must come from the system (glibc, the gpu
+      # driver, fontconfig). xkbcommon comes from the system too: an older one
+      # can't read a newer distro's keyboard files, and every desktop has it.
+      # appimagetool's runtime doesn't need libfuse2
+      - name: build (linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          cargo build --release
+          curl -fsSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy appimagetool
+          ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
+            --executable target/release/framecorder-desktop \
+            --desktop-file linux/com.framecorder.desktop.desktop \
+            --icon-file ../app/icons/128x128@2x.png --icon-filename framecorder \
+            --exclude-library 'libxkbcommon*' --exclude-library 'libxcb-xkb*'
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "../${{ matrix.file }}"
+
+      # windows gets an installer, see windows/installer.iss
+      - name: build (windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          cargo build --release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          & $iscc /Q "/DVersion=$version" "/DExe=$PWD\target\release\framecorder-desktop.exe" "/DOutDir=$PWD\.." windows\installer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      # a mac app has to be a bundle: one binary for apple silicon and intel,
+      # the Info.plist (macos won't let it find the frame without its local
+      # network keys) and the icon, ad-hoc signed, in a dmg
+      - name: build (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          app=dmg/framecorder.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          lipo -create -output "$app/Contents/MacOS/framecorder-desktop" \
+            target/aarch64-apple-darwin/release/framecorder-desktop target/x86_64-apple-darwin/release/framecorder-desktop
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          sed "s/VERSION/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
+          cp ../app/icons/icon.icns "$app/Contents/Resources/icon.icns"
+          codesign --force --deep --sign - "$app"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname framecorder -srcfolder dmg -ov -format UDZO "../${{ matrix.file }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
