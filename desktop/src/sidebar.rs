@@ -11,6 +11,9 @@ use std::time::Duration;
 
 pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let count = app.clips.len();
+    let clips_badge = (count > 0).then(|| data(count.to_string()).text_size(px(12.)).opacity(0.8).into_any_element());
+    // a red dot by "frame" while one's recording, on every page
+    let rec_badge = app.any_recording().then(|| dot(theme::RED, false).size(px(8.)).into_any_element());
     div()
         .w(px(216.))
         .flex_none()
@@ -30,7 +33,8 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(nav(app, cx, Page::Clips, "clips", "clips", Some(count)))
+                .child(nav(app, cx, Page::Clips, "clips", "clips", clips_badge))
+                .child(nav(app, cx, Page::Frame, "frame", "headset", rec_badge))
                 .child(nav(app, cx, Page::Settings, "settings", "settings", None)),
         )
         .child(div().flex_1())
@@ -51,7 +55,7 @@ fn nav(
     page: Page,
     name: &'static str,
     icon_name: &str,
-    count: Option<usize>,
+    badge: Option<AnyElement>,
 ) -> impl IntoElement {
     let on = app.page == page;
     let fg = if on { theme::MAUVE } else { theme::SUBTEXT0 };
@@ -73,7 +77,7 @@ fn nav(
         .on_click(cx.listener(move |app, _, _, cx| app.go(page, cx)))
         .child(icon(icon_name, 18., c(fg)))
         .child(div().flex_1().child(name))
-        .when_some(count.filter(|n| *n > 0), |d, n| d.child(data(n.to_string()).text_size(px(12.)).opacity(0.8)))
+        .children(badge)
 }
 
 fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
@@ -83,8 +87,11 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
             let fp = s.fingerprint.clone();
             let updating = app.frame_updating.contains(&s.fingerprint) || s.update.as_ref().is_some_and(|u| u.updating);
             let update = s.update.as_ref().filter(|u| u.available && !updating);
-            let color = status_color(s);
+            let recording = s.state == State::Connected && app.live(&s.fingerprint).is_some_and(|l| l.recording());
+            let color = if recording { theme::RED } else { status_color(s) };
+            let open = fp.clone();
             div()
+                .id(SharedString::from(format!("frame-{fp}")))
                 .flex()
                 .flex_col()
                 .gap(px(6.))
@@ -93,9 +100,12 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
                 .bg(c(theme::BASE))
                 .border_1()
                 .border_color(a(theme::SURFACE1, 0.6))
+                .cursor_pointer()
+                .hover(|s| s.border_color(c(theme::SURFACE2)))
                 .when(matches!(s.state, State::Unreachable | State::Full), |d| {
                     d.bg(a(theme::RED, 0.06)).border_color(a(theme::RED, 0.28))
                 })
+                .on_click(cx.listener(move |app, _, _, cx| app.pick_frame(open.clone(), cx)))
                 .child(
                     div()
                         .flex()
@@ -108,7 +118,7 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
                     div()
                         .text_size(px(12.))
                         .text_color(c(if color == theme::RED { theme::RED } else { theme::SUBTEXT0 }))
-                        .child(status_text(s)),
+                        .child(if recording { "recording" } else { status_text(s) }),
                 )
                 .when(updating, |d| d.child(updating_text(format!("upd-{fp}"))))
                 .when_some(update.cloned(), |d, u| {
@@ -123,7 +133,11 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
                             .text_color(c(theme::MAUVE))
                             .cursor_pointer()
                             .hover(|s| s.text_color(c(theme::MAUVE_LIGHT)))
-                            .on_click(cx.listener(move |app, _, _, cx| app.update_frame(fp.clone(), cx)))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                // the card around it opens the frame page, this shouldn't
+                                cx.stop_propagation();
+                                app.update_frame(fp.clone(), cx);
+                            }))
                             .child("update frame app")
                             .when_some(u.latest.clone(), |d, v| d.child(data(v).text_color(c(theme::MAUVE_LIGHT)))),
                     )

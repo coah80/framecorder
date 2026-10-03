@@ -13,15 +13,17 @@ use gpui::{
     Window,
 };
 
+use crate::remote::Live;
 use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
-use crate::{autostart, clips, pair, prefs, settings, sidebar, thumbs};
+use crate::{autostart, clips, frame, pair, prefs, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Clips,
+    Frame,
     Settings,
     Pair,
 }
@@ -77,6 +79,12 @@ pub struct FrameApp {
     /// the library itself holds the keyboard when nothing else does, for ctrl+f
     pub library: FocusHandle,
     pub statuses: Vec<Status>,
+    /// what each frame has told us since it connected, by fingerprint
+    pub live: HashMap<String, Live>,
+    /// the frame the frame page is about, when there's more than one
+    pub frame: Option<String>,
+    /// the once-a-second repaint while a recording's clock is on screen
+    pub tick: Option<Task<()>>,
     /// the frame "unpair" was clicked on, while settings asks if we mean it
     pub unpairing: Option<String>,
     pub confirm: FocusHandle,
@@ -164,6 +172,9 @@ impl FrameApp {
             search: cx.focus_handle(),
             library: cx.focus_handle(),
             statuses: Vec::new(),
+            live: HashMap::new(),
+            frame: None,
+            tick: None,
             unpairing: None,
             confirm: cx.focus_handle(),
             clips: Vec::new(),
@@ -212,15 +223,16 @@ impl FrameApp {
         match msg {
             Msg::Status => {
                 self.statuses = self.core.engine.statuses();
-                if let Some(t) = &self.tray {
-                    t.set_status(&self.statuses);
-                }
+                self.sync_tray();
                 for s in &self.statuses {
                     if s.update.as_ref().is_some_and(|u| u.updating || !u.available) {
                         self.frame_updating.remove(&s.fingerprint);
                     }
                 }
+                self.follow_connections(cx);
             }
+            Msg::Remote(fp, remote) => self.on_remote(&fp, remote, cx),
+            Msg::About(fp, about) => self.on_about(&fp, about, cx),
             Msg::Progress(p) => {
                 let switched = self.progress.as_ref().is_none_or(|old| old.id != p.id);
                 match &mut self.batch {
@@ -389,6 +401,13 @@ impl FrameApp {
             }
         };
         self.refresh();
+        if done {
+            self.live.remove(fingerprint);
+            if self.frame.as_deref() == Some(fingerprint) {
+                self.frame = None;
+            }
+            self.sync_tray();
+        }
         if let Some(name) = name.filter(|_| done) {
             self.toast(format!("unpaired {name}"), cx);
         }
@@ -478,9 +497,9 @@ impl FrameApp {
     }
 
     pub fn attach_tray(&mut self, tray: Tray) {
-        tray.set_status(&self.statuses);
         tray.set_visible(self.background);
         self.tray = Some(tray);
+        self.sync_tray();
     }
 
     /// whether the window closing should leave the app running. the first
@@ -727,7 +746,9 @@ impl FrameApp {
                 app.pairing.busy = false;
                 match res {
                     Ok(host) => {
-                        app.pairing.replaces = None;
+                        if let Some(old) = app.pairing.replaces.take() {
+                            app.live.remove(&old);
+                        }
                         app.refresh();
                         app.go(Page::Clips, cx);
                         app.toast(format!("paired with {}", host.name), cx);
@@ -757,6 +778,7 @@ impl Render for FrameApp {
                 .child(sidebar::render(self, cx))
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
+                    Page::Frame => frame::render(self, cx).into_any_element(),
                     _ => clips::render(self, window, cx).into_any_element(),
                 })
                 .into_any_element()
