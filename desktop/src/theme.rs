@@ -15,6 +15,7 @@ pub const TEXT: u32 = 0xcdd6f4;
 pub const MAUVE: u32 = 0xcba6f7;
 pub const MAUVE_LIGHT: u32 = 0xddc4fb;
 pub const RED: u32 = 0xf38ba8;
+pub const RED_LIGHT: u32 = 0xf7a8bf;
 pub const PEACH: u32 = 0xfab387;
 pub const YELLOW: u32 = 0xf9e2af;
 pub const GREEN: u32 = 0xa6e3a1;

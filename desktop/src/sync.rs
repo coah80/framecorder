@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use framecorder_app_lib::core::api::{About, Remote};
 use framecorder_app_lib::core::engine::{DirSink, Engine, Listener, Progress, Status};
 use framecorder_app_lib::core::store::Entry;
 use framecorder_app_lib::headless::default_state_dir;
@@ -15,6 +16,10 @@ pub enum Msg {
     Synced(Entry),
     Busy(bool),
     Removed,
+    /// what a frame's tab is up to, by fingerprint. None once we've lost touch
+    Remote(String, Option<Remote>),
+    /// a frame's battery and storage, by fingerprint. None once we've lost touch
+    About(String, Option<About>),
 }
 
 struct Bridge(async_channel::Sender<Msg>);
@@ -39,6 +44,14 @@ impl Listener for Bridge {
 
     fn removed(&self, _host: &str, _id: &str) {
         let _ = self.0.try_send(Msg::Removed);
+    }
+
+    fn remote(&self, host: &str, remote: Option<&Remote>) {
+        let _ = self.0.try_send(Msg::Remote(host.to_string(), remote.cloned()));
+    }
+
+    fn about(&self, host: &str, about: Option<&About>) {
+        let _ = self.0.try_send(Msg::About(host.to_string(), about.cloned()));
     }
 }
 
