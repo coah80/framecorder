@@ -183,6 +183,10 @@ fn main() {
                                 cx.update(|cx| match msg {
                                     TrayMsg::Open => open_main(cx),
                                     TrayMsg::SyncNow => cx.global::<Main>().app.read(cx).core.engine.retry_now(),
+                                    TrayMsg::Record => {
+                                        cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_record(cx))
+                                    }
+                                    TrayMsg::Clip => cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_clip(cx)),
                                     TrayMsg::Quit => cx.quit(),
                                 });
                             }

@@ -292,7 +292,7 @@ fn record_button(fp: &str, recording: bool, enabled: bool, busy: bool, cx: &mut 
     }
     b.cursor_pointer()
         .hover(move |s| if recording { s.bg(a(theme::RED, 0.24)) } else { s.bg(c(theme::RED_LIGHT)) })
-        .on_click(cx.listener(move |app, _, _, cx| app.command(&fp, what, cx)))
+        .on_click(cx.listener(move |app, _, _, cx| app.command(&fp, what, false, cx)))
 }
 
 fn clip_button(fp: &str, clips_off: bool, enabled: bool, busy: bool, cx: &mut Context<FrameApp>) -> Stateful<Div> {
@@ -306,7 +306,7 @@ fn clip_button(fp: &str, clips_off: bool, enabled: bool, busy: bool, cx: &mut Co
     if !enabled {
         return b.opacity(0.35).cursor_default();
     }
-    b.on_click(cx.listener(move |app, _, _, cx| app.command(&fp, "clip", cx)))
+    b.on_click(cx.listener(move |app, _, _, cx| app.command(&fp, "clip", false, cx)))
 }
 
 // the headset
