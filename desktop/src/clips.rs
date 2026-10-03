@@ -4,7 +4,7 @@ use gpui::{
     div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString, Window,
 };
 
-use crate::app::{Filter, FrameApp, Page, Thumb};
+use crate::app::{Filter, FrameApp, Thumb};
 use crate::sync::Clip;
 use crate::theme::{self, a, c};
 use crate::widgets::{card, data, icon, kind_chip, label, outline, primary, spinner, title};
@@ -225,6 +225,7 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
         ),
     };
     let pair = action == "pair again";
+    let fp = s.fingerprint.clone();
     div()
         .flex()
         .items_start()
@@ -296,7 +297,7 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
         .child(primary(SharedString::from(format!("fix-{}", s.fingerprint)), action).flex_none().h(px(44.)).on_click(
             cx.listener(move |app, _, _, cx| {
                 if pair {
-                    app.go(Page::Pair, cx);
+                    app.open_pair_for(fp.clone(), cx);
                 } else {
                     app.retry(cx);
                 }

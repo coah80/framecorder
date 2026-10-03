@@ -12,7 +12,8 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
         app.pairing.focus.focus(window, cx);
     }
     let can_cancel = !app.statuses.is_empty() || app.demo;
-    div().size_full().flex().child(left()).child(
+    let again = app.pairing.replaces.is_some();
+    div().size_full().flex().child(left(again)).child(
         div()
             .w(px(460.))
             .flex_none()
@@ -60,7 +61,8 @@ fn step_title(text: &str) -> Div {
     div().font_family(theme::HEADING).font_weight(FontWeight::BOLD).text_size(px(15.)).child(text.to_string())
 }
 
-fn left() -> impl IntoElement {
+/// `again` is pairing a frame we already know, whose clips carry over
+fn left(again: bool) -> impl IntoElement {
     let bullet = |parts: Vec<(&'static str, bool)>| {
         div()
             .flex()
@@ -85,12 +87,12 @@ fn left() -> impl IntoElement {
         .border_color(theme::line())
         .child(wordmark())
         .child(
-            div().flex().flex_col().gap(px(14.)).child(title("pair your frame", 38.)).child(
-                div()
-                    .max_w(px(340.))
-                    .text_size(px(15.))
-                    .text_color(c(theme::SUBTEXT1))
-                    .child("clips and recordings come straight over your wi-fi, nothing goes through the internet."),
+            div().flex().flex_col().gap(px(14.)).child(title(if again { "pair it again" } else { "pair your frame" }, 38.)).child(
+                div().max_w(px(340.)).text_size(px(15.)).text_color(c(theme::SUBTEXT1)).child(if again {
+                    "what's already here stays, and nothing comes down twice."
+                } else {
+                    "clips and recordings come straight over your wi-fi, nothing goes through the internet."
+                }),
             ),
         )
         .child(

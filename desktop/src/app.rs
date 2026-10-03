@@ -53,6 +53,9 @@ pub struct Pairing {
     pub error: Option<String>,
     pub busy: bool,
     pub focus: FocusHandle,
+    /// a paired frame this is "pair again" for, so its clips carry over
+    /// instead of coming down twice
+    pub replaces: Option<String>,
     tasks: Vec<Task<()>>,
 }
 
@@ -174,6 +177,7 @@ impl FrameApp {
                 error: None,
                 busy: false,
                 focus: cx.focus_handle(),
+                replaces: None,
                 tasks: Vec::new(),
             },
             frame_updating: HashSet::new(),
@@ -190,7 +194,7 @@ impl FrameApp {
         if !demo {
             app.refresh();
             if app.statuses.is_empty() {
-                app.open_pair(cx);
+                app.open_pair(None, cx);
             }
         }
         app
@@ -305,7 +309,7 @@ impl FrameApp {
 
     pub fn go(&mut self, page: Page, cx: &mut Context<Self>) {
         if page == Page::Pair {
-            self.open_pair(cx);
+            self.open_pair(None, cx);
         } else {
             self.page = page;
             self.pairing.tasks.clear();
@@ -389,7 +393,7 @@ impl FrameApp {
             self.toast(format!("unpaired {name}"), cx);
         }
         if self.statuses.is_empty() && !self.demo {
-            self.open_pair(cx);
+            self.open_pair(None, cx);
         }
         cx.notify();
     }
@@ -609,12 +613,19 @@ impl FrameApp {
 
     // pairing
 
-    pub fn open_pair(&mut self, cx: &mut Context<Self>) {
+    /// "pair again" for a frame that forgot us or got a new certificate: the
+    /// new pairing takes over its clips, so nothing comes down twice
+    pub fn open_pair_for(&mut self, fingerprint: String, cx: &mut Context<Self>) {
+        self.open_pair(Some(fingerprint), cx);
+    }
+
+    pub fn open_pair(&mut self, replaces: Option<String>, cx: &mut Context<Self>) {
         self.page = Page::Pair;
         let p = &mut self.pairing;
         p.code.clear();
         p.error = None;
         p.busy = false;
+        p.replaces = replaces;
         p.tasks.clear();
         if self.demo {
             return;
@@ -701,19 +712,22 @@ impl FrameApp {
         p.busy = true;
         p.error = None;
         cx.notify();
-        let (engine, code) = (self.core.engine.clone(), p.code.clone());
+        let (engine, code, replaces) = (self.core.engine.clone(), p.code.clone(), p.replaces.clone());
         let addr = if found.addr.contains(':') && !found.addr.ends_with(']') {
             found.addr.clone()
         } else {
             format!("{}:38619", found.addr)
         };
-        let job = self.core.rt.spawn(async move { engine.pair(&addr, Some(&found.fingerprint), &code, None).await });
+        let job = self.core.rt.spawn(async move {
+            engine.pair(&addr, Some(&found.fingerprint), &code, replaces.as_deref()).await
+        });
         cx.spawn(async move |this, cx| {
             let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |app, cx| {
                 app.pairing.busy = false;
                 match res {
                     Ok(host) => {
+                        app.pairing.replaces = None;
                         app.refresh();
                         app.go(Page::Clips, cx);
                         app.toast(format!("paired with {}", host.name), cx);
