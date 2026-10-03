@@ -110,7 +110,6 @@ main { max-width: 860px; margin: 0 auto; padding: 24px 24px 72px; }
 .btn.small { padding: 6px 12px; font-size: 13px; border-radius: 10px; }
 .btn.small svg { width: 16px; height: 16px; }
 .btn.icon { padding: 8px; border-radius: 10px; }
-.btn.wide { width: 100%; padding: 13px; font-size: 15px; }
 .btn.danger:hover { border-color: var(--red); color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
 .link { background: none; border: 0; color: var(--mauve); cursor: pointer; padding: 0; font-size: 13px; transition: opacity .15s; }
 .link:hover { opacity: .75; }
@@ -256,13 +255,6 @@ input:focus { border-color: color-mix(in srgb, var(--mauve) 50%, transparent); b
   animation: rise .3s ease both;
 }
 
-/* no thumbnails on android: a small tile saying what it is instead */
-.len-text { display: none; }
-.android .thumb { width: 48px; aspect-ratio: 1; border-radius: 14px; background: color-mix(in srgb, var(--overlay0) 12%, transparent); color: var(--subtext0); }
-.android .clip[data-kind="clip"] .thumb { background: color-mix(in srgb, var(--mauve) 10%, transparent); color: var(--mauve); }
-.android .thumb .len { display: none; }
-.android .len-text { display: inline; }
-
 /* phones: everything a thumb can hit, nothing that needs a mouse */
 @media (max-width: 640px) {
   html { -webkit-tap-highlight-color: transparent; }
@@ -336,7 +328,6 @@ input:focus { border-color: color-mix(in srgb, var(--mauve) 50%, transparent); b
   input { min-height: 52px; font-size: 16px; border-radius: 14px; }
   #code { max-width: none; font-size: 28px; text-align: center; letter-spacing: .35em; }
   .pair-form .btn { width: 100%; font-size: 16px; }
-  .btn.wide { min-height: 56px; font-size: 16px; }
 
   /* settings */
   .group { padding: 18px 18px 6px; }

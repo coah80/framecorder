@@ -17,14 +17,12 @@ pub struct Overview {
     clips: Vec<ClipView>,
     download_dir: String,
     autostart: Option<bool>,
-    /// Desktop: whether closing the window leaves it running in the tray.
-    background: Option<bool>,
+    /// Whether closing the window leaves it running in the tray.
+    background: bool,
 }
 
 fn platform() -> &'static str {
-    if cfg!(target_os = "android") {
-        "android"
-    } else if cfg!(target_os = "macos") {
+    if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(windows) {
         "windows"
@@ -35,46 +33,15 @@ fn platform() -> &'static str {
 
 #[tauri::command]
 pub fn overview(app: AppHandle, state: State<'_, AppState>) -> Overview {
-    #[cfg(desktop)]
-    let autostart = {
-        use tauri_plugin_autostart::ManagerExt;
-        app.autolaunch().is_enabled().ok()
-    };
-    #[cfg(mobile)]
-    let autostart = {
-        let _ = &app;
-        None
-    };
-    let background = cfg!(desktop).then(|| state.background.load(std::sync::atomic::Ordering::SeqCst));
+    use tauri_plugin_autostart::ManagerExt;
     Overview {
-        background,
+        background: state.background.load(std::sync::atomic::Ordering::SeqCst),
         platform: platform(),
         hosts: state.engine.statuses(),
         clips: state.engine.clips().iter().map(view).collect(),
         download_dir: state.download_dir.to_string_lossy().into_owned(),
-        autostart,
+        autostart: app.autolaunch().is_enabled().ok(),
     }
-}
-
-/// Called once the page is up. On Android this asks for notifications and
-/// starts the foreground service that keeps syncing in the background.
-#[tauri::command]
-pub async fn app_ready(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    {
-        use tauri_plugin_framesync::FrameSyncExt;
-        use tauri_plugin_notification::{NotificationExt, PermissionState};
-        let granted = app.notification().permission_state().map_err(|e| e.to_string())?;
-        if granted != PermissionState::Granted {
-            let _ = app.notification().request_permission();
-        }
-        tauri::async_runtime::spawn_blocking(move || app.framesync().start_service())
-            .await
-            .map_err(|e| e.to_string())??;
-    }
-    #[cfg(not(target_os = "android"))]
-    let _ = app;
-    Ok(())
 }
 
 /// Looks for Frames for a few seconds, over mDNS and by asking every
@@ -114,13 +81,6 @@ pub async fn pair(
     Ok(status_of(&state, &host.fingerprint))
 }
 
-#[tauri::command]
-pub async fn pair_link(state: State<'_, AppState>, link: String) -> Result<Status, String> {
-    let l = pairlink::parse(&link)?;
-    let host = state.engine.pair(&l.addr, Some(&l.fingerprint), &l.code, None).await?;
-    Ok(status_of(&state, &host.fingerprint))
-}
-
 fn status_of(state: &AppState, fingerprint: &str) -> Status {
     state
         .engine
@@ -152,79 +112,32 @@ fn location(state: &AppState, key: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn open_clip(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
     let loc = location(&state, &key)?;
-    #[cfg(target_os = "android")]
-    {
-        use tauri_plugin_framesync::FrameSyncExt;
-        app.framesync().open(&loc)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener().open_path(loc, None::<&str>).map_err(|e| e.to_string())
-    }
+    app.opener().open_path(loc, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn reveal_clip(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
     let loc = location(&state, &key)?;
-    #[cfg(desktop)]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener().reveal_item_in_dir(loc).map_err(|e| e.to_string())
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, loc);
-        Err("not on this platform".into())
-    }
-}
-
-#[tauri::command]
-pub fn share_clip(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<(), String> {
-    let loc = location(&state, &key)?;
-    #[cfg(target_os = "android")]
-    {
-        use tauri_plugin_framesync::FrameSyncExt;
-        app.framesync().share(&loc)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (app, loc);
-        Err("sharing is only on android".into())
-    }
+    app.opener().reveal_item_in_dir(loc).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn open_folder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    #[cfg(desktop)]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener().open_path(state.download_dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, state);
-        Err("not on this platform".into())
-    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(state.download_dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Whether closing the window keeps it syncing from the tray, or quits.
 #[tauri::command]
 pub fn set_background(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> Result<bool, String> {
-    #[cfg(desktop)]
-    {
-        let prefs = super::prefs::Prefs { background: enabled };
-        super::prefs::save(&state.config_dir, &prefs).map_err(|e| format!("couldn't save that: {e}"))?;
-        state.background.store(enabled, std::sync::atomic::Ordering::SeqCst);
-        super::tray::set_visible(&app, enabled);
-        Ok(enabled)
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, state, enabled);
-        Err("not on this platform".into())
-    }
+    let prefs = super::prefs::Prefs { background: enabled };
+    super::prefs::save(&state.config_dir, &prefs).map_err(|e| format!("couldn't save that: {e}"))?;
+    state.background.store(enabled, std::sync::atomic::Ordering::SeqCst);
+    super::tray::set_visible(&app, enabled);
+    Ok(enabled)
 }
 
 /// Closes the app for real, tray and all.
@@ -235,16 +148,8 @@ pub fn quit(app: AppHandle) {
 
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    #[cfg(desktop)]
-    {
-        use tauri_plugin_autostart::ManagerExt;
-        let auto = app.autolaunch();
-        if enabled { auto.enable() } else { auto.disable() }.map_err(|e| e.to_string())?;
-        auto.is_enabled().map_err(|e| e.to_string())
-    }
-    #[cfg(mobile)]
-    {
-        let _ = (app, enabled);
-        Err("not on this platform".into())
-    }
+    use tauri_plugin_autostart::ManagerExt;
+    let auto = app.autolaunch();
+    if enabled { auto.enable() } else { auto.disable() }.map_err(|e| e.to_string())?;
+    auto.is_enabled().map_err(|e| e.to_string())
 }
