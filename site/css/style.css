@@ -143,6 +143,8 @@ details .code { margin-top: 14px; }
 
 .foot { margin-top: var(--gap); padding: 28px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .foot p { color: var(--overlay2); font-size: 14px; max-width: 80ch; }
+.foot a { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; transition: color .2s var(--out); }
+@media (hover: hover) { .foot a:hover { color: var(--text); } }
 
 /* tablets and phones: one column, and everything you tap is at least 44px */
 @media (max-width: 860px) {

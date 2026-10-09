@@ -1,0 +1,18 @@
+steam-frame.glb is made from valve's steam frame cad:
+
+  https://gitlab.steamos.cloud/SteamHardware/SteamFrame
+  Valve_Steam_frame_core_module_20260917.stp
+  Valve_Steam_frame_head_strap_20260925.stp
+
+© valve corporation, licensed under creative commons attribution-noncommercial-
+sharealike 4.0 international (cc by-nc-sa 4.0):
+
+  https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+what changed: every solid was tessellated, the parts you can't see from outside
+(the electronics, screws, clips and brackets, and the inner walls of what's
+left) were dropped, and the rest was simplified and compressed into this one
+glb. tools/frame_model.py in the framecorder repo is the script that does it.
+
+this derived model is under the same licence. valve has nothing to do with
+framecorder and doesn't endorse it.
