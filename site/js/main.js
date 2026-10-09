@@ -55,6 +55,27 @@ function clock(seconds) {
   return `${two(seconds / 3600)}:${two((seconds / 60) % 60)}:${two(seconds % 60)}`;
 }
 
+// a few glowing panels round the origin, baked into a reflection map
+function studio(renderer) {
+  const room = new THREE.Scene();
+  const panel = (color, glow, size, x, y, z) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ color }));
+    p.material.color.multiplyScalar(glow);
+    p.position.set(x, y, z);
+    p.lookAt(0, 0, 0);
+    room.add(p);
+  };
+  panel(0xffffff, 3, 8, 0, 6, 2); // the big soft light above
+  panel(0xffffff, 1.2, 4, 4, 2, 5); // a window in front, on the key light's side
+  panel(0xcba6f7, 2, 5, -6, 1, -2); // mauve behind, on the left
+  panel(0x89b4fa, 1.4, 5, 6, -2, 2); // cool below, on the right
+  panel(0x45475a, 0.4, 12, 0, -7, 0); // the floor, so the underside isn't pitch black
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const map = pmrem.fromScene(room, 0.04).texture;
+  pmrem.dispose();
+  return map;
+}
+
 async function scene(stage, canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -65,21 +86,23 @@ async function scene(stage, canvas) {
   camera.position.set(0, 0.5, 9);
   camera.lookAt(0, 0, 0);
 
-  // mauve from one side, cool from the other, so the edges read on dark
-  world.add(new THREE.HemisphereLight(0xcdd6f4, 0x45475a, 2.6));
-  const key = new THREE.DirectionalLight(0xffffff, 4.5);
+  // it's black plastic on a dark page, so what shows its shape is what it
+  // reflects: a soft studio round it, white above, mauve from one side and
+  // cool from the other. made once, then it's just a texture
+  world.environment = studio(renderer);
+  const key = new THREE.DirectionalLight(0xffffff, 2.4);
   key.position.set(3, 4, 6);
-  const fill = new THREE.DirectionalLight(0xcdd6f4, 2.2);
-  fill.position.set(-5, 1, 4);
-  const rim = new THREE.PointLight(0xcba6f7, 260, 24);
+  const rim = new THREE.PointLight(0xcba6f7, 220, 24);
   rim.position.set(-4, 2, -3);
-  const cool = new THREE.PointLight(0x89b4fa, 140, 24);
+  const cool = new THREE.PointLight(0x89b4fa, 80, 24);
   cool.position.set(4, -2, 3);
-  world.add(key, fill, rim, cool);
+  world.add(key, rim, cool);
 
-  // it sits still, turned a little so you see the front and one side
+  // it sits still, turned a little so you see the front and one side. turned
+  // that way the visor swings out to the left, so it's nudged back to the middle
   const model = await headset();
   model.rotation.y = POSE;
+  model.position.x = 0.45;
   const tilt = new THREE.Group();
   tilt.rotation.set(LEAN, 0, 0);
   tilt.add(model);
