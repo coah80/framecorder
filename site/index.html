@@ -92,11 +92,28 @@ git clone <span data-text="repo">https://github.com/coah80/framecorder</span> &a
       <h2>sync it<i>.</i></h2>
       <p>the app that catches your clips. install it, pair it with your frame once, and everything you record shows up on its own.</p>
       <div class="apps" id="apps">
-        <a class="btn plain" data-os="windows" data-file="framecorder-windows.exe" href="#sync">windows</a>
-        <a class="btn plain" data-os="linux" data-file="framecorder-linux" href="#sync">linux</a>
+        <a class="btn plain" data-os="windows" data-file="framecorder-setup.exe" href="#sync">windows</a>
+        <button class="btn plain" data-os="linux" id="linux" type="button">linux</button>
         <a class="btn plain" data-os="android" data-file="framecorder-android.apk" href="#sync">android</a>
-        <a class="btn plain" data-os="macos" data-file="framecorder-macos.dmg" href="#sync">macos</a>
+        <a class="btn plain" data-os="macos" data-file="framecorder-desktop-macos.dmg" href="#sync">macos</a>
+        <!-- linux is two choices, the linux button turns into them -->
+        <a class="btn plain pick" id="appimage" data-file="framecorder-x86_64.AppImage" href="#sync">appimage</a>
+        <span class="btn plain pick soon" aria-disabled="true">flatpak <small>soon</small></span>
+        <button class="btn plain pick back" id="unpick" type="button" aria-label="back to every system">back</button>
       </div>
+      <details id="appimage-help">
+        <summary>on linux? how to open the appimage</summary>
+        <p>one file that runs on just about any distro. the first time it opens, it adds itself to your app menu and keeps itself up to date.</p>
+        <ol class="path small">
+          <li><span>right-click it, properties, and allow it to run as a program</span></li>
+          <li><span>open it</span></li>
+        </ol>
+        <p>or, in a terminal:</p>
+        <div class="code">
+          <pre>chmod +x framecorder-x86_64.AppImage && ./framecorder-x86_64.AppImage</pre>
+          <button class="copy">copy</button>
+        </div>
+      </details>
       <details id="mac">
         <summary>on a mac? how to open it the first time</summary>
         <p>it's signed, but not notarized (apple charges for that), so macos blocks it the first time. only once.</p>

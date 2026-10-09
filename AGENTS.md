@@ -67,7 +67,7 @@ Everything here is a good default, not a law. A maintainer's call in the moment 
 
 The most common defect here is a change that works on the path you tested and is missing everywhere else. Before calling work done, walk this list and say which entries applied:
 
-- **Surfaces.** Recorder flags (`framecorder --help`), the tab (home tiles, settings, setup flow, footer notes), the sync API, the desktop app (`app/`, and the native `desktop/` that's replacing it), the Android app, the installer, the site, `README.md` and `docs/how-it-works.md`.
+- **Surfaces.** Recorder flags (`framecorder --help`), the tab (home tiles, settings, setup flow, footer notes), the sync API, the desktop app (`desktop/`), the Android app, the installer, the site, `README.md` and `docs/how-it-works.md`.
 - **Capture paths.** Panels and SteamVR's view. Eye view and both-eyes raw view. 16:9, 1:1 and 9:16. Left and right eye. 72, 90, 120 and 144 Hz.
 - **Recorder states.** Idle with clips on, recording, paused (the tab's on screen), recording while clips are on, clips off, display off (headset off a head).
 - **Lifecycle.** Fresh install, update by the timer (no password, the tab restarts itself when idle), update from the installer or the app, dev build and back, close and reopen, uninstall, SteamVR restarting, PipeWire restarting, the headset sleeping.
@@ -99,7 +99,7 @@ docker build -t framecorder-dev tools/dev
 docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-cargo:/root/.cargo/registry framecorder-dev cargo test
 ```
 
-The sync service (`sync/`) builds anywhere. The desktop app (`app/`) needs WebKitGTK on Linux (`app/tools/Dockerfile`), or let CI build it. The native desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails need `ffmpeg` on the PATH; without it the grid shows plain tiles.
+The sync service (`sync/`) builds anywhere. The Tauri app (`app/`) needs WebKitGTK on Linux (`app/tools/Dockerfile`), or let CI build it. The desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails need `ffmpeg` on the PATH; without it the grid shows plain tiles.
 
 **The installer** (`installer/`, Bun and OpenTUI). `--cpu='*' --os='*'` pulls every platform's native package, so it cross-compiles for the headset from x86:
 
@@ -117,13 +117,13 @@ installer/build.sh dist     # arm64 binary, zstd'd, with its sha256
   | recorder, tab, setup, helper | `cargo test --release --lib` (headset or dev container) |
   | sync service | `cd sync && cargo test` |
   | app core | `cd app && cargo test`, and `app/tools/e2e.sh` for real daemon-to-client sync |
-  | native desktop app | `cd desktop && cargo test` |
+  | desktop app | `cd desktop && cargo test` |
   | installer | `cd installer && bunx tsc -p .` |
 
 - **Capture changes need a recording.** On the headset: `framecorder --duration 4 --no-audio /tmp/t.mp4`, then look at it (`ffprobe`, or a frame with `ffmpeg -ss 1 -i /tmp/t.mp4 -frames:v 1 f.png`). A test recorder can run next to the tab's. Keep them short, in `/tmp`, and delete them after.
 - **Measure, don't guess.** The recorder logs fps, dropped frames and GPU time every 5 s, the tab's recorder into `~/.local/state/framecorder/recorder.log`. For frame pacing in a file, look at the gaps between packet timestamps (`ffprobe -show_entries packet=pts_time`).
 - **Some bugs only show up under a real game** (GPU contention, the encoder falling behind, PipeWire restarts). Ask a maintainer to play something heavy, with exact steps, then pull the logs and files and do the analysis yourself.
-- **Screens.** The tab: `framecorder-ui --preview out.rgba <state>`, a raw 1280x760 RGBA frame (`ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png`). The app: `app/tools/preview/shots.sh`. The native desktop app: `cd desktop && cargo run -- --demo <screen>` (`clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`), which runs on its own temporary state. The site: headless Chrome against `python3 -m http.server -d site`. Look at what you made before you call it done.
+- **Screens.** The tab: `framecorder-ui --preview out.rgba <state>`, a raw 1280x760 RGBA frame (`ffmpeg -f rawvideo -pix_fmt rgba -s 1280x760 -i out.rgba out.png`). The Tauri app: `app/tools/preview/shots.sh`. The desktop app: `cd desktop && cargo run -- --demo <screen>` (`clips`, `list`, `syncing`, `unreachable`, `pair`, `settings`), which runs on its own temporary state. The site: headless Chrome against `python3 -m http.server -d site`. Look at what you made before you call it done.
 - **Installer and update flows** get tested with the dev build, never the public release. The installer runs in a terminal and takes clicks (SGR mouse) as well as keys, so it can be driven through a pty.
 - **Tests stay offline, fast and deterministic.** No headset for `--lib`, no sleeps standing in for synchronization, and every new test passes [the four questions](#clean-up-after-yourself).
 
@@ -177,7 +177,7 @@ curl -fsSL https://framecorder.coah80.com/install | sh     # back to releases
 
 Publishing redeploys the site, which serves the release to the installer and every headset's updater. If the site job didn't run: `gh workflow run site.yml --ref main`. Check it's live with `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`.
 
-**CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the desktop apps on a `v*` tag or by hand.
+**CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the Tauri app and the native desktop app on a `v*` tag or by hand.
 
 ## Pull requests and commits
 
@@ -204,7 +204,7 @@ Every vblank, the recorder finds the plane the VR compositor scans out and expor
 - `src/ui/`: the tab. Drawn by hand into a pixel canvas (`paint.rs`, `text.rs`), no UI toolkit, so every effect costs CPU.
 - `src/grab.rs`, `src/setup.rs`, `src/apps.rs`: the helper and its protocol, install, unlock, update and uninstall, SteamVR app registration. Their binaries are in `src/bin/`.
 - `src/openvr.rs`, `src/overlay.rs`, `src/input.rs`: OpenVR through `FnTable:` interface tables, no bindings crate. Slot indices come from `openvr_capi.h`, as named consts next to the interface version.
-- `sync/`: the sync service, its own crate. `app/`: the desktop app (Tauri 2), `app/src/core/` is the sync client with no UI in it. `desktop/`: the desktop app rebuilt natively on gpui-ce, not shipped yet. It runs the same sync core (`app/src/core`, `default-features = false`) and the same state folder as `app/`, so pairings carry over, and you must never run both at once. `installer/`: the terminal installer. `site/`: the website. `packaging/`: services and the build scripts.
+- `sync/`: the sync service, its own crate. `desktop/`: the desktop app, native on gpui-ce. `app.yml` builds it on a tag as `framecorder-x86_64.AppImage` (built on ubuntu 22.04 so it runs on most distros, it adds itself to the app menu and updates by replacing its own file; never bundle libxkbcommon, an old one can't read a new distro's keyboard files), `framecorder-setup.exe` (a per-user Inno Setup installer, `desktop/windows/installer.iss`, which the self updater runs silently) and `framecorder-desktop-macos.dmg` (a universal `framecorder.app`, Info.plist in `desktop/macos/`), and the site links those. `app/`: the older Tauri app, still the Android build, and `app/src/core/` is the sync client both use, with no UI in it. The two desktop apps share the state folder and `prefs.json`, so pairings carry over, and you must never run both at once. `installer/`: the terminal installer. `site/`: the website. `packaging/`: services and the build scripts.
 
 ## What the code can't tell you
 

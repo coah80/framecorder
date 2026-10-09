@@ -122,6 +122,16 @@ pub fn danger(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
     outline_base(id, text).hover(|s| s.text_color(c(theme::RED)).border_color(c(theme::RED)).bg(a(theme::RED, 0.08)))
 }
 
+/// the red button that does the thing you were just warned about
+pub fn destructive(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
+    outline_base(id, text)
+        .bg(a(theme::RED, 0.12))
+        .border_color(a(theme::RED, 0.5))
+        .text_color(c(theme::RED))
+        .font_weight(FontWeight::MEDIUM)
+        .hover(|s| s.bg(a(theme::RED, 0.22)).border_color(c(theme::RED)))
+}
+
 fn outline_base(id: impl Into<ElementId>, text: &str) -> Stateful<Div> {
     div()
         .id(id)
