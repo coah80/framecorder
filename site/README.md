@@ -10,8 +10,8 @@ before publishing: set `REPO` at the top of `js/main.js` to where the project li
 
 `install` is the headset installer the page tells people to pipe into `sh`. it downloads `dl/framecorder-arm64.tar.gz`, which the site workflow copies from the latest release (`packaging/release.sh` makes it).
 
-- `js/headset.js`: loads the headset from `model/`. it's "steam frame low poly" by jwwwun on sketchfab, with the stand it came on removed. check its license on sketchfab before publishing, and keep the credit in the footer
-- `vendor/OBJLoader.js`: three.js's obj loader, MIT
+- `js/headset.js`: loads the headset from `model/` and gives its parts their materials. it's valve's own steam frame cad with the insides taken out (cc by-nc-sa 4.0, see `model/LICENSE.txt`, and keep the credit in the footer). `tools/frame_model.py` makes the glb from the step files
+- `vendor/GLTFLoader.js`, `vendor/BufferGeometryUtils.js`, `vendor/meshopt_decoder.module.js`: three.js's glb loader and the meshopt decoder it needs, MIT
 - `js/main.js`: the hero scene and the things orbiting it (they're plain html, moved around by the 3d scene, so they stay sharp and go behind the headset)
 - `css/style.css`: catppuccin mocha, same look as the app and the dashboard tab
 - `vendor/three.module.min.js`: three.js r160, MIT
