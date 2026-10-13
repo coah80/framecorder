@@ -13,14 +13,17 @@ use gpui::{
     Window,
 };
 
+use crate::remote::Live;
 use crate::selfupdate::{self, Release};
-use crate::sync::{Clip, Core, Msg};
+use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
-use crate::{autostart, clips, pair, settings, sidebar, thumbs};
+use crate::tray::Tray;
+use crate::{autostart, clips, frame, pair, prefs, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Clips,
+    Frame,
     Settings,
     Pair,
 }
@@ -52,6 +55,9 @@ pub struct Pairing {
     pub error: Option<String>,
     pub busy: bool,
     pub focus: FocusHandle,
+    /// a paired frame this is "pair again" for, so its clips carry over
+    /// instead of coming down twice
+    pub replaces: Option<String>,
     tasks: Vec<Task<()>>,
 }
 
@@ -67,7 +73,21 @@ pub struct FrameApp {
     pub page: Page,
     pub filter: Filter,
     pub grid: bool,
+    /// what's typed in the library's search box
+    pub query: String,
+    pub search: FocusHandle,
+    /// the library itself holds the keyboard when nothing else does, for ctrl+f
+    pub library: FocusHandle,
     pub statuses: Vec<Status>,
+    /// what each frame has told us since it connected, by fingerprint
+    pub live: HashMap<String, Live>,
+    /// the frame the frame page is about, when there's more than one
+    pub frame: Option<String>,
+    /// the once-a-second repaint while a recording's clock is on screen
+    pub tick: Option<Task<()>>,
+    /// the frame "unpair" was clicked on, while settings asks if we mean it
+    pub unpairing: Option<String>,
+    pub confirm: FocusHandle,
     pub clips: Vec<Clip>,
     pub progress: Option<Progress>,
     pub batch: Option<Batch>,
@@ -76,6 +96,10 @@ pub struct FrameApp {
     /// frames we asked to update, until they say they are
     pub frame_updating: HashSet<String>,
     pub autostart: Option<bool>,
+    /// closing the window leaves it syncing from the tray
+    pub background: bool,
+    pub tray: Option<Tray>,
+    told_about_tray: bool,
     pub desktop: DesktopUpdate,
     pub thumbs: HashMap<String, Thumb>,
     ffmpeg: bool,
@@ -117,15 +141,42 @@ impl FrameApp {
                 }
                 cx.background_executor().timer(Duration::from_secs(6 * 60 * 60)).await;
             }));
+            // clips deleted or moved out of the folder leave the library on
+            // their own. a look every couple of seconds is a stat per clip
+            let engine = core.engine.clone();
+            tasks.push(cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let engine = engine.clone();
+                let clips = cx.background_executor().spawn(async move { sync::library(&engine) }).await;
+                let alive = this.update(cx, |app, cx| {
+                    if clips.len() != app.clips.len() || clips.iter().zip(&app.clips).any(|(a, b)| a.key != b.key) {
+                        app.clips = clips;
+                        app.request_thumbs(cx);
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }));
         }
 
+        let prefs = prefs::load(&core.state_dir);
         let mut app = Self {
             core,
             demo,
             page: Page::Clips,
             filter: Filter::All,
-            grid: true,
+            grid: prefs.grid,
+            query: String::new(),
+            search: cx.focus_handle(),
+            library: cx.focus_handle(),
             statuses: Vec::new(),
+            live: HashMap::new(),
+            frame: None,
+            tick: None,
+            unpairing: None,
+            confirm: cx.focus_handle(),
             clips: Vec::new(),
             progress: None,
             batch: None,
@@ -137,10 +188,14 @@ impl FrameApp {
                 error: None,
                 busy: false,
                 focus: cx.focus_handle(),
+                replaces: None,
                 tasks: Vec::new(),
             },
             frame_updating: HashSet::new(),
             autostart: if demo { Some(true) } else { autostart::is_enabled() },
+            background: prefs.background,
+            tray: None,
+            told_about_tray: false,
             desktop: DesktopUpdate::None,
             thumbs: HashMap::new(),
             ffmpeg: false,
@@ -150,7 +205,7 @@ impl FrameApp {
         if !demo {
             app.refresh();
             if app.statuses.is_empty() {
-                app.open_pair(cx);
+                app.open_pair(None, cx);
             }
         }
         app
@@ -161,20 +216,23 @@ impl FrameApp {
             return;
         }
         self.statuses = self.core.engine.statuses();
-        self.clips = self.core.engine.clips().iter().map(Clip::from).collect();
-        self.clips.sort_by_key(|c| std::cmp::Reverse(c.created));
+        self.clips = sync::library(&self.core.engine);
     }
 
     fn on_msg(&mut self, msg: Msg, cx: &mut Context<Self>) {
         match msg {
             Msg::Status => {
                 self.statuses = self.core.engine.statuses();
+                self.sync_tray();
                 for s in &self.statuses {
                     if s.update.as_ref().is_some_and(|u| u.updating || !u.available) {
                         self.frame_updating.remove(&s.fingerprint);
                     }
                 }
+                self.follow_connections(cx);
             }
+            Msg::Remote(fp, remote) => self.on_remote(&fp, remote, cx),
+            Msg::About(fp, about) => self.on_about(&fp, about, cx),
             Msg::Progress(p) => {
                 let switched = self.progress.as_ref().is_none_or(|old| old.id != p.id);
                 match &mut self.batch {
@@ -222,7 +280,7 @@ impl FrameApp {
         let jobs: Vec<_> = self
             .clips
             .iter()
-            .filter(|c| c.exists && !self.thumbs.contains_key(&c.key))
+            .filter(|c| !self.thumbs.contains_key(&c.key))
             .map(|c| (c.key.clone(), c.location.clone(), thumbs::path_for(&dir, &c.key)))
             .collect();
         if jobs.is_empty() {
@@ -263,7 +321,7 @@ impl FrameApp {
 
     pub fn go(&mut self, page: Page, cx: &mut Context<Self>) {
         if page == Page::Pair {
-            self.open_pair(cx);
+            self.open_pair(None, cx);
         } else {
             self.page = page;
             self.pairing.tasks.clear();
@@ -271,22 +329,27 @@ impl FrameApp {
         cx.notify();
     }
 
+    // gpui hands these to the system off the ui thread. windows' ShellExecute
+    // called straight from a click handler never opened anything.
     pub fn open_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
-        if let Err(e) = opener::open(&clip.location) {
-            self.toast(format!("couldn't open that: {e}"), cx);
+        if clip.location.exists() {
+            log::info!("opening {}", clip.location.display());
+            cx.open_with_system(&clip.location);
+        } else {
+            self.toast("that file's been moved or deleted", cx);
         }
     }
 
     pub fn reveal_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
-        if let Err(e) = opener::reveal(&clip.location) {
-            self.toast(format!("couldn't show that: {e}"), cx);
+        if clip.location.exists() {
+            cx.reveal_path(&clip.location);
+        } else {
+            self.toast("that file's been moved or deleted", cx);
         }
     }
 
     pub fn open_folder(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = opener::open(&self.core.download_dir) {
-            self.toast(format!("couldn't open the folder: {e}"), cx);
-        }
+        cx.open_with_system(&self.core.download_dir);
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) {
@@ -294,15 +357,172 @@ impl FrameApp {
         self.toast("trying again", cx);
     }
 
-    pub fn forget(&mut self, fingerprint: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.core.engine.unpair(fingerprint) {
-            self.toast(format!("couldn't forget it: {e}"), cx);
+    // unpairing a frame
+
+    /// "unpair" in settings asks first. the question takes the keyboard, so
+    /// esc keeps the frame and enter lets it go
+    pub fn ask_unpair(&mut self, fingerprint: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.unpairing = Some(fingerprint);
+        self.confirm.focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn keep_frame(&mut self, cx: &mut Context<Self>) {
+        self.unpairing = None;
+        cx.notify();
+    }
+
+    pub fn confirm_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        match ev.keystroke.key.as_str() {
+            "escape" => self.keep_frame(cx),
+            "enter" => {
+                if let Some(fp) = self.unpairing.take() {
+                    self.unpair(&fp, cx);
+                }
+            }
+            _ => return,
         }
+        cx.stop_propagation();
+    }
+
+    pub fn unpair(&mut self, fingerprint: &str, cx: &mut Context<Self>) {
+        self.unpairing = None;
+        let name = self.statuses.iter().find(|s| s.fingerprint == fingerprint).map(|s| s.name.clone());
+        let done = if self.demo {
+            self.statuses.retain(|s| s.fingerprint != fingerprint);
+            true
+        } else {
+            match self.core.engine.unpair(fingerprint) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.toast(format!("couldn't unpair it: {e}"), cx);
+                    false
+                }
+            }
+        };
         self.refresh();
+        if done {
+            self.live.remove(fingerprint);
+            if self.frame.as_deref() == Some(fingerprint) {
+                self.frame = None;
+            }
+            self.sync_tray();
+        }
+        if let Some(name) = name.filter(|_| done) {
+            self.toast(format!("unpaired {name}"), cx);
+        }
         if self.statuses.is_empty() && !self.demo {
-            self.open_pair(cx);
+            self.open_pair(None, cx);
         }
         cx.notify();
+    }
+
+    fn save_prefs(&mut self, cx: &mut Context<Self>) {
+        if self.demo {
+            return;
+        }
+        let p = prefs::Prefs { background: self.background, grid: self.grid };
+        if let Err(e) = prefs::save(&self.core.state_dir, &p) {
+            self.toast(format!("couldn't save that: {e}"), cx);
+        }
+    }
+
+    // the library's search box
+
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.query.clear();
+        cx.notify();
+    }
+
+    /// keys that reach the library page itself: ctrl+f (cmd+f on a mac) goes
+    /// to the search box, esc clears what was searched
+    pub fn library_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        if (k.modifiers.control || k.modifiers.platform) && k.key == "f" {
+            self.focus_search(window, cx);
+        } else if k.key == "escape" && !self.query.is_empty() {
+            self.clear_search(cx);
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+    }
+
+    /// typing in the search box. esc clears it, and leaves it once it's empty
+    pub fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        let shortcut = k.modifiers.control || k.modifiers.platform;
+        if shortcut && k.key == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                self.query.push_str(text.split_whitespace().collect::<Vec<_>>().join(" ").as_str());
+            }
+        } else if shortcut && k.key == "backspace" {
+            self.query.clear();
+        } else if k.key == "backspace" {
+            self.query.pop();
+        } else if k.key == "escape" && !self.query.is_empty() {
+            self.query.clear();
+        } else if k.key == "escape" || k.key == "enter" {
+            self.library.focus(window, cx);
+        } else if let Some(ch) = k.key_char.as_deref().filter(|_| !shortcut) {
+            if ch.chars().all(|c| !c.is_control()) {
+                self.query.push_str(ch);
+            }
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    pub fn set_grid(&mut self, grid: bool, cx: &mut Context<Self>) {
+        self.grid = grid;
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    /// whether closing the window keeps it syncing from the tray, or quits
+    pub fn set_background(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.background = on;
+        if let Some(t) = &self.tray {
+            t.set_visible(on);
+        }
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    pub fn attach_tray(&mut self, tray: Tray) {
+        tray.set_visible(self.background);
+        self.tray = Some(tray);
+        self.sync_tray();
+    }
+
+    /// whether the window closing should leave the app running. the first
+    /// time, a notification says where it went
+    pub fn keep_running_on_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.demo || !self.background || self.tray.is_none() {
+            return false;
+        }
+        if !self.told_about_tray {
+            self.told_about_tray = true;
+            cx.show_system_notification(SystemNotification {
+                tag: "framecorder-tray".into(),
+                title: "framecorder is still syncing".into(),
+                body: if cfg!(target_os = "macos") {
+                    "it's in the menu bar, so new clips keep coming in. to close it for real, click it there and pick quit, or turn off \"keep running\" in settings."
+                } else {
+                    "it's in the tray, so new clips keep coming in. to close it for real, right-click it there and pick quit, or turn off \"keep running\" in settings."
+                }
+                .into(),
+                actions: Vec::new(),
+            });
+        }
+        true
     }
 
     pub fn set_autostart(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -343,7 +563,7 @@ impl FrameApp {
         match std::mem::replace(&mut self.desktop, DesktopUpdate::None) {
             DesktopUpdate::Available(rel) => match rel.asset.clone() {
                 None => {
-                    let _ = opener::open(&rel.page);
+                    cx.open_url(&rel.page);
                     self.desktop = DesktopUpdate::Available(rel);
                 }
                 Some((url, size)) => self.download_desktop(rel, url, size, cx),
@@ -412,12 +632,19 @@ impl FrameApp {
 
     // pairing
 
-    pub fn open_pair(&mut self, cx: &mut Context<Self>) {
+    /// "pair again" for a frame that forgot us or got a new certificate: the
+    /// new pairing takes over its clips, so nothing comes down twice
+    pub fn open_pair_for(&mut self, fingerprint: String, cx: &mut Context<Self>) {
+        self.open_pair(Some(fingerprint), cx);
+    }
+
+    pub fn open_pair(&mut self, replaces: Option<String>, cx: &mut Context<Self>) {
         self.page = Page::Pair;
         let p = &mut self.pairing;
         p.code.clear();
         p.error = None;
         p.busy = false;
+        p.replaces = replaces;
         p.tasks.clear();
         if self.demo {
             return;
@@ -504,19 +731,24 @@ impl FrameApp {
         p.busy = true;
         p.error = None;
         cx.notify();
-        let (engine, code) = (self.core.engine.clone(), p.code.clone());
+        let (engine, code, replaces) = (self.core.engine.clone(), p.code.clone(), p.replaces.clone());
         let addr = if found.addr.contains(':') && !found.addr.ends_with(']') {
             found.addr.clone()
         } else {
             format!("{}:38619", found.addr)
         };
-        let job = self.core.rt.spawn(async move { engine.pair(&addr, Some(&found.fingerprint), &code).await });
+        let job = self.core.rt.spawn(async move {
+            engine.pair(&addr, Some(&found.fingerprint), &code, replaces.as_deref()).await
+        });
         cx.spawn(async move |this, cx| {
             let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |app, cx| {
                 app.pairing.busy = false;
                 match res {
                     Ok(host) => {
+                        if let Some(old) = app.pairing.replaces.take() {
+                            app.live.remove(&old);
+                        }
                         app.refresh();
                         app.go(Page::Clips, cx);
                         app.toast(format!("paired with {}", host.name), cx);
@@ -546,7 +778,8 @@ impl Render for FrameApp {
                 .child(sidebar::render(self, cx))
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
-                    _ => clips::render(self, cx).into_any_element(),
+                    Page::Frame => frame::render(self, cx).into_any_element(),
+                    _ => clips::render(self, window, cx).into_any_element(),
                 })
                 .into_any_element()
         };

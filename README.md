@@ -56,7 +56,7 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 
 ## sync to your phone or computer
 
-`framecorder-sync` runs on the headset and hands finished clips and recordings to the framecorder app (windows, macos, linux, android) over wi-fi, as soon as they're saved. pair from the tab: settings, sync, "pair a device" shows a qr code and a code to type. it only syncs while the frame is on, on the same wi-fi, with framecorder running. transfers go full speed, sending a file doesn't touch the gpu or the encoder. if you stream pc vr over the same wi-fi and it stutters during a sync, set `game_rate_mb` in `~/.config/framecorder/sync/settings.json` (8 is a good start). the desktop app's in `app/`, the android app in `android/`, the service in `sync/`, each with its own readme.
+`framecorder-sync` runs on the headset and hands finished clips and recordings to the framecorder app (windows, macos, linux, android) over wi-fi, as soon as they're saved. pair from the tab: settings, sync, "pair a device" shows a qr code and a code to type. it only syncs while the frame is on, on the same wi-fi, with framecorder running. transfers go full speed, sending a file doesn't touch the gpu or the encoder. if you stream pc vr over the same wi-fi and it stutters during a sync, set `game_rate_mb` in `~/.config/framecorder/sync/settings.json` (8 is a good start). the desktop app's in `desktop/`, the android app in `android/`, the service in `sync/`, each with its own readme.
 
 ## install
 

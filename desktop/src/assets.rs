@@ -51,6 +51,9 @@ const ICONS: &[(&str, &str)] = &[
     ),
     ("disk", r#"<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 14h.01M11 14h6"/>"#),
     ("x", r#"<path d="M6 6l12 12M18 6 6 18"/>"#),
+    ("search", r#"<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>"#),
+    ("unlink", r#"<path d="m10 6 1-1a4 4 0 0 1 5.7 5.7l-1 1M14 18l-1 1a4 4 0 0 1-5.7-5.7l1-1M4 4l16 16"/>"#),
+    ("clip", r#"<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>"#),
 ];
 
 pub struct Assets;
@@ -75,6 +78,13 @@ impl AssetSource for Assets {
             Vec::new()
         })
     }
+}
+
+/// the app icon, 256 px, for the window, the tray and the linux app menu
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../../app/icons/128x128@2x.png");
+
+pub fn app_icon() -> Option<image::RgbaImage> {
+    image::load_from_memory_with_format(APP_ICON_PNG, image::ImageFormat::Png).ok().map(|i| i.to_rgba8())
 }
 
 pub fn icon_path(name: &str) -> SharedString {

@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use framecorder_app_lib::core::api::{About, Remote};
 use framecorder_app_lib::core::engine::{DirSink, Engine, Listener, Progress, Status};
 use framecorder_app_lib::core::store::Entry;
 use framecorder_app_lib::headless::default_state_dir;
@@ -15,6 +16,10 @@ pub enum Msg {
     Synced(Entry),
     Busy(bool),
     Removed,
+    /// what a frame's tab is up to, by fingerprint. None once we've lost touch
+    Remote(String, Option<Remote>),
+    /// a frame's battery and storage, by fingerprint. None once we've lost touch
+    About(String, Option<About>),
 }
 
 struct Bridge(async_channel::Sender<Msg>);
@@ -40,6 +45,14 @@ impl Listener for Bridge {
     fn removed(&self, _host: &str, _id: &str) {
         let _ = self.0.try_send(Msg::Removed);
     }
+
+    fn remote(&self, host: &str, remote: Option<&Remote>) {
+        let _ = self.0.try_send(Msg::Remote(host.to_string(), remote.cloned()));
+    }
+
+    fn about(&self, host: &str, about: Option<&About>) {
+        let _ = self.0.try_send(Msg::About(host.to_string(), about.cloned()));
+    }
 }
 
 #[derive(Clone)]
@@ -47,6 +60,7 @@ pub struct Core {
     pub engine: Arc<Engine>,
     pub rt: tokio::runtime::Handle,
     pub download_dir: PathBuf,
+    pub state_dir: PathBuf,
 }
 
 /// where clips land: ~/Videos/framecorder (~/Movies/framecorder on a mac)
@@ -85,35 +99,43 @@ pub fn start(rt: tokio::runtime::Handle, demo: bool) -> Result<(Core, async_chan
     if !demo {
         engine.start_all();
     }
-    Ok((Core { engine, rt, download_dir }, rx))
+    Ok((Core { engine, rt, download_dir, state_dir }, rx))
 }
 
 /// a clip, the way the ui shows it
 #[derive(Clone)]
 pub struct Clip {
     pub key: String,
+    pub name: String,
     pub is_clip: bool,
     pub size: u64,
     pub created: i64,
     pub duration_s: Option<f64>,
     pub location: PathBuf,
-    /// false once the file's been moved or deleted here
-    pub exists: bool,
 }
 
 impl Clip {
     pub fn from(e: &Entry) -> Self {
-        let location = PathBuf::from(&e.location);
         Self {
             key: e.key(),
+            name: e.name.clone(),
             is_clip: e.kind == "clip",
             size: e.size,
             created: e.created,
             duration_s: e.duration_s,
-            exists: Path::new(&location).exists(),
-            location,
+            location: PathBuf::from(&e.location),
         }
     }
+}
+
+/// the library: every clip whose file is still here, newest first. one
+/// deleted or moved out of the folder drops out of it, and the engine still
+/// remembers syncing it, so it never comes down again
+pub fn library(engine: &Engine) -> Vec<Clip> {
+    let mut clips: Vec<Clip> =
+        engine.clips().iter().filter(|e| Path::new(&e.location).exists()).map(Clip::from).collect();
+    clips.sort_by_key(|c| std::cmp::Reverse(c.created));
+    clips
 }
 
 /// only one of us syncs at a time, two would download everything twice
@@ -127,10 +149,19 @@ pub fn single_instance(state_dir: &Path) -> Result<std::fs::File, String> {
         .map_err(|e| format!("can't open {}: {e}", path.display()))?;
     match file.try_lock() {
         Ok(()) => Ok(file),
-        Err(std::fs::TryLockError::WouldBlock) => Err("framecorder is already open".into()),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            // the running one watches for this and brings its window up
+            let _ = std::fs::write(show_marker(state_dir), b"");
+            Err("framecorder is already open, bringing it up".into())
+        }
         Err(std::fs::TryLockError::Error(e)) => {
             log::warn!("couldn't lock {}: {e}, carrying on", path.display());
             Ok(file)
         }
     }
+}
+
+/// a file the second launch leaves, so the first one knows to show itself
+pub fn show_marker(state_dir: &Path) -> PathBuf {
+    state_dir.join("show")
 }
