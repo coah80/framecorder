@@ -1,11 +1,11 @@
 //! the desktop app keeping itself up to date, from the github releases.
 //!
 //! it only offers an update when the latest release has a build of this app
-//! for this platform (framecorder-x86_64.AppImage, framecorder-setup.exe). on
-//! windows the update is the installer, run silently: it replaces the
-//! installed app and starts it again. on linux the new AppImage takes the old
-//! one's place. a mac app lives in a bundle, so there it opens the release
-//! page instead.
+//! for this platform (framecorder-x86_64.AppImage, framecorder-setup.exe,
+//! framecorder-desktop-macos.dmg). on windows the update is the installer,
+//! run silently: it replaces the installed app and starts it again. on linux
+//! the new AppImage takes the old one's place. on a mac the new
+//! framecorder.app comes out of the dmg and takes the old one's place.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -17,15 +17,14 @@ const LATEST: &str = "https://api.github.com/repos/coah80/framecorder/releases/l
 #[derive(Clone, Debug)]
 pub struct Release {
     pub version: String,
-    pub page: String,
-    /// where this platform's build is, when there is one
-    pub asset: Option<(String, u64)>,
+    /// where this platform's build is, and its size
+    pub url: String,
+    pub size: u64,
 }
 
 #[derive(Deserialize)]
 struct GhRelease {
     tag_name: String,
-    html_url: String,
     assets: Vec<GhAsset>,
 }
 
@@ -41,6 +40,8 @@ fn asset_name() -> Option<&'static str> {
         Some("framecorder-x86_64.AppImage")
     } else if cfg!(windows) {
         Some("framecorder-setup.exe")
+    } else if cfg!(target_os = "macos") {
+        Some("framecorder-desktop-macos.dmg")
     } else {
         None
     }
@@ -67,6 +68,11 @@ pub fn check() -> Result<Option<Release>, String> {
     if cfg!(target_os = "linux") && crate::appimage::file().is_none() {
         return Ok(None);
     }
+    // the same on a mac outside a framecorder.app
+    #[cfg(target_os = "macos")]
+    if bundle().is_none() {
+        return Ok(None);
+    }
     let rel: GhRelease = agent()
         .get(LATEST)
         .header("User-Agent", "framecorder-desktop")
@@ -79,20 +85,26 @@ pub fn check() -> Result<Option<Release>, String> {
     if !newer(&rel.tag_name, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
     }
-    let asset = asset_name()
-        .and_then(|want| rel.assets.iter().find(|a| a.name == want).map(|a| (a.browser_download_url.clone(), a.size)));
-    // a release without a build of this app for here: nothing to offer, except on mac
-    if asset.is_none() && !cfg!(target_os = "macos") {
+    // a release without a build of this app for here has nothing to offer
+    let Some(asset) = asset_name().and_then(|want| rel.assets.into_iter().find(|a| a.name == want)) else {
         return Ok(None);
-    }
-    Ok(Some(Release { version: rel.tag_name.trim_start_matches('v').to_string(), page: rel.html_url, asset }))
+    };
+    Ok(Some(Release {
+        version: rel.tag_name.trim_start_matches('v').to_string(),
+        url: asset.browser_download_url,
+        size: asset.size,
+    }))
 }
 
-/// where an update downloads to: the temp folder for the windows installer,
-/// next to the AppImage on linux, so putting it in place is a rename
+/// where an update downloads to: the temp folder for the windows installer
+/// and the mac dmg, next to the AppImage on linux, so putting it in place is
+/// a rename
 fn update_path() -> Result<PathBuf, String> {
     if cfg!(windows) {
         return Ok(std::env::temp_dir().join("framecorder-setup.exe"));
+    }
+    if cfg!(target_os = "macos") {
+        return Ok(std::env::temp_dir().join("framecorder-update.dmg"));
     }
     let file = crate::appimage::file().ok_or("this isn't running from an AppImage")?;
     let mut name = file.file_name().unwrap_or_default().to_os_string();
@@ -139,7 +151,7 @@ pub fn apply_and_restart(setup: &PathBuf) -> Result<(), String> {
 
 /// puts the new AppImage where the old one is and starts it. the running one
 /// keeps its own open copy until it quits
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn apply_and_restart(new: &PathBuf) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
@@ -164,6 +176,53 @@ pub fn apply_and_restart(new: &PathBuf) -> Result<(), String> {
         });
     }
     cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// the framecorder.app we're running from, when we are
+#[cfg(target_os = "macos")]
+fn bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app")).map(PathBuf::from)
+}
+
+/// copies the new framecorder.app out of the dmg next to ours, swaps the two,
+/// and leaves a shell to open it once we've quit. a second copy started
+/// before then would find us still running and only bring our window up
+#[cfg(target_os = "macos")]
+pub fn apply_and_restart(dmg: &PathBuf) -> Result<(), String> {
+    use std::process::Command;
+
+    let app = bundle().ok_or("this isn't running from framecorder.app")?;
+    let run = |cmd: &mut Command, what: &str| match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("{what} failed ({s})")),
+        Err(e) => Err(format!("{what} failed: {e}")),
+    };
+    let mount = std::env::temp_dir().join("framecorder-update");
+    let staged = app.with_file_name(".framecorder-update.app");
+    let old = app.with_file_name(".framecorder-old.app");
+    let _ = std::fs::remove_dir_all(&staged);
+    let _ = std::fs::remove_dir_all(&old);
+    run(Command::new("hdiutil").arg("attach").arg("-nobrowse").arg("-readonly").arg("-mountpoint").arg(&mount).arg(dmg), "opening the update")?;
+    let copied = run(Command::new("ditto").arg(mount.join("framecorder.app")).arg(&staged), "copying the update");
+    let _ = Command::new("hdiutil").arg("detach").arg("-quiet").arg(&mount).status();
+    copied?;
+    std::fs::rename(&app, &old).map_err(|e| format!("couldn't put the update in place: {e}"))?;
+    if let Err(e) = std::fs::rename(&staged, &app) {
+        let _ = std::fs::rename(&old, &app);
+        return Err(format!("couldn't put the update in place: {e}"));
+    }
+    let _ = std::fs::remove_dir_all(&old);
+    let _ = std::fs::remove_file(dmg);
+    Command::new("sh")
+        .arg("-c")
+        .arg(r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; open "$2" --args --after-update"#)
+        .arg("sh")
+        .arg(std::process::id().to_string())
+        .arg(&app)
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

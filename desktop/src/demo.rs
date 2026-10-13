@@ -127,8 +127,8 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
             app.batch = Some(Batch { total: 3, done: 0 });
             app.desktop = DesktopUpdate::Available(Release {
                 version: "0.2.0".into(),
-                page: "https://github.com/coah80/framecorder/releases".into(),
-                asset: Some(("demo".into(), 0)),
+                url: "demo".into(),
+                size: 0,
             });
         }
         "unreachable" => {

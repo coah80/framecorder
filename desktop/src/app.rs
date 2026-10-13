@@ -561,13 +561,10 @@ impl FrameApp {
     /// the desktop update pill: download, then restart into it
     pub fn desktop_update_clicked(&mut self, cx: &mut Context<Self>) {
         match std::mem::replace(&mut self.desktop, DesktopUpdate::None) {
-            DesktopUpdate::Available(rel) => match rel.asset.clone() {
-                None => {
-                    cx.open_url(&rel.page);
-                    self.desktop = DesktopUpdate::Available(rel);
-                }
-                Some((url, size)) => self.download_desktop(rel, url, size, cx),
-            },
+            DesktopUpdate::Available(rel) => {
+                let (url, size) = (rel.url.clone(), rel.size);
+                self.download_desktop(rel, url, size, cx)
+            }
             DesktopUpdate::Ready(path) => {
                 if self.demo {
                     self.desktop = DesktopUpdate::None;

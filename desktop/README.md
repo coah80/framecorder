@@ -26,7 +26,7 @@ cargo run -- --demo clips      # or list, syncing, unreachable, pair, settings
 - "start with the computer" (`--minimized` starts it straight in the tray)
 - frame updates, a link in the frame's card
 - thumbnails come from `ffmpeg` when it's installed (one frame a second in, cached in `~/.cache/com.framecorder.app/thumbs`). gpui can't decode video, so without ffmpeg the grid shows plain tiles
-- it updates itself: it checks the latest github release for `framecorder-x86_64.AppImage` / `framecorder-setup.exe`, and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on linux the new AppImage is renamed over the old one (only from an AppImage, a build of your own doesn't update). on a mac it opens the release page
+- it updates itself: it checks the latest github release for `framecorder-x86_64.AppImage` / `framecorder-setup.exe` / `framecorder-desktop-macos.dmg`, and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on linux the new AppImage is renamed over the old one (only from an AppImage, a build of your own doesn't update). on a mac the new `framecorder.app` is copied out of the dmg and swapped in for the old one, which reopens once it has quit (only from a `framecorder.app`)
 - only one copy runs at a time. opening it again while it's running brings the running one's window up and leaves
 
 ## coming from the old tauri app
