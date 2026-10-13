@@ -50,7 +50,7 @@ impl Step {
     }
 }
 
-const CARD_H: f32 = 412.0;
+const CARD_H: f32 = 490.0;
 const INSET: f32 = 40.0;
 const NAV_Y: f32 = CONTENT_Y + CARD_H + 20.0;
 const NAV_W: f32 = 200.0;
@@ -58,6 +58,7 @@ const NAV_H: f32 = 60.0;
 /// Where a step's controls start, under its heading.
 const CONTROLS_Y: f32 = 118.0;
 const PICK_H: f32 = 68.0;
+const TILE_H: f32 = 168.0;
 
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, step: Step, hits: &mut Vec<Hit>) {
     let pane = Rect::new(PAD, CONTENT_Y, WIDTH as f32 - 2.0 * PAD, CARD_H);
@@ -132,24 +133,65 @@ fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     };
     question(c, f, inner, "What shape should your videos be?", meaning);
     let shapes = [
-        ("16:9", Action::Shape(Shape::Wide), s.shape == Shape::Wide),
-        ("1:1", Action::Shape(Shape::Square), s.shape == Shape::Square),
-        ("9:16", Action::Shape(Shape::Tall), s.shape == Shape::Tall),
-        ("Both eyes", Action::Shape(Shape::BothEyes), s.shape == Shape::BothEyes),
+        (Shape::Wide, "16:9", "Widescreen"),
+        (Shape::Square, "1:1", "Square"),
+        (Shape::Tall, "9:16", "Vertical, for phones"),
+        (Shape::BothEyes, "Both eyes", "Just as the headset shows it"),
     ];
     let y = inner.y + CONTROLS_Y;
-    segmented(c, f, m, hits, Rect::new(inner.x, y, inner.w, PICK_H), &shapes, false);
+    let w = (inner.w - 3.0 * 16.0) / 4.0;
+    for (i, (shape, name, sub)) in shapes.into_iter().enumerate() {
+        tile(c, f, m, hits, Rect::new(inner.x + i as f32 * (w + 16.0), y, w, TILE_H), shape, name, sub);
+    }
 
     // With both eyes in the video there's no eye to pick.
     if s.shape == Shape::BothEyes {
         return;
     }
-    label(c, f, inner.x, y + PICK_H + 46.0, "THE EYE THAT GETS RECORDED");
+    label(c, f, inner.x, y + TILE_H + 40.0, "THE EYE THAT GETS RECORDED");
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), s.eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), s.eye == Eye::Right),
     ];
-    segmented(c, f, m, hits, Rect::new(inner.x, y + PICK_H + 62.0, inner.w / 2.0, PICK_H), &eyes, false);
+    segmented(c, f, m, hits, Rect::new(inner.x, y + TILE_H + 56.0, 420.0, 52.0), &eyes, false);
+}
+
+/// One shape to pick: a little outline of it, its ratio and a word on it.
+#[allow(clippy::too_many_arguments)]
+fn tile(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, shape: Shape, name: &str, sub: &str) {
+    let action = Action::Shape(shape);
+    let selected = m.settings.shape == shape;
+    let hovered = m.hover == Some(action);
+    if selected {
+        c.fill_rrect(r, 18.0, MAUVE, 0.12);
+        c.stroke_rrect(r, 18.0, 2.0, MAUVE, 1.0);
+    } else {
+        c.fill_rrect(r, 18.0, if hovered { MAUVE } else { SURFACE0 }, if hovered { 0.08 } else { 0.40 });
+        c.stroke_rrect(r, 18.0, 2.0, if hovered { MAUVE } else { SURFACE1 }, 0.6);
+    }
+    let (cx, _) = r.center();
+    let color: Rgb = if selected { MAUVE } else { OVERLAY2 };
+    let outline = |c: &mut Canvas, x: f32, w: f32| {
+        let o = Rect::new(x, r.y + 26.0, w, 54.0);
+        if selected {
+            c.fill_rrect(o, 6.0, MAUVE, 0.2);
+        }
+        c.stroke_rrect(o, 6.0, 2.5, color, 1.0);
+    };
+    match shape {
+        Shape::Wide => outline(c, cx - 48.0, 96.0),
+        Shape::Square => outline(c, cx - 27.0, 54.0),
+        Shape::Tall => outline(c, cx - 16.0, 32.0),
+        Shape::BothEyes => {
+            outline(c, cx - 47.0, 44.0);
+            outline(c, cx + 3.0, 44.0);
+        }
+    }
+    c.text_centered(f, Face::Data, 22.0, cx, r.y + 116.0, name, if selected { MAUVE } else { TEXT }, 1.0);
+    c.text_centered(f, Face::Body, 14.0, cx, r.y + 140.0, sub, SUBTEXT0, 1.0);
+    if !selected {
+        hits.push(Hit { rect: r, action });
+    }
 }
 
 fn quality(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
@@ -197,9 +239,14 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 
 /// Pairing is the one step that's fine to leave for later.
 fn pair(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
-    // The code, or why there's no pairing, look the same as in settings.
-    if !m.sync.available || m.sync.pairing.is_some() {
-        return sync::draw(c, f, m, inner, hits);
+    if !m.sync.available {
+        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, "The sync service isn't running on this headset", RED, 1.0);
+        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, "Run the installer again to set it up.", SUBTEXT0, 1.0);
+        return;
+    }
+    // The code looks the same as in settings.
+    if let Some(pairing) = m.sync.pairing {
+        return sync::pair(c, f, m, inner, pairing, hits);
     }
     question(c, f, inner, "Get clips on your phone or computer", "Pair the framecorder app now, or later in settings.");
     let y = inner.y + CONTROLS_Y;
