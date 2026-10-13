@@ -15,11 +15,13 @@ pub struct Prefs {
     pub background: bool,
     /// clips as a grid, or a list
     pub grid: bool,
+    /// a system notification per clip that lands
+    pub notify: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { background: true, grid: true }
+        Self { background: true, grid: true, notify: true }
     }
 }
 

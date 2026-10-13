@@ -170,6 +170,12 @@ fn main() {
         });
         cx.set_global(Main { app: app.clone(), window: None, icon: icon.clone() });
 
+        // a clip's notification opens it, or shows it in its folder
+        let notified = app.clone();
+        cx.on_system_notification_response(move |resp, cx| {
+            notified.update(cx, |app, cx| app.notification_response(resp, cx));
+        });
+
         // the tray, unless this is a demo. it needs the window system up, so after the app
         let mut has_tray = false;
         if !is_demo {

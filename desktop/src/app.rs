@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 use framecorder_app_lib::core::discover::{self, Found};
 use framecorder_app_lib::core::engine::{Progress, State, Status};
 use framecorder_app_lib::core::pairlink;
+use framecorder_app_lib::core::store::Entry;
 use gpui::{
-    div, prelude::*, px, App, Context, FocusHandle, FontWeight, KeyDownEvent, SharedString, SystemNotification, Task,
-    Window,
+    div, prelude::*, px, App, Context, FocusHandle, FontWeight, KeyDownEvent, SharedString, SystemNotification,
+    SystemNotificationAction, SystemNotificationResponse, Task, Window,
 };
 
 use crate::remote::Live;
@@ -18,7 +19,7 @@ use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
-use crate::{autostart, check, clips, frame, pair, prefs, settings, sidebar, thumbs};
+use crate::{autostart, check, clips, format, frame, pair, prefs, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -139,6 +140,8 @@ pub struct FrameApp {
     pub autostart: Option<bool>,
     /// closing the window leaves it syncing from the tray
     pub background: bool,
+    /// a system notification per clip that lands, with open and show in folder
+    pub notify: bool,
     pub tray: Option<Tray>,
     told_about_tray: bool,
     pub desktop: DesktopUpdate,
@@ -240,6 +243,7 @@ impl FrameApp {
             frame_updating: HashSet::new(),
             autostart: if demo { Some(true) } else { autostart::is_enabled() },
             background: prefs.background,
+            notify: prefs.notify,
             tray: None,
             told_about_tray: false,
             desktop: DesktopUpdate::None,
@@ -297,13 +301,9 @@ impl FrameApp {
                     self.progress = None;
                     self.speed = None;
                 }
-                let what = if e.kind == "clip" { "new clip" } else { "new recording" };
-                cx.show_system_notification(SystemNotification {
-                    tag: e.key().into(),
-                    title: format!("{what} from your frame").into(),
-                    body: e.name.clone().into(),
-                    actions: Vec::new(),
-                });
+                if self.notify {
+                    self.say_it_landed(&e, cx);
+                }
                 self.refresh();
                 self.request_thumbs(cx);
             }
@@ -352,6 +352,38 @@ impl FrameApp {
             }
         })
         .detach();
+    }
+
+    // notifications
+
+    /// "your clip from sam's frame is here", with open and show in folder
+    fn say_it_landed(&self, e: &Entry, cx: &mut Context<Self>) {
+        let what = if e.kind == "clip" { "clip" } else { "recording" };
+        let from = self.statuses.iter().find(|s| s.fingerprint == e.host).map(|s| s.name.as_str()).unwrap_or("your frame");
+        let body: Vec<String> = e.duration_s.map(format::length).into_iter().chain([format::size(e.size)]).collect();
+        let action = |id: &str, label: &str| SystemNotificationAction { id: id.into(), label: label.into() };
+        cx.show_system_notification(SystemNotification {
+            tag: e.key().into(),
+            title: format!("your {what} from {from} is here").into(),
+            body: body.join(" · ").into(),
+            actions: vec![action("open", "open"), action("reveal", "show in folder")],
+        });
+    }
+
+    /// a notification was clicked: its body or "open" plays the clip,
+    /// "show in folder" shows it. the window may be closed, both work without it
+    pub fn notification_response(&mut self, resp: SystemNotificationResponse, cx: &mut Context<Self>) {
+        let Some(clip) = self.clips.iter().find(|c| c.key == resp.tag.as_ref()).cloned() else { return };
+        match resp.action_id.as_deref() {
+            Some("reveal") => self.reveal_clip(&clip, cx),
+            _ => self.open_clip(&clip, cx),
+        }
+    }
+
+    pub fn set_notify(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.notify = on;
+        self.save_prefs(cx);
+        cx.notify();
     }
 
     // little things
@@ -504,7 +536,7 @@ impl FrameApp {
         if self.demo {
             return;
         }
-        let p = prefs::Prefs { background: self.background, grid: self.grid };
+        let p = prefs::Prefs { background: self.background, grid: self.grid, notify: self.notify };
         if let Err(e) = prefs::save(&self.core.state_dir, &p) {
             self.toast(format!("couldn't save that: {e}"), cx);
         }

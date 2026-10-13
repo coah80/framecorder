@@ -169,6 +169,18 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 })
                 .child(
                     row(app.autostart.is_none() && app.tray.is_none() && !app.demo)
+                        .child(text(
+                            "say when a clip lands",
+                            if app.notify {
+                                "a notification per clip, with open and show in folder"
+                            } else {
+                                "off, so new clips arrive quietly"
+                            },
+                        ))
+                        .child(switch("notify", app.notify).on_click(cx.listener(|app, _, _, cx| app.set_notify(!app.notify, cx)))),
+                )
+                .child(
+                    row(false)
                         .child(text("clips are saved to", data(short_path(&app.core.download_dir))))
                         .child(outline("open", "open").on_click(cx.listener(|app, _, _, cx| app.open_folder(cx)))),
                 )
