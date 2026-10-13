@@ -54,6 +54,7 @@ const ICONS: &[(&str, &str)] = &[
     ("search", r#"<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>"#),
     ("unlink", r#"<path d="m10 6 1-1a4 4 0 0 1 5.7 5.7l-1 1M14 18l-1 1a4 4 0 0 1-5.7-5.7l1-1M4 4l16 16"/>"#),
     ("clip", r#"<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>"#),
+    ("keyboard", r#"<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>"#),
 ];
 
 pub struct Assets;

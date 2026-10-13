@@ -58,6 +58,11 @@ pub struct Pairing {
     /// a paired frame this is "pair again" for, so its clips carry over
     /// instead of coming down twice
     pub replaces: Option<String>,
+    /// what's typed in the address box: a frame's ip, or its pairing link
+    pub addr: String,
+    pub addr_focus: FocusHandle,
+    /// asking a typed-in address who's there
+    pub finding: bool,
     tasks: Vec<Task<()>>,
 }
 
@@ -189,6 +194,9 @@ impl FrameApp {
                 busy: false,
                 focus: cx.focus_handle(),
                 replaces: None,
+                addr: String::new(),
+                addr_focus: cx.focus_handle(),
+                finding: false,
                 tasks: Vec::new(),
             },
             frame_updating: HashSet::new(),
@@ -639,8 +647,10 @@ impl FrameApp {
         self.page = Page::Pair;
         let p = &mut self.pairing;
         p.code.clear();
+        p.addr.clear();
         p.error = None;
         p.busy = false;
+        p.finding = false;
         p.replaces = replaces;
         p.tasks.clear();
         if self.demo {
@@ -654,16 +664,14 @@ impl FrameApp {
                 }
             }
         }));
-        // mdns, a few seconds at a time, for as long as this screen's up
+        // mdns and a knock on every nearby address (for routers and firewalls
+        // that drop multicast), a few seconds at a time, for as long as this
+        // screen's up
         let rt = self.core.rt.clone();
         p.tasks.push(cx.spawn(async move |_, cx| loop {
             let tx = tx.clone();
             let job = rt.spawn(async move {
-                let _ = discover::browse(Duration::from_secs(6), move |f| {
-                    let _ = tx.try_send(f);
-                    true
-                })
-                .await;
+                discover::look(Duration::from_secs(6), true, move |f| tx.try_send(f).is_ok()).await;
             });
             let _ = job.await;
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -725,18 +733,18 @@ impl FrameApp {
             cx.notify();
             return;
         }
+        let code = p.code.clone();
+        self.pair_with(with_port(&found.addr), found.fingerprint, code, cx);
+    }
+
+    /// pairs with one frame, by address and fingerprint, then goes to the library
+    fn pair_with(&mut self, addr: String, fingerprint: String, code: String, cx: &mut Context<Self>) {
+        let p = &mut self.pairing;
         p.busy = true;
         p.error = None;
         cx.notify();
-        let (engine, code, replaces) = (self.core.engine.clone(), p.code.clone(), p.replaces.clone());
-        let addr = if found.addr.contains(':') && !found.addr.ends_with(']') {
-            found.addr.clone()
-        } else {
-            format!("{}:38619", found.addr)
-        };
-        let job = self.core.rt.spawn(async move {
-            engine.pair(&addr, Some(&found.fingerprint), &code, replaces.as_deref()).await
-        });
+        let (engine, replaces) = (self.core.engine.clone(), p.replaces.clone());
+        let job = self.core.rt.spawn(async move { engine.pair(&addr, Some(&fingerprint), &code, replaces.as_deref()).await });
         cx.spawn(async move |this, cx| {
             let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
             let _ = this.update(cx, |app, cx| {
@@ -751,6 +759,82 @@ impl FrameApp {
                         app.toast(format!("paired with {}", host.name), cx);
                     }
                     Err(e) => app.pairing.error = Some(e),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// typing in the address box. enter asks who's there, esc clears it
+    pub fn addr_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        let p = &mut self.pairing;
+        if p.busy || p.finding {
+            return;
+        }
+        let shortcut = k.modifiers.control || k.modifiers.platform;
+        if shortcut && k.key == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                p.addr.push_str(text.trim());
+            }
+        } else if shortcut && k.key == "backspace" {
+            p.addr.clear();
+        } else if k.key == "backspace" {
+            p.addr.pop();
+        } else if k.key == "enter" {
+            self.submit_addr(window, cx);
+            return;
+        } else if k.key == "escape" && !p.addr.is_empty() {
+            p.addr.clear();
+        } else if k.key == "escape" {
+            p.focus.focus(window, cx);
+        } else if let Some(ch) = k.key_char.as_deref().filter(|_| !shortcut) {
+            if ch.chars().all(|c| !c.is_control() && !c.is_whitespace()) {
+                p.addr.push_str(ch);
+            }
+        } else {
+            return;
+        }
+        p.error = None;
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// what's in the address box: a pairing link pairs right away, an
+    /// address gets asked who's there, and that frame goes in the list, picked
+    pub fn submit_addr(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.pairing.addr.trim().to_string();
+        if typed.is_empty() {
+            return;
+        }
+        if typed.starts_with("framecorder://") {
+            match pairlink::parse(&typed) {
+                Ok(link) => self.pair_with(link.addr, link.fingerprint, link.code, cx),
+                Err(e) => self.pairing.error = Some(e),
+            }
+            cx.notify();
+            return;
+        }
+        let addr = with_port(&typed);
+        self.pairing.finding = true;
+        self.pairing.error = None;
+        cx.notify();
+        let shown = addr.clone();
+        let job = self.core.rt.spawn(async move { discover::identify(&addr).await });
+        cx.spawn_in(window, async move |this, cx| {
+            let found = job.await.ok().flatten();
+            let _ = this.update_in(cx, |app, window, cx| {
+                app.pairing.finding = false;
+                match found {
+                    Some(f) => {
+                        app.pairing.addr.clear();
+                        app.pairing.selected = Some(f.fingerprint.clone());
+                        app.found(f, cx);
+                        // the code comes next
+                        app.pairing.focus.focus(window, cx);
+                    }
+                    None => app.pairing.error = Some(format!("nothing that looks like a frame answered at {shown}")),
                 }
                 cx.notify();
             });
@@ -809,6 +893,19 @@ impl Render for FrameApp {
     }
 }
 
+/// an address with framecorder-sync's port on it, unless one was typed
+fn with_port(addr: &str) -> String {
+    let addr = addr.trim();
+    let has_port = addr.rsplit_once(':').is_some_and(|(host, port)| {
+        port.parse::<u16>().is_ok() && (!host.contains(':') || host.ends_with(']'))
+    });
+    if has_port {
+        addr.to_string()
+    } else {
+        pairlink::join_addr(addr.trim_matches(['[', ']']), discover::PORT)
+    }
+}
+
 /// what a frame's status line says
 pub fn status_text(s: &Status) -> &'static str {
     match s.state {
@@ -832,4 +929,17 @@ pub fn status_color(s: &Status) -> u32 {
 
 pub fn quit(cx: &mut App) {
     cx.quit();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_typed_address_gets_the_port_it_needs() {
+        assert_eq!(with_port("192.168.1.42"), "192.168.1.42:38619");
+        assert_eq!(with_port(" 192.168.1.42:4000 "), "192.168.1.42:4000");
+        assert_eq!(with_port("fe80::1"), "[fe80::1]:38619");
+        assert_eq!(with_port("[fe80::1]:4000"), "[fe80::1]:4000");
+    }
 }

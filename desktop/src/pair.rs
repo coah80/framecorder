@@ -39,9 +39,66 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                         .child("cancel"),
                 )
             })
-            .child(pick(app, cx))
+            .child(pick(app, window, cx))
             .child(code(app, window, cx)),
     )
+}
+
+/// the way in when neither mdns nor the sweep finds it: its address typed,
+/// or the link from its pairing screen pasted
+fn address_box(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let p = &app.pairing;
+    let focused = p.addr_focus.is_focused(window);
+    let empty = p.addr.is_empty();
+    div()
+        .id("address")
+        .track_focus(&p.addr_focus)
+        .on_key_down(cx.listener(|app, ev, window, cx| app.addr_key(ev, window, cx)))
+        .on_click(cx.listener(|app, _, window, cx| app.pairing.addr_focus.focus(window, cx)))
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .h(px(44.))
+        .px(px(14.))
+        .rounded(px(12.))
+        .bg(theme::card())
+        .border_1()
+        .border_color(if focused { c(theme::MAUVE) } else { theme::card_line() })
+        .cursor_text()
+        .child(icon("keyboard", 16., c(if focused || !empty { theme::MAUVE } else { theme::OVERLAY2 })))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .text_size(px(13.))
+                .child(if empty {
+                    div().truncate().text_color(c(theme::OVERLAY2)).child("or type its address, like 192.168.1.42")
+                } else {
+                    data(p.addr.clone()).truncate()
+                })
+                .when(focused, |d| d.child(div().flex_none().w(px(1.5)).h(px(16.)).ml(px(1.)).bg(c(theme::MAUVE)))),
+        )
+        .child(if p.finding {
+            spinner("finding", 14., c(theme::MAUVE)).into_any_element()
+        } else if !empty {
+            div()
+                .id("find")
+                .px(px(10.))
+                .py(px(4.))
+                .rounded(px(8.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(c(theme::MAUVE))
+                .cursor_pointer()
+                .hover(|s| s.bg(a(theme::MAUVE, 0.12)))
+                .on_click(cx.listener(|app, _, window, cx| app.submit_addr(window, cx)))
+                .child("find it")
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        })
 }
 
 fn step(n: &str) -> Div {
@@ -131,7 +188,7 @@ fn left(again: bool) -> impl IntoElement {
         )
 }
 
-fn pick(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
+fn pick(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let found: Vec<AnyElement> = app
         .pairing
         .found
@@ -193,9 +250,10 @@ fn pick(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
                 div()
                     .text_size(px(13.))
                     .text_color(c(theme::SUBTEXT0))
-                    .child("looking for frames on this network. make sure the frame's on and on the same wi-fi."),
+                    .child("asking this network by name, and knocking on every address in case the router blocks that. make sure the frame's on and on the same wi-fi."),
             )
         })
+        .child(address_box(app, window, cx))
 }
 
 fn code(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
