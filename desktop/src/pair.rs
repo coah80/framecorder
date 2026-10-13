@@ -304,5 +304,8 @@ fn code(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl
                 .when(!ready, |d| d.opacity(0.35).cursor_default())
                 .when(ready, |d| d.on_click(cx.listener(|app, _, _, cx| app.submit_pair(cx)))),
         )
-        .when_some(p.error.clone(), |d, e| d.child(div().text_size(px(13.)).text_color(c(theme::RED)).child(e)))
+        .child(match &p.error {
+            Some(e) => div().text_size(px(13.)).text_color(c(theme::RED)).child(e.clone()),
+            None => div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child("it pairs as soon as you type the last digit."),
+        })
 }

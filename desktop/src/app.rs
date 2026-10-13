@@ -712,6 +712,10 @@ impl FrameApp {
             return;
         }
         p.error = None;
+        // the sixth digit pairs by itself, like the android app
+        if self.can_pair() {
+            self.submit_pair(cx);
+        }
         cx.notify();
     }
 
