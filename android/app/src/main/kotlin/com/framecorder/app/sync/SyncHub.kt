@@ -96,7 +96,7 @@ class SyncHub(private val app: Application) : Events {
     @Volatile private var finished = 0
 
     private val core: Core = Core(
-        stateDir = File(app.filesDir, "sync").path,
+        stateDir = stateDir(app).path,
         stagingDir = File(app.cacheDir, "downloads").path,
         deviceName = deviceName(app),
         gallery = gallery,
@@ -237,6 +237,24 @@ class SyncHub(private val app: Application) : Events {
 /** What the error says, without the generated "reason=" wrapping. */
 fun CoreException.reason(): String = when (this) {
     is CoreException.Failed -> reason
+}
+
+/**
+ * Where the core keeps its pairings and what it has synced. The old app (0.1.x,
+ * same package) kept them in `<data>/com.framecorder.app`, so the first start
+ * after updating from it moves them here. Without that, the update unpairs the
+ * frame, and pairing again downloads every clip a second time.
+ */
+private fun stateDir(context: Context): File {
+    val dir = File(context.filesDir, "sync")
+    val old = File(context.dataDir, "com.framecorder.app")
+    if (!File(dir, "hosts.json").exists() && File(old, "hosts.json").exists()) {
+        dir.mkdirs()
+        for (name in listOf("hosts.json", "index.json")) {
+            File(old, name).takeIf { it.exists() }?.renameTo(File(dir, name))
+        }
+    }
+    return dir
 }
 
 /** What this phone calls itself when pairing: its name in settings, else the model. */

@@ -108,7 +108,10 @@ anything. `-PskipRust` reuses what's already in `app/build`.
 
 Release builds are signed with `keystore.properties` (`storeFile`,
 `storePassword`, `keyAlias`, `keyPassword`) when there is one, otherwise with
-the debug key, like the old app's "debugsigned" release.
+the debug key. A release has to be signed with framecorder's release key (the
+one 0.1.x was signed with, `CN=framecorder`, certificate SHA-256
+`66f8d49d...0383f1`): Android won't install an update signed with any other
+key over it, so people would have to uninstall first.
 
 Material 3 Expressive (button groups, floating toolbars, wavy progress,
 shapes) only ships in the material3 1.5 alphas so far, so that one

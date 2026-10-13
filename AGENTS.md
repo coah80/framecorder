@@ -171,7 +171,7 @@ curl -fsSL https://framecorder.coah80.com/install | sh     # back to releases
 
 1. Merge `dev` into `main` with a merge commit. `main` has its own short `AGENTS.md`; keep `main`'s on a conflict.
 2. Bump the version in `Cargo.toml`, `sync/Cargo.toml`, `app/Cargo.toml` and `desktop/Cargo.toml`, and the `Cargo.lock` next to each.
-3. `gh workflow run app.yml --ref main` builds the three desktop apps. Download the artifacts. Build the Android APK (`android/README.md`) and name it `framecorder-android.apk`.
+3. `gh workflow run app.yml --ref main` builds the three desktop apps. Download the artifacts. Build the Android APK (`android/README.md`), signed with the release key (never the debug key, it wouldn't install over the last one), and name it `framecorder-android.apk`.
 4. On the headset, `packaging/release.sh` makes `dist/framecorder-arm64.tar.gz` and its `.sha256`.
 5. `gh release create vX.Y.Z --target main` with the headset tarball and checksum, the three desktop apps and the Android APK.
 

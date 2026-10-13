@@ -23,8 +23,8 @@ android {
     }
 
     // a real key from keystore.properties when there is one; otherwise the
-    // debug key, like the old app's "debugsigned" release, so it still
-    // installs over it when built on the same machine
+    // debug key, fine for trying it. a release needs the release key, or it
+    // won't install over the one people have (see README)
     val keystore = rootProject.file("keystore.properties")
     signingConfigs {
         if (keystore.exists()) {
