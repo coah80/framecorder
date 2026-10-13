@@ -23,16 +23,25 @@ impl Updates {
     /// update's running right now.
     pub fn status(&self) -> Result<serde_json::Value, String> {
         let mut checked = self.checked.lock().unwrap();
+        // what's installed is about to change, so a check from before or
+        // during an update is stale once it's done. this service only
+        // restarts when the update changed it, so it can't count on that
+        let updating = updating();
+        if updating {
+            *checked = None;
+        }
         let fresh = checked.as_ref().filter(|(at, _)| at.elapsed() < CHECK_FOR).map(|(_, v)| v.clone());
         let mut status = match fresh {
             Some(v) => v,
             None => {
                 let v = check()?;
-                *checked = Some((Instant::now(), v.clone()));
+                if !updating {
+                    *checked = Some((Instant::now(), v.clone()));
+                }
                 v
             }
         };
-        status["updating"] = serde_json::Value::Bool(updating());
+        status["updating"] = serde_json::Value::Bool(updating);
         Ok(status)
     }
 
