@@ -80,11 +80,13 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
         .child(header(&s))
         .children(picker)
         .child(
+            // side by side, the headset under the remote once the window's too narrow for both
             div()
                 .flex()
+                .flex_wrap()
                 .items_stretch()
                 .gap(px(14.))
-                .child(now(&s, remote.as_ref(), elapsed, sending, settings.as_ref(), syncing, cx).flex_1().min_w_0())
+                .child(now(&s, remote.as_ref(), elapsed, sending, settings.as_ref(), syncing, cx).flex_1().min_w(px(300.)))
                 .child(headset(connected, about.as_ref())),
         )
         .child(
@@ -102,11 +104,13 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 })),
         )
         .child(
+            // side by side, under each other once the window's too narrow for both
             div()
                 .flex()
+                .flex_wrap()
                 .items_start()
                 .gap(px(14.))
-                .child(here(&app.clips, &s.fingerprint).flex_1().min_w_0())
+                .child(here(&app.clips, &s.fingerprint).flex_1().min_w(px(260.)))
                 .child(this_frame(&s.fingerprint, cx)),
         )
         .into_any_element()
@@ -134,12 +138,14 @@ fn here(clips: &[Clip], fingerprint: &str) -> Div {
         .gap(px(12.))
         .p(px(16.))
         .child(
-            div().flex().items_center().justify_between().gap(px(12.)).child(label("on this computer")).child(
+            div().flex().items_center().justify_between().gap(px(12.)).child(label("on this computer").flex_none()).child(
                 data(match mine.len() {
                     0 => "nothing yet".to_string(),
                     1 => format!("1 video · {}", format::size(total)),
                     n => format!("{n} videos · {}", format::size(total)),
                 })
+                .min_w_0()
+                .truncate()
                 .text_size(px(12.))
                 .text_color(c(theme::SUBTEXT0)),
             ),
@@ -158,6 +164,7 @@ fn here(clips: &[Clip], fingerprint: &str) -> Div {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(16.))
                     .when(clip_bytes > 0, |d| d.child(legend(theme::MAUVE, format!("clips {}", format::size(clip_bytes)))))
                     .when(total > clip_bytes, |d| {
@@ -197,8 +204,8 @@ fn this_frame(fingerprint: &str, cx: &mut Context<FrameApp>) -> Div {
     };
     let (check, unpair) = (fp.clone(), fp);
     card()
-        .w(px(250.))
-        .flex_none()
+        .flex_1()
+        .min_w(px(250.))
         .overflow_hidden()
         .flex()
         .flex_col()
@@ -350,7 +357,8 @@ fn now(
                 .when_some(syncing.filter(|_| !recording), |d, p| d.child(syncing_pill(p))),
         )
         .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note))
-        .child(div().flex().items_center().gap(px(10.)).children(match s.state {
+        // three buttons don't fit a narrow window on one line
+        .child(div().flex().flex_wrap().items_center().gap(px(10.)).children(match s.state {
             State::Connected => {
                 let usable = remote.is_some_and(|r| r.available && r.ready);
                 let can_clip = usable && remote.is_some_and(|r| r.clip_ready && !r.recording);

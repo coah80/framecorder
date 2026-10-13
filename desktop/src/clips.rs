@@ -449,7 +449,7 @@ fn so_far(app: &FrameApp) -> String {
 
 fn incoming_tile(app: &FrameApp) -> AnyElement {
     let p = pct(app);
-    let total = app.progress.as_ref().map(|p| p.total).unwrap_or(0);
+    let (done, total) = app.progress.as_ref().map(|p| (p.done, p.total)).unwrap_or((0, 0));
     div()
         .flex()
         .flex_col()
@@ -470,8 +470,17 @@ fn incoming_tile(app: &FrameApp) -> AnyElement {
                 .justify_center()
                 .gap(px(8.))
                 .child(icon("download", 22., c(theme::MAUVE)))
-                .child(data(format!("{}%", (p * 100.) as u32)).text_size(px(12.)).text_color(c(theme::MAUVE)))
-                .child(data(so_far(app)).text_size(px(11.)).text_color(c(theme::OVERLAY2)))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .text_size(px(12.))
+                        .child(data(format!("{}%", (p * 100.) as u32)).text_color(c(theme::MAUVE)))
+                        .when_some(app.speed.as_ref().filter(|s| s.bytes_per_s > 0.), |d, s| {
+                            d.child(data(format!("· {}", format::rate(s.bytes_per_s))).text_color(c(theme::OVERLAY2)))
+                        }),
+                )
                 .child(
                     div()
                         .absolute()
@@ -491,8 +500,14 @@ fn incoming_tile(app: &FrameApp) -> AnyElement {
                 .items_center()
                 .gap(px(8.))
                 .px(px(2.))
-                .child(div().flex_1().font_weight(FontWeight::MEDIUM).child("incoming"))
-                .child(data(format::size(total)).text_size(px(12.)).text_color(c(theme::OVERLAY2))),
+                .child(div().flex_none().font_weight(FontWeight::MEDIUM).child("incoming"))
+                .child(
+                    data(format!("{} of {}", format::size(done), format::size(total)))
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.))
+                        .text_color(c(theme::OVERLAY2)),
+                ),
         )
         .into_any_element()
 }
