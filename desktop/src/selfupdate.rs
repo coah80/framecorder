@@ -204,7 +204,7 @@ pub fn apply_and_restart(dmg: &PathBuf) -> Result<(), String> {
     let old = app.with_file_name(".framecorder-old.app");
     let _ = std::fs::remove_dir_all(&staged);
     let _ = std::fs::remove_dir_all(&old);
-    run(Command::new("hdiutil").arg("attach").arg("-nobrowse").arg("-readonly").arg("-mountpoint").arg(&mount).arg(dmg), "opening the update")?;
+    run(Command::new("hdiutil").arg("attach").arg("-quiet").arg("-nobrowse").arg("-readonly").arg("-mountpoint").arg(&mount).arg(dmg), "opening the update")?;
     let copied = run(Command::new("ditto").arg(mount.join("framecorder.app")).arg(&staged), "copying the update");
     let _ = Command::new("hdiutil").arg("detach").arg("-quiet").arg(&mount).status();
     copied?;
