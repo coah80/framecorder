@@ -141,9 +141,29 @@ pub fn apply_and_restart(setup: &PathBuf) -> Result<(), String> {
 /// keeps its own open copy until it quits
 #[cfg(not(windows))]
 pub fn apply_and_restart(new: &PathBuf) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
     let file = crate::appimage::file().ok_or("this isn't running from an AppImage")?;
     std::fs::rename(new, &file).map_err(|e| format!("couldn't put the update in place: {e}"))?;
-    std::process::Command::new(&file).arg("--after-update").spawn().map_err(|e| e.to_string())?;
+    let mut cmd = std::process::Command::new(&file);
+    cmd.arg("--after-update");
+    // the AppImage runtime keeps the old version mounted until every copy of
+    // a pipe it hands us is closed, and we'd pass ours on to the new version.
+    // so the new one starts with nothing open but stdin, stdout and stderr.
+    // close_range as a raw syscall, the glibc wrapper is too new for some distros
+    unsafe {
+        cmd.pre_exec(|| {
+            #[cfg(target_os = "linux")]
+            if libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32) == 0 {
+                return Ok(());
+            }
+            for fd in 3..1024 {
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
