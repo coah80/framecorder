@@ -106,11 +106,15 @@ pub fn start(rt: tokio::runtime::Handle, demo: bool) -> Result<(Core, async_chan
 #[derive(Clone)]
 pub struct Clip {
     pub key: String,
+    /// the fingerprint of the frame it came from
+    pub host: String,
     pub name: String,
     pub is_clip: bool,
     pub size: u64,
     pub created: i64,
     pub duration_s: Option<f64>,
+    /// when it landed here
+    pub synced_at: i64,
     pub location: PathBuf,
 }
 
@@ -118,14 +122,21 @@ impl Clip {
     pub fn from(e: &Entry) -> Self {
         Self {
             key: e.key(),
+            host: e.host.clone(),
             name: e.name.clone(),
             is_clip: e.kind == "clip",
             size: e.size,
             created: e.created,
             duration_s: e.duration_s,
+            synced_at: e.synced_at,
             location: PathBuf::from(&e.location),
         }
     }
+}
+
+/// when the newest clip from this frame landed, if anything has
+pub fn last_sync(clips: &[Clip], fingerprint: &str) -> Option<i64> {
+    clips.iter().filter(|c| c.host == fingerprint).map(|c| c.synced_at).max()
 }
 
 /// the library: every clip whose file is still here, newest first. one

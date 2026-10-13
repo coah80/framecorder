@@ -47,11 +47,13 @@ mod tests {
         let created = Local.with_ymd_and_hms(2026, 9, 29, 15, 42, 10).single().unwrap();
         let clip = Clip {
             key: "demo/1".into(),
+            host: "demo".into(),
             name: "2026-09-29_15-42-10.mp4".into(),
             is_clip,
             size: 1,
             created: created.timestamp(),
             duration_s: None,
+            synced_at: created.timestamp(),
             location: PathBuf::from("/nonexistent"),
         };
         (clip, NaiveDate::from_ymd_opt(2026, 9, 30).unwrap())

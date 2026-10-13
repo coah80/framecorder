@@ -9,6 +9,7 @@ use framecorder_app_lib::core::discover::Found;
 use framecorder_app_lib::core::engine::{Progress, State, Status};
 
 use crate::app::{Batch, DesktopUpdate, FrameApp, Page};
+use crate::check::{Check, Outcome, Step};
 use crate::remote::Live;
 use crate::selfupdate::Release;
 use crate::sync::Clip;
@@ -26,6 +27,7 @@ pub const SCREENS: &[&str] = &[
     "frame-old",
     "frame-closed",
     "frame-unreachable",
+    "check",
 ];
 
 fn status(state: State, update: bool) -> Status {
@@ -66,12 +68,15 @@ fn clips() -> Vec<Clip> {
         .enumerate()
         .map(|(i, &(d, h, m, is_clip, len, size))| Clip {
             key: format!("demo/{i}"),
+            host: "demo".into(),
             // named the way the frame names them
             name: at(d, h, m).format("%Y-%m-%d_%H-%M-%S.mp4").to_string(),
             is_clip,
             size,
             created: at(d, h, m).timestamp(),
             duration_s: Some(len),
+            // landed a few minutes after it was saved
+            synced_at: at(d, h, m).timestamp() + 180,
             location: PathBuf::from("/nonexistent"),
         })
         .collect()
@@ -178,6 +183,22 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
         "frame-unreachable" => {
             app.statuses = vec![status(State::Unreachable, false)];
             app.live.insert("demo".into(), live(None));
+        }
+        "check" => {
+            app.statuses = vec![status(State::Unreachable, false)];
+            app.page = Page::Check;
+            let step = |title: &str, detail: &str, outcome| Step { title: title.into(), detail: detail.into(), outcome };
+            app.check = Some(Check {
+                fingerprint: "demo".into(),
+                steps: vec![
+                    step("this computer is on a network", "192.168.1.x", Outcome::Pass),
+                    step("answers at 192.168.1.42", "can't reach the frame (connection refused)", Outcome::Fail),
+                    step("found by name", "no answer. some routers and firewalls block this, the next check doesn't need it.", Outcome::Fail),
+                    step("found by asking every address", "checking 192.168.1.x...", Outcome::Running),
+                ],
+                running: true,
+                task: None,
+            });
         }
         _ => {}
     }

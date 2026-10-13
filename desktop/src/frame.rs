@@ -231,9 +231,13 @@ fn now(s: &Status, remote: Option<&Remote>, elapsed: u64, sending: Option<&str>,
                 ]
             }
             State::Connecting => vec![],
-            State::Unreachable | State::Full => {
-                vec![outline("now-retry", "try again").on_click(cx.listener(|app, _, _, cx| app.retry(cx))).into_any_element()]
-            }
+            State::Unreachable | State::Full => vec![
+                primary("now-check", "check the connection")
+                    .h(px(44.))
+                    .on_click(cx.listener(move |app, _, _, cx| app.open_check(fp.clone(), cx)))
+                    .into_any_element(),
+                outline("now-retry", "try again").h(px(44.)).on_click(cx.listener(|app, _, _, cx| app.retry(cx))).into_any_element(),
+            ],
             State::Unpaired | State::WrongFingerprint => vec![primary("now-pair", "pair again")
                 .h(px(44.))
                 .on_click(cx.listener(move |app, _, _, cx| app.open_pair_for(fp.clone(), cx)))

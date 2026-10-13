@@ -57,7 +57,8 @@ fn nav(
     icon_name: &str,
     badge: Option<AnyElement>,
 ) -> impl IntoElement {
-    let on = app.page == page;
+    // the connection check is part of the frame page
+    let on = app.page == page || (page == Page::Frame && app.page == Page::Check);
     let fg = if on { theme::MAUVE } else { theme::SUBTEXT0 };
     // ids are per window, and the clips page has a "clips" filter too. two
     // elements on one id share their click state and neither click lands

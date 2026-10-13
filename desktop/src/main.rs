@@ -9,6 +9,7 @@ mod app;
 mod appimage;
 mod assets;
 mod autostart;
+mod check;
 mod clips;
 mod demo;
 mod format;
@@ -45,7 +46,7 @@ usage:
   framecorder-desktop --demo <screen>  made up frames and clips, nothing syncs.
                                        screens: clips, list, syncing, unreachable, pair, settings,
                                        frame, frame-recording, frame-paused, frame-old, frame-closed,
-                                       frame-unreachable";
+                                       frame-unreachable, check";
 
 /// the one app, and its window when it has one. the window can close and
 /// come back from the tray, the app stays

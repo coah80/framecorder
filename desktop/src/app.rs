@@ -18,7 +18,7 @@ use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
-use crate::{autostart, clips, frame, pair, prefs, settings, sidebar, thumbs};
+use crate::{autostart, check, clips, frame, pair, prefs, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -26,6 +26,8 @@ pub enum Page {
     Frame,
     Settings,
     Pair,
+    /// the connection check, reached from the frame page
+    Check,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -93,6 +95,8 @@ pub struct FrameApp {
     /// the frame "unpair" was clicked on, while settings asks if we mean it
     pub unpairing: Option<String>,
     pub confirm: FocusHandle,
+    /// the connection check that's up, while the check page is
+    pub check: Option<check::Check>,
     pub clips: Vec<Clip>,
     pub progress: Option<Progress>,
     pub batch: Option<Batch>,
@@ -182,6 +186,7 @@ impl FrameApp {
             tick: None,
             unpairing: None,
             confirm: cx.focus_handle(),
+            check: None,
             clips: Vec::new(),
             progress: None,
             batch: None,
@@ -333,6 +338,9 @@ impl FrameApp {
         } else {
             self.page = page;
             self.pairing.tasks.clear();
+        }
+        if page != Page::Check {
+            self.check = None;
         }
         cx.notify();
     }
@@ -864,6 +872,7 @@ impl Render for FrameApp {
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
                     Page::Frame => frame::render(self, cx).into_any_element(),
+                    Page::Check => check::render(self, cx).into_any_element(),
                     _ => clips::render(self, window, cx).into_any_element(),
                 })
                 .into_any_element()
