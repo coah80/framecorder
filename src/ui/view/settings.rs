@@ -1,68 +1,72 @@
-//! The settings screen: sections down the left, one section's controls on
-//! the right. Every control says what the current choice means.
+//! The settings screen: the sections as pills along the top, and one
+//! section's controls underneath. Every control says what the current
+//! choice means.
 
 use super::super::settings::CLIP_LENGTHS;
 use super::widgets::{card, choice, label, toggle_row};
 use super::*;
 
-const SIDE_W: f32 = 232.0;
-const PANE_X: f32 = PAD + SIDE_W + 28.0;
-const PANE_W: f32 = WIDTH as f32 - PANE_X - PAD;
+const PILLS_H: f32 = 50.0;
+const PANE_Y: f32 = CONTENT_Y + PILLS_H + 18.0;
+const PANE_H: f32 = CONTENT_Y + CONTENT_H - PANE_Y;
 const INSET: f32 = 32.0;
-const ROW_H: f32 = 112.0;
+const ROW_H: f32 = 114.0;
 
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, section: Section, hits: &mut Vec<Hit>) {
-    sidebar(c, f, m, section, hits);
-    let pane = Rect::new(PANE_X, CONTENT_Y, PANE_W, CONTENT_H);
+    pills(c, f, m, section, hits);
+    let pane = Rect::new(PAD, PANE_Y, WIDTH as f32 - 2.0 * PAD, PANE_H);
+    if section == Section::Sync {
+        return sync::draw(c, f, m, pane, hits);
+    }
     card(c, pane);
-    let inner = Rect::new(pane.x + INSET, pane.y + 28.0, pane.w - 2.0 * INSET, pane.h - 56.0);
+    let inner = Rect::new(pane.x + INSET, pane.y + 6.0, pane.w - 2.0 * INSET, pane.h - 12.0);
     match section {
         Section::Video => video(c, f, m, inner, hits),
         Section::Audio => audio(c, f, m, inner, hits),
         Section::Clips => clips(c, f, m, inner, hits),
-        Section::Sync => sync::draw(c, f, m, inner, hits),
+        Section::Sync => unreachable!(),
     }
 }
 
-fn sidebar(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
+fn pills(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
     let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Sync, "Sync")];
-    for (i, (section, name)) in sections.into_iter().enumerate() {
-        let r = Rect::new(PAD, CONTENT_Y + i as f32 * 76.0, SIDE_W, 64.0);
+    let mut x = PAD;
+    for (section, name) in sections {
+        let w = f.measure(Face::BodyMedium, 18.0, name) + 52.0;
+        let r = Rect::new(x, CONTENT_Y, w, PILLS_H);
         let action = Action::Open(section);
         let selected = section == current;
         let hovered = m.hover == Some(action);
         if selected {
-            c.fill_rrect(r, 16.0, MAUVE, 0.12);
-            c.stroke_rrect(r, 16.0, 1.5, MAUVE, 0.5);
+            c.fill_rrect(r, 14.0, MAUVE, 0.12);
+            c.stroke_rrect(r, 14.0, 1.5, MAUVE, 0.5);
         } else if hovered {
-            c.fill_rrect(r, 16.0, MAUVE, 0.08);
+            c.fill_rrect(r, 14.0, MAUVE, 0.08);
         }
         let color = if selected || hovered { MAUVE } else { SUBTEXT0 };
-        c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, name, color, 1.0);
+        let (cx, cy) = r.center();
+        c.text_centered(f, Face::BodyMedium, 18.0, cx, cy + 6.5, name, color, 1.0);
         if !selected {
             hits.push(Hit { rect: r, action });
         }
+        x += w + 8.0;
     }
-
-    // Out of the way at the bottom.
-    let r = Rect::new(PAD, CONTENT_Y + CONTENT_H - 64.0, SIDE_W, 64.0);
-    let hovered = m.hover == Some(Action::TurnOff);
-    if hovered {
-        c.fill_rrect(r, 16.0, MAUVE, 0.08);
-    }
-    let color = if hovered { MAUVE } else { OVERLAY2 };
-    c.text(f, Face::Body, 18.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, "Close framecorder", color, 1.0);
-    hits.push(Hit { rect: r, action: Action::TurnOff });
 }
 
-fn row(inner: Rect, i: usize) -> Rect {
-    Rect::new(inner.x, inner.y + i as f32 * ROW_H, inner.w, ROW_H)
+/// The rows of a section, a hairline between each.
+fn rows<const N: usize>(c: &mut Canvas, inner: Rect) -> [Rect; N] {
+    let rows = std::array::from_fn(|i| Rect::new(inner.x, inner.y + i as f32 * ROW_H, inner.w, ROW_H));
+    for r in &rows[..N - 1] {
+        c.hline(r.x, r.y + r.h - 1.0, r.w, TEXT, 0.05);
+    }
+    rows
 }
 
 fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
 
+    let [shape_row, eye_row, quality_row, fps_row] = rows(c, inner);
     // Without the panels it's SteamVR's view, whatever was picked.
     let (shape, eye) = if m.unlocked { (s.shape, s.eye) } else { (Shape::Wide, Eye::Left) };
     let shapes = [
@@ -78,7 +82,7 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         Shape::Tall => "Vertical · 1080 × 1920",
         Shape::BothEyes => "Both panels, just as the headset shows them",
     };
-    choice(c, f, m, hits, row(inner, 0), "Shape", meaning, &shapes, locked || !m.unlocked);
+    choice(c, f, m, hits, shape_row, "Shape", meaning, &shapes, locked || !m.unlocked);
 
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), eye == Eye::Left),
@@ -89,7 +93,7 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         Shape::BothEyes => ("Both eyes are in the video", true),
         _ => ("The eye whose view gets recorded", false),
     };
-    choice(c, f, m, hits, row(inner, 1), "Eye", meaning, &eyes, locked || fixed);
+    choice(c, f, m, hits, eye_row, "Eye", meaning, &eyes, locked || fixed);
 
     let qualities = [
         ("Standard", Action::Quality(Quality::Standard), s.quality == Quality::Standard),
@@ -98,7 +102,7 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     ];
     // Megabits a second, times 60 s, over 8 bits a byte.
     let meaning = format!("{} Mbit/s · about {} MB a minute", s.quality.mbps(), s.quality.mbps() * 60 / 8);
-    choice(c, f, m, hits, row(inner, 2), "Quality", &meaning, &qualities, locked);
+    choice(c, f, m, hits, quality_row, "Quality", &meaning, &qualities, locked);
 
     let rates = [
         ("Match display", Action::Fps(FrameRate::Auto), s.fps == FrameRate::Auto),
@@ -110,18 +114,18 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         FrameRate::Sixty => "Can stutter a little when the headset runs at 72",
         FrameRate::Thirty => "Smaller files, less smooth",
     };
-    choice(c, f, m, hits, row(inner, 3), "Frame rate", meaning, &rates, locked);
+    choice(c, f, m, hits, fps_row, "Frame rate", meaning, &rates, locked);
 }
 
 fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
-    let at = |i: f32| Rect::new(inner.x, inner.y + i * 108.0, inner.w, 92.0);
+    let at = |i: f32| Rect::new(inner.x, inner.y + 22.0 + i * 108.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, at(0.0), "Game audio", "Everything you hear from the game", Action::GameAudio, s.game_audio, locked);
     let mic = if s.game_audio { "Your voice, mixed in with the game" } else { "Your voice" };
     toggle_row(c, f, m, hits, at(1.0), "Microphone", mic, Action::Mic, s.mic, locked);
 
-    let y = inner.y + 2.0 * 108.0 + 36.0;
+    let y = inner.y + 22.0 + 2.0 * 108.0 + 36.0;
     label(c, f, inner.x, y, "GOOD TO KNOW");
     let notes = ["The headset mutes its microphone whenever it's off your head.", "Audio is saved as AAC, 192 kbit/s."];
     for (i, note) in notes.iter().enumerate() {
@@ -137,15 +141,15 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     } else {
         "Nothing is kept, so there's nothing to clip".to_string()
     };
-    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y, inner.w, 92.0), "Clips", &meaning, Action::Clips, s.clips, locked);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Clips", &meaning, Action::Clips, s.clips, locked);
 
     let lengths: Vec<(String, Action, bool)> = CLIP_LENGTHS.iter().map(|&n| (length(n), Action::ClipLength(n), s.clip_secs == n)).collect();
     let options: Vec<(&str, Action, bool)> = lengths.iter().map(|(t, a, on)| (t.as_str(), *a, *on)).collect();
     let meaning = format!("A clip is the last {} you played", length(s.clip_secs));
-    let r = Rect::new(inner.x, inner.y + 120.0, inner.w, ROW_H);
+    let r = Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, ROW_H);
     choice(c, f, m, hits, r, "Length", &meaning, &options, locked || !s.clips);
 
-    let y = inner.y + 120.0 + ROW_H + 32.0;
+    let y = r.y + ROW_H + 32.0;
     label(c, f, inner.x, y, "HOW TO CLIP");
     let notes = [
         "Hold the left thumbstick down, or press Clip now on the main screen.",

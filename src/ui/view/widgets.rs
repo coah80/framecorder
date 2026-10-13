@@ -48,6 +48,17 @@ pub fn segmented(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, 
     }
 }
 
+/// A little status pill: a dot and a few words in one color. Returns its width.
+pub fn chip(c: &mut Canvas, f: &mut Fonts, x: f32, cy: f32, text: &str, color: Rgb) -> f32 {
+    let w = f.measure(Face::BodyMedium, 15.0, text) + 47.0;
+    let r = Rect::new(x, cy - 17.0, w, 34.0);
+    c.fill_rrect(r, 17.0, color, 0.08);
+    c.stroke_rrect(r, 17.0, 1.0, color, 0.25);
+    c.fill_circle(r.x + 18.5, cy, 4.5, color, 1.0);
+    c.text(f, Face::BodyMedium, 15.0, r.x + 33.0, cy + 5.5, text, color, 1.0);
+    w
+}
+
 /// A setting that's one of a few options: its name, what the current pick
 /// means, and the options underneath.
 #[allow(clippy::too_many_arguments)]
@@ -63,10 +74,10 @@ pub fn choice(
     locked: bool,
 ) {
     let alpha = if locked { 0.4 } else { 1.0 };
-    c.text(f, Face::BodyMedium, 19.0, r.x, r.y + 22.0, name, TEXT, alpha);
+    c.text(f, Face::BodyMedium, 19.0, r.x, r.y + 30.0, name, TEXT, alpha);
     let w = f.measure(Face::Body, 16.0, meaning);
-    c.text(f, Face::Body, 16.0, r.x + r.w - w, r.y + 22.0, meaning, OVERLAY1, alpha);
-    segmented(c, f, m, hits, Rect::new(r.x, r.y + 36.0, r.w, 52.0), options, locked);
+    c.text(f, Face::Body, 16.0, r.x + r.w - w, r.y + 30.0, meaning, OVERLAY2, alpha);
+    segmented(c, f, m, hits, Rect::new(r.x, r.y + 46.0, r.w, 52.0), options, locked);
 }
 
 /// 56x30 switch: the 44x24 one scaled up a bit for VR.

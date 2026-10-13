@@ -96,7 +96,7 @@ run the installer again and pick remove, or over ssh, `framecorder-ui --uninstal
 
 ## using it
 
-open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and four tiles saying what's set up (video, audio, clips, sync). tap a tile or "settings" to change things, one section at a time. hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
+open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and a list of what's set up (video, quality, audio, clips) with what's paired under it. tap a row or "settings" to change things, one section at a time. the chip next to the title says whether it's recording the panels or steamvr's view. hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
 
 (it goes by the tab and not the whole dashboard because on the frame the steam menu counts as open the whole time you're in home)
 

@@ -1,8 +1,10 @@
 //! Lays out and draws the dashboard tab. Catppuccin Mocha, mauve accent.
 //!
 //! Two screens: home (record, clip, and what's set up at a glance) and
-//! settings (one section at a time, so nothing is a wall of controls). And
-//! the setup, which comes before either the first time round.
+//! settings (its sections along the top, one at a time, so nothing is a
+//! wall of controls). And the setup, which comes before either the first
+//! time round. Every screen is a title with a chip saying what's being
+//! recorded, one button on the right, the content, and a note at the foot.
 
 mod home;
 mod onboarding;
@@ -36,8 +38,14 @@ const GREEN: Rgb = [0xa6, 0xe3, 0xa1];
 const YELLOW: Rgb = [0xf9, 0xe2, 0xaf];
 
 const PAD: f32 = 48.0;
-const CONTENT_Y: f32 = 150.0;
-const CONTENT_H: f32 = 492.0;
+/// The title's baseline, and the header buttons sit on the same line.
+const HEADER_Y: f32 = 40.0;
+const HEADER_H: f32 = 54.0;
+const CONTENT_Y: f32 = 114.0;
+const CONTENT_H: f32 = 574.0;
+/// The hairline over the foot note.
+const FOOTER_Y: f32 = 702.0;
+const BUTTON_H: f32 = 54.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
@@ -128,7 +136,6 @@ pub struct Hit {
 pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
     let mut hits = Vec::new();
     canvas.clear(BASE, 1.0);
-    canvas.hline(PAD, CONTENT_Y - 22.0, WIDTH as f32 - 2.0 * PAD, TEXT, 0.05);
     match m.screen {
         Screen::Home => {
             header(canvas, fonts, m, &mut hits, "framecorder", Some(("Settings", Action::Open(Section::Video), false)));
@@ -145,34 +152,73 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
             onboarding::draw(canvas, fonts, m, step, &mut hits);
         }
     }
-    footer(canvas, fonts, m);
+    footer(canvas, fonts, m, &mut hits);
     hits
 }
 
-/// The title with its mauve full stop, and one button on the right.
+/// The title with its mauve full stop, the chip saying what's being
+/// recorded, and one button on the right.
 fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: &str, button: Option<(&str, Action, bool)>) {
-    let w = c.text(f, Face::Heading, 44.0, PAD, 92.0, title, TEXT, 1.0);
-    c.text(f, Face::Heading, 44.0, PAD + w, 92.0, ".", MAUVE, 1.0);
+    let recording = m.locked();
+    let baseline = HEADER_Y + 40.0;
+    let w = c.text(f, Face::Heading, 40.0, PAD, baseline, title, TEXT, 1.0);
+    let w = w + c.text(f, Face::Heading, 40.0, PAD + w, baseline, ".", if recording { RED } else { MAUVE }, 1.0);
+
+    let rec = match m.status {
+        Status::Recording { recorded } => format!("REC {}", clock(recorded)),
+        Status::Stopping => "Saving".to_string(),
+        Status::Idle => String::new(),
+    };
+    let (text, color) = match (recording, m.unlocked) {
+        (true, _) => (rec.as_str(), RED),
+        (false, true) => ("Panels unlocked", GREEN),
+        (false, false) => ("SteamVR's view", YELLOW),
+    };
+    widgets::chip(c, f, PAD + w + 20.0, HEADER_Y + HEADER_H / 2.0, text, color);
+
     let Some((label, action, primary)) = button else { return };
-    let r = Rect::new(WIDTH as f32 - PAD - 168.0, 50.0, 168.0, 54.0);
+    let r = Rect::new(WIDTH as f32 - PAD - 168.0, HEADER_Y, 168.0, BUTTON_H);
     widgets::button(c, f, m, hits, r, label, action, primary);
 }
 
-/// The last recording's result, or why the settings won't budge.
-fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model) {
-    let locked_here = m.locked() && matches!(m.screen, Screen::Settings(s) if s != Section::Sync);
+/// The last recording's result, why the settings won't budge, or what's
+/// worth knowing about the section that's open. Settings also keep the way
+/// to close framecorder down here, out of the way.
+fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
+    let section = match m.screen {
+        Screen::Settings(s) => Some(s),
+        _ => None,
+    };
+    let locked_here = m.locked() && section.is_some_and(|s| s != Section::Sync);
     let (text, color, text_color) = match m.note {
         _ if locked_here => ("Recording. Stop it to change these.", YELLOW, YELLOW),
         _ if m.relocked && !m.unlocked => (RELOCKED, YELLOW, YELLOW),
         Some((text, true)) => (text, GREEN, SUBTEXT0),
         Some((text, false)) => (text, RED, RED),
-        None => return,
+        None => match section {
+            Some(Section::Sync) => (SYNC_NOTE, YELLOW, YELLOW),
+            Some(_) => ("Changes save on their own and apply to the next recording.", OVERLAY1, SUBTEXT0),
+            None => return,
+        },
     };
-    let y = HEIGHT as f32 - 42.0;
-    c.hline(PAD, y - 34.0, WIDTH as f32 - 2.0 * PAD, TEXT, 0.05);
+    let y = FOOTER_Y + 27.0;
+    c.hline(PAD, FOOTER_Y, WIDTH as f32 - 2.0 * PAD, TEXT, 0.05);
     c.fill_circle(PAD + 6.0, y - 6.0, 5.0, color, 1.0);
-    c.text(f, Face::Body, 17.0, PAD + 22.0, y, text, text_color, 1.0);
+    c.text(f, Face::Body, 16.0, PAD + 22.0, y, text, text_color, 1.0);
+
+    if section.is_none() {
+        return;
+    }
+    let label = "Close framecorder";
+    let w = f.measure(Face::Body, 16.0, label) + 24.0;
+    let r = Rect::new(WIDTH as f32 - PAD - w, FOOTER_Y + 8.0, w, 44.0);
+    let hovered = m.hover == Some(Action::TurnOff);
+    c.text(f, Face::Body, 16.0, r.x + 12.0, y, label, if hovered { MAUVE } else { OVERLAY2 }, 1.0);
+    hits.push(Hit { rect: r, action: Action::TurnOff });
 }
+
+/// Clips only move while the headset is up; say so where it matters.
+const SYNC_NOTE: &str = "Clips only sync while your Frame is on, on the same Wi-Fi, with the framecorder app open on the other device.";
 
 /// An update replaced the recorder, which drops its permission.
 const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer unlocks the panels again.";
