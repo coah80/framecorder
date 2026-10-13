@@ -368,6 +368,37 @@ impl FrameApp {
         cx.open_with_system(&self.core.download_dir);
     }
 
+    /// puts a clip in the trash (the recycle bin on windows), where it can
+    /// come back from. the engine still remembers syncing it, so it never
+    /// comes down again
+    pub fn delete_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
+        let (key, path) = (clip.key.clone(), clip.location.clone());
+        let bin = if cfg!(windows) { "the recycle bin" } else { "the trash" };
+        if self.demo {
+            self.clips = self.clips.iter().filter(|c| c.key != key).cloned().collect();
+            self.toast(format!("moved it to {bin}"), cx);
+            return;
+        }
+        if !path.exists() {
+            self.toast("that file's been moved or deleted", cx);
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let res = cx.background_executor().spawn(async move { trash::delete(&path).map_err(|e| e.to_string()) }).await;
+            let _ = this.update(cx, |app, cx| {
+                match res {
+                    Ok(()) => {
+                        app.clips = app.clips.iter().filter(|c| c.key != key).cloned().collect();
+                        app.toast(format!("moved it to {bin}"), cx);
+                    }
+                    Err(e) => app.toast(format!("couldn't delete it: {e}"), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub fn retry(&mut self, cx: &mut Context<Self>) {
         self.core.engine.retry_now();
         self.toast("trying again", cx);

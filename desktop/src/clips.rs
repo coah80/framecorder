@@ -1,7 +1,7 @@
 //! the library: everything from the frame, a day at a time, as a grid or a list.
 
 use gpui::{
-    div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString, Window,
+    div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString, Stateful, Window,
 };
 
 use crate::app::{Filter, FrameApp, Thumb};
@@ -533,9 +533,40 @@ fn thumb(app: &FrameApp, clip: &Clip, index: usize) -> Div {
     }
 }
 
+/// a small square button over a tile, shown while the mouse is on it
+fn tile_button(id: String, group: SharedString, icon_name: &str, tint: u32) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .size(px(32.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(9.))
+        .bg(a(theme::CRUST, 0.8))
+        .cursor_pointer()
+        .opacity(0.)
+        .group_hover(group, |s| s.opacity(1.))
+        .hover(|s| s.bg(c(theme::SURFACE0)))
+        .child(icon(icon_name, 16., c(tint)))
+}
+
+/// a small button at the end of a row
+fn row_button(id: String, icon_name: &str, tint: u32) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .size(px(36.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(9.))
+        .cursor_pointer()
+        .hover(|s| s.bg(c(theme::SURFACE1)))
+        .child(icon(icon_name, 16., c(tint)))
+}
+
 fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -> AnyElement {
     let group = SharedString::from(format!("tile-{index}"));
-    let (open, reveal) = (clip.clone(), clip.clone());
+    let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
     div()
         .relative()
         .group(group.clone())
@@ -581,30 +612,29 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -
         )
         .child(
             div()
-                .id(SharedString::from(format!("reveal-{}", clip.key)))
                 .absolute()
                 .top(px(6.))
                 .right(px(6.))
-                .size(px(32.))
                 .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(9.))
-                .bg(a(theme::CRUST, 0.8))
-                .cursor_pointer()
-                .opacity(0.)
-                .group_hover(group, |s| s.opacity(1.))
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    cx.stop_propagation();
-                    app.reveal_clip(&reveal, cx);
-                }))
-                .child(icon("folder", 16., c(theme::TEXT))),
+                .gap(px(4.))
+                .child(tile_button(format!("delete-{}", clip.key), group.clone(), "trash", theme::RED).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.delete_clip(&delete, cx);
+                    },
+                )))
+                .child(tile_button(format!("reveal-{}", clip.key), group, "folder", theme::TEXT).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.reveal_clip(&reveal, cx);
+                    },
+                ))),
         )
         .into_any_element()
 }
 
 fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -> AnyElement {
-    let (open, reveal) = (clip.clone(), clip.clone());
+    let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
     div()
         .id(SharedString::from(format!("row-{}", clip.key)))
         .flex()
@@ -631,21 +661,17 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) ->
                 .text_size(px(12.))
                 .text_color(c(theme::OVERLAY2)),
         )
-        .child(
-            div()
-                .id(SharedString::from(format!("rowreveal-{}", clip.key)))
-                .size(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(9.))
-                .cursor_pointer()
-                .hover(|s| s.bg(c(theme::SURFACE1)))
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    cx.stop_propagation();
-                    app.reveal_clip(&reveal, cx);
-                }))
-                .child(icon("folder", 16., c(theme::SUBTEXT0))),
-        )
+        .child(row_button(format!("rowdelete-{}", clip.key), "trash", theme::SUBTEXT0).on_click(cx.listener(
+            move |app, _, _, cx| {
+                cx.stop_propagation();
+                app.delete_clip(&delete, cx);
+            },
+        )))
+        .child(row_button(format!("rowreveal-{}", clip.key), "folder", theme::SUBTEXT0).on_click(cx.listener(
+            move |app, _, _, cx| {
+                cx.stop_propagation();
+                app.reveal_clip(&reveal, cx);
+            },
+        )))
         .into_any_element()
 }
