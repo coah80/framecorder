@@ -4,6 +4,7 @@ use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedStri
 
 use crate::app::{quit, status_color, status_text, FrameApp, Page};
 use crate::sidebar::short_path;
+use crate::{format, sync};
 use crate::theme::{self, a, c};
 use crate::widgets::{card, danger, data, destructive, dot, icon, label, outline, switch, title};
 use framecorder_app_lib::core::engine::Status;
@@ -94,6 +95,9 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
             if let Some(u) = &s.update {
                 sub.push(format!("framecorder {}", u.installed));
             }
+            if let Some(t) = sync::last_sync(&app.clips, &s.fingerprint) {
+                sub.push(format!("synced {}", format::ago(t)));
+            }
             let asking = app.unpairing.as_deref() == Some(s.fingerprint.as_str());
             let line = row(i == 0).child(dot(status_color(s), false)).child(text(s.name.clone(), sub.join(" · "))).when(
                 !asking,
@@ -179,7 +183,11 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                             },
                         ))
                         .child(outline("quit", "quit").on_click(|_, _, cx| quit(cx))),
-                ),
+                )
+                .child(row(false).child(text(
+                    format!("framecorder {}", env!("CARGO_PKG_VERSION")),
+                    "fonts: montserrat, poppins, space grotesk (sil ofl)",
+                ))),
         ))
         .child(section(
             "how syncing works",
