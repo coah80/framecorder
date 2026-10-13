@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use framecorder_app_lib::core::discover::{self, Found};
 use framecorder_app_lib::core::engine::{Progress, State, Status};
@@ -74,6 +74,37 @@ pub struct Batch {
     pub done: usize,
 }
 
+/// how fast the download is going, smoothed so it doesn't flicker
+#[derive(Clone)]
+pub struct Speed {
+    pub id: String,
+    /// when and how far along the last sample was
+    at: Instant,
+    done: u64,
+    pub bytes_per_s: f64,
+}
+
+/// the least time between samples, so one slow chunk doesn't swing the rate
+const SPEED_SAMPLE: Duration = Duration::from_millis(400);
+
+impl Speed {
+    /// the rate after a progress report, carrying the last one on when it's the same file
+    pub fn after(last: Option<Speed>, id: &str, done: u64, now: Instant) -> Speed {
+        match last {
+            Some(s) if s.id == id => {
+                let secs = now.saturating_duration_since(s.at).as_secs_f64();
+                if secs < SPEED_SAMPLE.as_secs_f64() {
+                    return s;
+                }
+                let rate = done.saturating_sub(s.done) as f64 / secs;
+                let bytes_per_s = if s.bytes_per_s == 0. { rate } else { s.bytes_per_s * 0.6 + rate * 0.4 };
+                Speed { at: now, done, bytes_per_s, ..s }
+            }
+            _ => Speed { id: id.to_string(), at: now, done, bytes_per_s: 0. },
+        }
+    }
+}
+
 pub struct FrameApp {
     pub core: Core,
     pub demo: bool,
@@ -100,6 +131,7 @@ pub struct FrameApp {
     pub clips: Vec<Clip>,
     pub progress: Option<Progress>,
     pub batch: Option<Batch>,
+    pub speed: Option<Speed>,
     pub toast: Option<SharedString>,
     pub pairing: Pairing,
     /// frames we asked to update, until they say they are
@@ -190,6 +222,7 @@ impl FrameApp {
             clips: Vec::new(),
             progress: None,
             batch: None,
+            speed: None,
             toast: None,
             pairing: Pairing {
                 found: Vec::new(),
@@ -253,6 +286,7 @@ impl FrameApp {
                     Some(b) if switched => b.total = b.total.max(b.done + 1 + p.queued),
                     Some(_) => {}
                 }
+                self.speed = Some(Speed::after(self.speed.take(), &p.id, p.done, Instant::now()));
                 self.progress = Some(p);
             }
             Msg::Synced(e) => {
@@ -261,6 +295,7 @@ impl FrameApp {
                 }
                 if self.progress.as_ref().is_some_and(|p| p.id == e.id) {
                     self.progress = None;
+                    self.speed = None;
                 }
                 let what = if e.kind == "clip" { "new clip" } else { "new recording" };
                 cx.show_system_notification(SystemNotification {
@@ -276,6 +311,7 @@ impl FrameApp {
                 if !busy {
                     self.progress = None;
                     self.batch = None;
+                    self.speed = None;
                 }
             }
             Msg::Removed => self.refresh(),
@@ -978,6 +1014,24 @@ pub fn quit(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_download_rate_settles_and_starts_over_per_file() {
+        let t0 = Instant::now();
+        let s = Speed::after(None, "a", 0, t0);
+        assert_eq!(s.bytes_per_s, 0.);
+        // too soon for a sample, nothing changes
+        let s = Speed::after(Some(s), "a", 1_000_000, t0 + Duration::from_millis(100));
+        assert_eq!(s.bytes_per_s, 0.);
+        let s = Speed::after(Some(s), "a", 4_200_000, t0 + Duration::from_secs(1));
+        assert_eq!(s.bytes_per_s, 4_200_000.);
+        // then it eases towards the new rate
+        let s = Speed::after(Some(s), "a", 6_200_000, t0 + Duration::from_secs(2));
+        assert_eq!(s.bytes_per_s, 4_200_000. * 0.6 + 2_000_000. * 0.4);
+        // the next file starts from nothing
+        let s = Speed::after(Some(s), "b", 500, t0 + Duration::from_secs(3));
+        assert_eq!(s.bytes_per_s, 0.);
+    }
 
     #[test]
     fn a_typed_address_gets_the_port_it_needs() {

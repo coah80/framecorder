@@ -2,13 +2,13 @@
 //! it) without a frame. nothing syncs and nothing's saved.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use framecorder_app_lib::core::api::{About, Battery, Recording, Remote, Storage, UpdateStatus};
 use framecorder_app_lib::core::discover::Found;
 use framecorder_app_lib::core::engine::{Progress, State, Status};
 
-use crate::app::{Batch, DesktopUpdate, FrameApp, Page};
+use crate::app::{Batch, DesktopUpdate, FrameApp, Page, Speed};
 use crate::check::{Check, Outcome, Step};
 use crate::remote::Live;
 use crate::selfupdate::Release;
@@ -131,6 +131,9 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
                 queued: 2,
             });
             app.batch = Some(Batch { total: 3, done: 0 });
+            // two samples a second apart, so there's a rate to show
+            let t = Instant::now();
+            app.speed = Some(Speed::after(Some(Speed::after(None, "incoming", 26_800_000, t)), "incoming", 31_000_000, t + Duration::from_secs(1)));
             app.desktop = DesktopUpdate::Available(Release {
                 version: "0.2.0".into(),
                 url: "demo".into(),

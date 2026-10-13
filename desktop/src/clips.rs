@@ -437,6 +437,16 @@ fn pct(app: &FrameApp) -> f32 {
     app.progress.as_ref().map(|p| if p.total > 0 { p.done as f32 / p.total as f32 } else { 1.0 }).unwrap_or(0.0)
 }
 
+/// "31 MB of 48 MB · 4.2 MB/s", once there's a rate to say
+fn so_far(app: &FrameApp) -> String {
+    let (done, total) = app.progress.as_ref().map(|p| (p.done, p.total)).unwrap_or((0, 0));
+    let mut text = format!("{} of {}", format::size(done), format::size(total));
+    if let Some(s) = app.speed.as_ref().filter(|s| s.bytes_per_s > 0.) {
+        text.push_str(&format!(" · {}", format::rate(s.bytes_per_s)));
+    }
+    text
+}
+
 fn incoming_tile(app: &FrameApp) -> AnyElement {
     let p = pct(app);
     let total = app.progress.as_ref().map(|p| p.total).unwrap_or(0);
@@ -461,6 +471,7 @@ fn incoming_tile(app: &FrameApp) -> AnyElement {
                 .gap(px(8.))
                 .child(icon("download", 22., c(theme::MAUVE)))
                 .child(data(format!("{}%", (p * 100.) as u32)).text_size(px(12.)).text_color(c(theme::MAUVE)))
+                .child(data(so_far(app)).text_size(px(11.)).text_color(c(theme::OVERLAY2)))
                 .child(
                     div()
                         .absolute()
@@ -519,6 +530,7 @@ fn incoming_row(app: &FrameApp) -> AnyElement {
                 .child(div().h_full().w(relative(p)).bg(c(theme::MAUVE))),
         )
         .child(data(format!("{}%", (p * 100.) as u32)).w(px(48.)).text_size(px(12.)).text_color(c(theme::MAUVE)))
+        .child(data(so_far(app)).text_size(px(12.)).text_color(c(theme::OVERLAY2)))
         .into_any_element()
 }
 
