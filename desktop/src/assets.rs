@@ -59,6 +59,8 @@ const ICONS: &[(&str, &str)] = &[
     ("retry", r#"<path d="M4 11a8 8 0 0 1 14-4.5M4 4v6h6M20 13a8 8 0 0 1-14 4.5M20 20v-6h-6"/>"#),
     ("back", r#"<path d="M15 5l-7 7 7 7"/>"#),
     ("info", r#"<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>"#),
+    ("mic", r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>"#),
+    ("mic-off", r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18"/>"#),
 ];
 
 pub struct Assets;

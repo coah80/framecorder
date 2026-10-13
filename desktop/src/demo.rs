@@ -27,6 +27,7 @@ pub const SCREENS: &[&str] = &[
     "frame-old",
     "frame-closed",
     "frame-unreachable",
+    "frame-syncing",
     "check",
 ];
 
@@ -183,6 +184,16 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
         "frame-unreachable" => {
             app.statuses = vec![status(State::Unreachable, false)];
             app.live.insert("demo".into(), live(None));
+        }
+        "frame-syncing" => {
+            app.progress = Some(Progress {
+                fingerprint: "demo".into(),
+                id: "incoming".into(),
+                name: "clip.mp4".into(),
+                done: 31_000_000,
+                total: 48_000_000,
+                queued: 0,
+            });
         }
         "check" => {
             app.statuses = vec![status(State::Unreachable, false)];

@@ -56,6 +56,12 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
     if remote.as_ref().is_some_and(|r| r.recording && r.running) {
         app.arm_tick(cx);
     }
+    // a download from this frame, as a share of the file
+    let syncing = app
+        .progress
+        .as_ref()
+        .filter(|p| p.fingerprint == s.fingerprint)
+        .map(|p| if p.total > 0 { p.done as f32 / p.total as f32 } else { 1.0 });
     let picker = (app.statuses.len() > 1).then(|| frames(app, &s.fingerprint, cx));
 
     div()
@@ -77,7 +83,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .flex()
                 .items_stretch()
                 .gap(px(14.))
-                .child(now(&s, remote.as_ref(), elapsed, sending, cx).flex_1().min_w_0())
+                .child(now(&s, remote.as_ref(), elapsed, sending, settings.as_ref(), syncing, cx).flex_1().min_w_0())
                 .child(headset(connected, about.as_ref())),
         )
         .child(
@@ -155,7 +161,16 @@ fn frames(app: &FrameApp, picked: &str, cx: &mut Context<FrameApp>) -> Div {
 
 // now
 
-fn now(s: &Status, remote: Option<&Remote>, elapsed: u64, sending: Option<&str>, cx: &mut Context<FrameApp>) -> Div {
+#[allow(clippy::too_many_arguments)]
+fn now(
+    s: &Status,
+    remote: Option<&Remote>,
+    elapsed: u64,
+    sending: Option<&str>,
+    settings: Option<&Recording>,
+    syncing: Option<f32>,
+    cx: &mut Context<FrameApp>,
+) -> Div {
     let (head, note) = remote::words(s, remote);
     let recording = remote.is_some_and(|r| r.recording);
     let red = matches!(s.state, State::Unreachable | State::Full);
@@ -215,7 +230,8 @@ fn now(s: &Status, remote: Option<&Remote>, elapsed: u64, sending: Option<&str>,
                                 .child(head),
                         ),
                 )
-                .when(recording, |d| d.child(clock(elapsed, remote.is_some_and(|r| r.running)))),
+                .when(recording, |d| d.child(clock(elapsed, remote.is_some_and(|r| r.running))))
+                .when_some(syncing.filter(|_| !recording), |d, p| d.child(syncing_pill(p))),
         )
         .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note))
         .child(div().flex().items_center().gap(px(10.)).children(match s.state {
@@ -228,6 +244,7 @@ fn now(s: &Status, remote: Option<&Remote>, elapsed: u64, sending: Option<&str>,
                         .into_any_element(),
                     clip_button(&fp, clips_off, can_clip && sending.is_none(), sending == Some("clip"), cx)
                         .into_any_element(),
+                    mic_button(&fp, settings, cx).into_any_element(),
                 ]
             }
             State::Connecting => vec![],
@@ -243,6 +260,20 @@ fn now(s: &Status, remote: Option<&Remote>, elapsed: u64, sending: Option<&str>,
                 .on_click(cx.listener(move |app, _, _, cx| app.open_pair_for(fp.clone(), cx)))
                 .into_any_element()],
         }))
+}
+
+/// how far a download from this frame is, in a mauve pill
+fn syncing_pill(p: f32) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .h(px(32.))
+        .px(px(12.))
+        .rounded_full()
+        .bg(a(theme::MAUVE, 0.12))
+        .child(icon("download", 14., c(theme::MAUVE)))
+        .child(data(format!("{}%", (p * 100.) as u32)).text_size(px(15.)).text_color(c(theme::MAUVE)))
 }
 
 /// how long it's been recording, in a red pill
@@ -311,6 +342,22 @@ fn clip_button(fp: &str, clips_off: bool, enabled: bool, busy: bool, cx: &mut Co
         return b.opacity(0.35).cursor_default();
     }
     b.on_click(cx.listener(move |app, _, _, cx| app.command(&fp, "clip", false, cx)))
+}
+
+/// the mic for the next recording, right on the remote: lit while it's on.
+/// greyed until the frame has said what it's set to
+fn mic_button(fp: &str, settings: Option<&Recording>, cx: &mut Context<FrameApp>) -> Stateful<Div> {
+    let fp = fp.to_string();
+    let on = settings.is_some_and(|r| r.mic);
+    let b = outline("mic", if on { "mic on" } else { "mic off" })
+        .h(px(44.))
+        .px(px(18.))
+        .child(icon(if on { "mic" } else { "mic-off" }, 16., c(if on { theme::MAUVE } else { theme::TEXT })));
+    let Some(r) = settings.cloned() else {
+        return b.opacity(0.35).cursor_default();
+    };
+    b.when(on, |d| d.bg(a(theme::MAUVE, 0.1)).border_color(a(theme::MAUVE, 0.4)).text_color(c(theme::MAUVE)))
+        .on_click(cx.listener(move |app, _, _, cx| app.change_settings(&fp, Recording { mic: !r.mic, ..r.clone() }, cx)))
 }
 
 // the headset
