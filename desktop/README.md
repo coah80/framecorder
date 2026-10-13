@@ -15,13 +15,15 @@ linux needs a few dev packages to build (`libxkbcommon-dev libxkbcommon-x11-dev 
 no frame around? the demo fills it with made up frames and clips, nothing syncs and nothing's saved:
 
 ```sh
-cargo run -- --demo clips      # or list, syncing, unreachable, pair, settings
+cargo run -- --demo clips      # `--help` lists the screens, demo.rs makes them
 ```
 
 ## what it does
 
-- clips land in `~/Videos/framecorder` (`~/Movies/framecorder` on a mac), clips in `clips/`
-- a notification per new clip
+- clips land in `~/Videos/framecorder` (`~/Movies/framecorder` on a mac), clips in `clips/`. a clip in the library opens in the system's player, shows in its folder, or goes to the trash (the recycle bin on windows)
+- a notification per new clip, with open and show in folder. settings can turn them off
+- pairing finds the frame by name (mdns) and by knocking on every nearby address, for routers that drop multicast, and takes its address typed in or a `framecorder://pair` link pasted. it pairs on the sixth digit
+- the frame page: record, stop, save clip and the mic, how it's doing (battery, storage, a download coming in), the settings for its next recording, what's here from it, and a connection check that runs the real checks one by one and says what each saw
 - the tray icon (menu bar on a mac): open, sync now, quit. closing the window leaves it syncing there, the first time a notification says so. "keep running when closed" in settings turns that off, then closing quits. the tray on linux is a StatusNotifierItem over dbus (no gtk), which kde, and gnome with the appindicator extension, show. no tray means closing quits, same as turning keep running off
 - "start with the computer" (`--minimized` starts it straight in the tray)
 - frame updates, a link in the frame's card
@@ -42,6 +44,6 @@ this app replaced the tauri one, which can't update itself. so it picks up where
 - `main.rs` args, the tokio runtime, the window
 - `sync.rs` the engine, and the bridge from its listener to the ui thread
 - `app.rs` all the state and everything you can do
-- `sidebar.rs`, `clips.rs`, `pair.rs`, `settings.rs` the screens
+- `sidebar.rs`, `clips.rs`, `frame.rs`, `check.rs`, `pair.rs`, `settings.rs` the screens; `remote.rs` what a frame's tab is up to
 - `widgets.rs`, `theme.rs`, `assets.rs` buttons, colors, the fonts and icons (baked in)
 - `tray.rs`, `prefs.rs`, `thumbs.rs`, `selfupdate.rs`, `autostart.rs`, `oldapp.rs`, `format.rs`, `demo.rs` the rest
