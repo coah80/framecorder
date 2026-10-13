@@ -11,6 +11,7 @@ use gpui::{div, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, 
 use crate::app::{status_color, status_text, FrameApp, Page};
 use crate::format;
 use crate::remote;
+use crate::sync::Clip;
 use crate::theme::{self, a, c};
 use crate::widgets::{card, data, dot, icon, label, outline, primary, spinner, switch, title};
 
@@ -100,7 +101,122 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                     (None, _, false) => "asking the frame what it's set to...".to_string(),
                 })),
         )
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(14.))
+                .child(here(&app.clips, &s.fingerprint).flex_1().min_w_0())
+                .child(this_frame(&s.fingerprint, cx)),
+        )
         .into_any_element()
+}
+
+/// what's come over from this frame, clips and recordings side by side
+fn here(clips: &[Clip], fingerprint: &str) -> Div {
+    let mine: Vec<&Clip> = clips.iter().filter(|c| c.host == fingerprint).collect();
+    let total: u64 = mine.iter().map(|c| c.size).sum();
+    let clip_bytes: u64 = mine.iter().filter(|c| c.is_clip).map(|c| c.size).sum();
+    let share = if total > 0 { (clip_bytes as f32 / total as f32).clamp(0., 1.) } else { 0. };
+    let legend = |color: u32, text: String| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .text_color(c(theme::SUBTEXT0))
+            .child(dot(color, false).size(px(8.)))
+            .child(data(text))
+    };
+    card()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .p(px(16.))
+        .child(
+            div().flex().items_center().justify_between().gap(px(12.)).child(label("on this computer")).child(
+                data(match mine.len() {
+                    0 => "nothing yet".to_string(),
+                    1 => format!("1 video · {}", format::size(total)),
+                    n => format!("{n} videos · {}", format::size(total)),
+                })
+                .text_size(px(12.))
+                .text_color(c(theme::SUBTEXT0)),
+            ),
+        )
+        .when(total > 0, |d| {
+            d.child(
+                div()
+                    .flex()
+                    .h(px(8.))
+                    .gap(px(3.))
+                    .when(share > 0., |d| d.child(div().h_full().w(relative(share)).rounded_full().bg(c(theme::MAUVE))))
+                    .when(share < 1., |d| {
+                        d.child(div().h_full().w(relative(1. - share)).rounded_full().bg(a(theme::TEXT, 0.35)))
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(16.))
+                    .when(clip_bytes > 0, |d| d.child(legend(theme::MAUVE, format!("clips {}", format::size(clip_bytes)))))
+                    .when(total > clip_bytes, |d| {
+                        d.child(legend(theme::SUBTEXT0, format!("recordings {}", format::size(total - clip_bytes))))
+                    }),
+            )
+        })
+        .when(total == 0, |d| {
+            d.child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child("save a clip on it and it lands here."))
+        })
+}
+
+/// the rows about this frame: the connection check, a retry, and unpairing
+fn this_frame(fingerprint: &str, cx: &mut Context<FrameApp>) -> Div {
+    let fp = fingerprint.to_string();
+    let row = |id: &str, icon_name: &str, head: &str, sub: &str, red: bool| {
+        let ink = if red { theme::RED } else { theme::TEXT };
+        div()
+            .id(SharedString::from(format!("this-{id}")))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(9.))
+            .cursor_pointer()
+            .hover(|s| s.bg(a(theme::TEXT, 0.04)))
+            .child(icon(icon_name, 16., c(if red { theme::RED } else { theme::SUBTEXT0 })))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c(ink)).child(head.to_string()))
+                    .child(div().text_size(px(11.)).text_color(c(theme::OVERLAY2)).truncate().child(sub.to_string())),
+            )
+    };
+    let (check, unpair) = (fp.clone(), fp);
+    card()
+        .w(px(250.))
+        .flex_none()
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .child(div().px(px(14.)).pt(px(12.)).pb(px(4.)).child(label("this frame")))
+        .child(
+            row("check", "wifi", "check the connection", "see what's getting in the way", false)
+                .on_click(cx.listener(move |app, _, _, cx| app.open_check(check.clone(), cx))),
+        )
+        .child(
+            row("retry", "retry", "try again now", "instead of waiting for the next look", false)
+                .on_click(cx.listener(move |app, _, _, cx| app.retry(cx))),
+        )
+        .child(row("unpair", "unlink", "unpair", "what's already here stays", true).on_click(cx.listener(
+            move |app, _, window, cx| {
+                app.go(Page::Settings, cx);
+                app.ask_unpair(unpair.clone(), window, cx);
+            },
+        )))
 }
 
 /// the page with nothing paired, which the pair screen normally covers
