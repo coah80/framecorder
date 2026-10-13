@@ -1,6 +1,6 @@
 //! the left rail: wordmark, nav, your frame, the desktop update, the folder.
 
-use gpui::{div, prelude::*, px, relative, AnyElement, Context, FontWeight};
+use gpui::{canvas, div, fill, prelude::*, px, relative, AnyElement, ContentMask, Context, FontWeight};
 
 use crate::app::{status_color, status_text, DesktopUpdate, FrameApp, Page};
 use crate::theme::{self, a, c};
@@ -148,20 +148,19 @@ fn frame_cards(app: &FrameApp, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
 }
 
 fn desktop_pill(app: &FrameApp, cx: &mut Context<FrameApp>) -> Option<AnyElement> {
-    let (icon_name, text, right, fill) = match &app.desktop {
+    let (icon_name, text, right, progress) = match &app.desktop {
         DesktopUpdate::None => return None,
-        DesktopUpdate::Available(rel) => ("download", "update this app", rel.version.clone(), 0.0),
+        DesktopUpdate::Available(rel) => ("download", "update this app", rel.version.clone(), None),
         DesktopUpdate::Downloading { pct, .. } => {
-            ("download", "downloading", format!("{}%", (pct * 100.) as u32), *pct)
+            ("download", "downloading", format!("{}%", (pct * 100.) as u32), Some(*pct))
         }
-        DesktopUpdate::Ready(_) => ("restart", "restart to finish", String::new(), 1.0),
+        DesktopUpdate::Ready(_) => ("restart", "restart to finish", String::new(), None),
     };
-    let downloading = matches!(app.desktop, DesktopUpdate::Downloading { .. });
+    let downloading = progress.is_some();
     Some(
         div()
             .id("desktop-update")
             .relative()
-            .overflow_hidden()
             .flex()
             .items_center()
             .gap(px(8.))
@@ -177,7 +176,7 @@ fn desktop_pill(app: &FrameApp, cx: &mut Context<FrameApp>) -> Option<AnyElement
             .cursor_pointer()
             .hover(|s| s.bg(a(theme::MAUVE, 0.16)))
             .on_click(cx.listener(|app, _, _, cx| app.desktop_update_clicked(cx)))
-            .child(div().absolute().top_0().bottom_0().left_0().w(relative(fill)).bg(a(theme::MAUVE, 0.22)))
+            .when_some(progress, |d, pct| d.child(progress_fill(pct)))
             .child(if downloading {
                 spinner("desktop-dl", 14., c(theme::MAUVE)).into_any_element()
             } else {
@@ -187,6 +186,23 @@ fn desktop_pill(app: &FrameApp, cx: &mut Context<FrameApp>) -> Option<AnyElement
             .child(data(right).text_color(c(theme::MAUVE_LIGHT)))
             .into_any_element(),
     )
+}
+
+/// The pill's progress: its own capsule, painted only as far as `pct` of its width.
+/// overflow_hidden clips to a rectangle, so a plain bar would poke out past the rounded ends.
+fn progress_fill(pct: f32) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let mut shown = bounds;
+            shown.size.width = bounds.size.width * pct;
+            window.with_content_mask(Some(ContentMask { bounds: shown }), |window| {
+                window.paint_quad(fill(bounds, a(theme::MAUVE, 0.22)).corner_radii(bounds.size.height / 2.));
+            });
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 /// ~/Videos/framecorder rather than the whole path
