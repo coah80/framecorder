@@ -1,12 +1,6 @@
-# builds the sync app (and the native desktop app) for macos, windows and
-# linux. push a tag like v0.1.0 and they land on that tag's release, named how
-# the website links to them.
+# builds the desktop app for macos, windows and linux. push a tag like v0.1.0
+# and they land on that tag's release, named how the website links to them.
 # android is built and signed locally, see android/README.md
-#
-# macos is ad-hoc signed unless these repo secrets exist, then it's signed and
-# notarized properly (needs a paid apple developer account):
-#   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
-#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app specific), APPLE_TEAM_ID
 name: app
 
 on:
@@ -18,77 +12,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            file: framecorder-macos.dmg
-          - os: windows-latest
-            file: framecorder-windows.exe
-          - os: ubuntu-22.04
-            file: framecorder-linux
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app
-
-      - name: linux build deps
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
-
-      - name: macos signing, if it's set up
-        if: startsWith(matrix.os, 'macos')
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          # empty secrets would make tauri try (and fail) to sign, so only pass on real ones
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            if [ -n "${!name}" ]; then
-              { echo "$name<<END_OF_SECRET"; echo "${!name}"; echo "END_OF_SECRET"; } >> "$GITHUB_ENV"
-            fi
-          done
-
-      - name: build (macos)
-        if: startsWith(matrix.os, 'macos')
-        run: |
-          npx --yes @tauri-apps/cli@^2 build --target universal-apple-darwin --bundles dmg
-          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "../${{ matrix.file }}"
-
-      - name: build (windows, linux)
-        if: ${{ !startsWith(matrix.os, 'macos') }}
-        run: |
-          cargo build --release
-          exe=target/release/framecorder-app
-          [ -f "$exe.exe" ] && exe="$exe.exe"
-          cp "$exe" "../${{ matrix.file }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.file }}
-          path: ${{ matrix.file }}
-          if-no-files-found: error
-
-  # the native desktop app (desktop/, gpui-ce): an AppImage on linux, an
-  # installer on windows and a dmg on macos, named what the site links and its self
-  # updater looks for
+  # the desktop app (desktop/, gpui-ce): an AppImage on linux, an installer on
+  # windows and a dmg on macos, named what the site links and its self updater
+  # looks for
   desktop:
     strategy:
       fail-fast: false
@@ -139,7 +65,7 @@ jobs:
           ./linuxdeploy --appimage-extract-and-run --appdir AppDir \
             --executable target/release/framecorder-desktop \
             --desktop-file linux/com.framecorder.desktop.desktop \
-            --icon-file ../app/icons/128x128@2x.png --icon-filename framecorder \
+            --icon-file ../assets/icons/128x128@2x.png --icon-filename framecorder \
             --exclude-library 'libxkbcommon*' --exclude-library 'libxcb-xkb*'
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "../${{ matrix.file }}"
 
@@ -173,7 +99,7 @@ jobs:
             target/aarch64-apple-darwin/release/framecorder-desktop target/x86_64-apple-darwin/release/framecorder-desktop
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           sed "s/VERSION/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
-          cp ../app/icons/icon.icns "$app/Contents/Resources/icon.icns"
+          cp ../assets/icons/icon.icns "$app/Contents/Resources/icon.icns"
           codesign --force --deep --sign - "$app"
           ln -s /Applications dmg/Applications
           hdiutil create -volname framecorder -srcfolder dmg -ov -format UDZO "../${{ matrix.file }}"
@@ -186,7 +112,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, desktop]
+    needs: [desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

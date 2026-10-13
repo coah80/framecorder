@@ -1,6 +1,6 @@
 # framecorder desktop
 
-the desktop app, native rust on [gpui-ce](https://github.com/gpui-ce/gpui-ce) instead of tauri and a webview. it runs the exact same sync core as the tauri app (`../app/src/core`, pulled in with `default-features = false` so none of tauri comes along), so pairing, the pinned tls, the event stream and resumable downloads are all the same code.
+the desktop app, native rust on [gpui-ce](https://github.com/gpui-ce/gpui-ce). it runs the same sync core as the android app (`../app/src/core`), so pairing, the pinned tls, the event stream and resumable downloads are all the same code.
 
 this is the new design from the redesign canvas: a sidebar with your frame and updates, a grid of clips by day, pairing on its own screen, settings.
 
@@ -18,22 +18,24 @@ no frame around? the demo fills it with made up frames and clips, nothing syncs 
 cargo run -- --demo clips      # or list, syncing, unreachable, pair, settings
 ```
 
-## what's the same as the tauri app
+## what it does
 
-- same state folder (`~/.config/com.framecorder.app` on linux), so it picks up pairings you already have. don't run both at once, they'd both download everything
 - clips land in `~/Videos/framecorder` (`~/Movies/framecorder` on a mac), clips in `clips/`
 - a notification per new clip
-- the tray icon (menu bar on a mac): open, sync now, quit. closing the window leaves it syncing there, the first time a notification says so. "keep running when closed" in settings turns that off, then closing quits
+- the tray icon (menu bar on a mac): open, sync now, quit. closing the window leaves it syncing there, the first time a notification says so. "keep running when closed" in settings turns that off, then closing quits. the tray on linux is a StatusNotifierItem over dbus (no gtk), which kde, and gnome with the appindicator extension, show. no tray means closing quits, same as turning keep running off
 - "start with the computer" (`--minimized` starts it straight in the tray)
-- frame updates, same button as before, now a link in the frame's card
-- the same `prefs.json` as the tauri app, plus the grid or list choice
-
-## what's different
-
+- frame updates, a link in the frame's card
 - thumbnails come from `ffmpeg` when it's installed (one frame a second in, cached in `~/.cache/com.framecorder.app/thumbs`). gpui can't decode video, so without ffmpeg the grid shows plain tiles
-- the tray on linux is a StatusNotifierItem over dbus (no gtk), which kde, and gnome with the appindicator extension, show. no tray means closing quits, same as turning keep running off
-- it updates itself: it checks the latest github release for `framecorder-x86_64.AppImage` / `framecorder-setup.exe` (ci builds them on a tag now), and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on linux the new AppImage is renamed over the old one (only from an AppImage, a build of your own doesn't update). on a mac it opens the release page
+- it updates itself: it checks the latest github release for `framecorder-x86_64.AppImage` / `framecorder-setup.exe`, and the pill in the sidebar downloads it then restarts into it. on windows that's the installer, run silently, which closes the app, installs over it and starts it again. on linux the new AppImage is renamed over the old one (only from an AppImage, a build of your own doesn't update). on a mac it opens the release page
 - only one copy runs at a time. opening it again while it's running brings the running one's window up and leaves
+
+## coming from the old tauri app
+
+this app replaced the tauri one, which can't update itself. so it picks up where that one left off:
+
+- same state folder (`~/.config/com.framecorder.app` on linux) and the same `prefs.json`, so pairings and settings carry over
+- "start with the computer" goes by the old app's name, so if it was on, it gets pointed here on start
+- if the old app is running, it gets closed on start (`oldapp.rs`), otherwise both would download everything
 
 ## layout
 
@@ -42,4 +44,4 @@ cargo run -- --demo clips      # or list, syncing, unreachable, pair, settings
 - `app.rs` all the state and everything you can do
 - `sidebar.rs`, `clips.rs`, `pair.rs`, `settings.rs` the screens
 - `widgets.rs`, `theme.rs`, `assets.rs` buttons, colors, the fonts and icons (baked in)
-- `tray.rs`, `prefs.rs`, `thumbs.rs`, `selfupdate.rs`, `autostart.rs`, `format.rs`, `demo.rs` the rest
+- `tray.rs`, `prefs.rs`, `thumbs.rs`, `selfupdate.rs`, `autostart.rs`, `oldapp.rs`, `format.rs`, `demo.rs` the rest

@@ -1,5 +1,5 @@
 //! framecorder's desktop app, native on gpui-ce. the sync engine is the same
-//! one the tauri app and the android app use, from app/src/core.
+//! one the android app uses, from app/src/core.
 
 // a windowed program on windows, so no console window opens next to it (debug
 // builds keep the console, for the log)

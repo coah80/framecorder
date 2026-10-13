@@ -5,10 +5,10 @@ use std::borrow::Cow;
 use gpui::{App, AssetSource, Result, SharedString};
 
 const FONTS: [&[u8]; 4] = [
-    include_bytes!("../../app/ui/fonts/Montserrat-Bold.ttf"),
-    include_bytes!("../../app/ui/fonts/Poppins-Regular.ttf"),
-    include_bytes!("../../app/ui/fonts/Poppins-Medium.ttf"),
-    include_bytes!("../../app/ui/fonts/SpaceGrotesk-Medium.ttf"),
+    include_bytes!("../../assets/fonts/Montserrat-Bold.ttf"),
+    include_bytes!("../../assets/fonts/Poppins-Regular.ttf"),
+    include_bytes!("../../assets/fonts/Poppins-Medium.ttf"),
+    include_bytes!("../../assets/fonts/SpaceGrotesk-Medium.ttf"),
 ];
 
 pub fn load_fonts(cx: &mut App) {
@@ -81,7 +81,7 @@ impl AssetSource for Assets {
 }
 
 /// the app icon, 256 px, for the window, the tray and the linux app menu
-pub const APP_ICON_PNG: &[u8] = include_bytes!("../../app/icons/128x128@2x.png");
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../../assets/icons/128x128@2x.png");
 
 pub fn app_icon() -> Option<image::RgbaImage> {
     image::load_from_memory_with_format(APP_ICON_PNG, image::ImageFormat::Png).ok().map(|i| i.to_rgba8())

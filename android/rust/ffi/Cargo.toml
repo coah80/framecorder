@@ -11,7 +11,7 @@ name = "framecorder_ffi"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-# the same sync core the desktop app runs, without any of Tauri
+# the same sync core the desktop app runs
 framecorder-app = { path = "../../../app", default-features = false }
 log = "0.4"
 thiserror = "2"

@@ -10,7 +10,7 @@ name = "framecorder-desktop"
 path = "src/main.rs"
 
 [dependencies]
-# the sync core, without any of tauri
+# the sync core, shared with the android app
 framecorder-app = { path = "../app", default-features = false }
 
 gpui = { package = "gpui-ce", version = "0.2.2" }

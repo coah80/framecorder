@@ -1,5 +1,5 @@
-//! `framecorder-app --headless-sync <dir>`: the same sync engine with no
-//! window, for servers, testing and scripts.
+//! `framecorder-app --headless-sync <dir>`: the sync engine the apps run,
+//! with no window, for servers, testing and scripts.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,6 @@ pub const IDENTIFIER: &str = "com.framecorder.app";
 
 const USAGE: &str = "\
 usage:
-  framecorder-app                              start the app
   framecorder-app --headless-sync <dir> [options]
       --state <dir>        where pairings and the index live (default: the app's)
       --pair <link>        pair using the framecorder://pair?... link from the QR code
@@ -67,11 +66,6 @@ pub fn default_state_dir() -> PathBuf {
 }
 
 pub fn main(args: Vec<String>) -> i32 {
-    #[cfg(windows)]
-    unsafe {
-        // we're a windowed app on Windows, borrow the console we were run from
-        windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS);
-    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
         Ok(rt) => rt,

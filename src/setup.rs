@@ -135,7 +135,7 @@ fn desktop_entry(home: &Path) -> Result<()> {
          Terminal=false\n",
         ui.display()
     );
-    let files: [(&str, &[u8]); 2] = [(DESKTOP_ENTRY, entry.as_bytes()), (ICON, include_bytes!("../app/icons/128x128.png"))];
+    let files: [(&str, &[u8]); 2] = [(DESKTOP_ENTRY, entry.as_bytes()), (ICON, include_bytes!("../assets/icons/128x128.png"))];
     for (path, bytes) in files {
         let path = home.join(path);
         if std::fs::read(&path).is_ok_and(|old| old == bytes) {

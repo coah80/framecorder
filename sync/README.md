@@ -1,9 +1,9 @@
 # framecorder-sync
 
 Runs on the Steam Frame and hands finished recordings and clips to paired
-devices on the same Wi-Fi (the framecorder app, see `../app`). It's meant to
-sit there all day next to whatever you're playing, so it's built to do
-nothing at all until someone asks for a file.
+devices on the same Wi-Fi (the framecorder app, see `../desktop` and
+`../android`). It's meant to sit there all day next to whatever you're
+playing, so it's built to do nothing at all until someone asks for a file.
 
 ## Install (on the headset)
 
@@ -163,5 +163,5 @@ doesn't change any firewall config itself.
 expired code, one use, rate limit), token checks, revoking via devices.json,
 the scanner (ignores `.part` and friends, mvhd/mehd durations), the SSE hub,
 an SSE `new` event within a second of a `.part` rename, pacing, and the game
-checker only running during transfers. The end to end test with the app is
-`../app/tools/e2e.sh`.
+checker only running during transfers. The end to end test with the sync
+client is `../app/tools/e2e.sh`.
