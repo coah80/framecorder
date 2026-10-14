@@ -180,6 +180,20 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
         else -> null
     }
 
+    val askedToUpdate by hub.updating.collectAsStateWithLifecycle()
+    val updating = frame.fingerprint in askedToUpdate || frame.update?.updating == true
+    fun update() {
+        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+        scope.launch {
+            try {
+                hub.startUpdate(frame.fingerprint)
+            } catch (e: CoreException) {
+                haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                Toast.makeText(context, "the frame couldn't start its update: ${e.reason()}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     val about by hub.about.collectAsStateWithLifecycle()
     val info = about[frame.fingerprint]?.takeIf { connected }
     val list = rememberLazyListState()
@@ -237,16 +251,21 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                                 selected = f.fingerprint == frame.fingerprint,
                                 onClick = { picked = f.fingerprint },
                                 label = { Text(f.name) },
-                                leadingIcon = { StatusDot(stateColor(f.state)) },
+                                leadingIcon = { StatusDot(stateColor(f)) },
                             )
                         }
                     }
                 }
             }
+            item(key = "update") {
+                // only offered while it's in touch; what it said before a drop is stale
+                FrameUpdateCard(frame.update?.takeIf { connected }, updating, onUpdate = ::update)
+            }
             item {
                 Remote(
                     frame,
                     moving,
+                    updating = updating,
                     remote = remote,
                     sending = sending,
                     onCommand = ::command,
@@ -334,6 +353,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
 private fun Remote(
     frame: FrameStatus,
     moving: Transfer?,
+    updating: Boolean,
     remote: RemoteNow?,
     sending: String?,
     onCommand: (String) -> Unit,
@@ -342,7 +362,8 @@ private fun Remote(
     onDiagnose: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val trouble = frame.state.isTrouble()
+    // it drops off while its update restarts framecorder; that's not a connection problem
+    val trouble = frame.state.isTrouble() && !updating
     val state = remote?.state
     val recording = state?.recording == true
     Column(
@@ -369,6 +390,7 @@ private fun Remote(
                         recording && state?.running == false -> "recording, paused"
                         recording -> "recording"
                         moving != null -> "syncing"
+                        updating -> "updating framecorder"
                         frame.state == FrameState.CONNECTED -> "all synced"
                         frame.state == FrameState.CONNECTING -> "looking for it"
                         else -> stateText(frame)
@@ -421,6 +443,7 @@ private fun Remote(
         } else {
             Text(
                 when {
+                    updating && state == null -> "the remote is back once framecorder has restarted on the headset."
                     state == null -> "record, stop and save clips from here once your frame has the next framecorder update."
                     !state.available -> "framecorder isn't open on the headset. it starts with SteamVR."
                     !state.ready -> "finish setting up framecorder on the headset first."

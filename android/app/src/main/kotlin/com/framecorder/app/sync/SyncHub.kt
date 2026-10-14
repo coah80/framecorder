@@ -78,6 +78,10 @@ class SyncHub(private val app: Application) : Events {
     /** Per frame, its battery and storage, while we're in touch with it. */
     val about: StateFlow<Map<String, FrameInfo>> = _about
 
+    private val _updating = MutableStateFlow<Set<String>>(emptySet())
+    /** Frames we asked to update, until they say they are. */
+    val updating: StateFlow<Set<String>> = _updating
+
     private val _synced = MutableSharedFlow<Clip>(extraBufferCapacity = 16)
     /** Each clip as it lands, for notifications and the "new" badge. */
     val synced: SharedFlow<Clip> = _synced
@@ -144,6 +148,20 @@ class SyncHub(private val app: Application) : Events {
     /** Saves them on the frame, for its next recording. */
     suspend fun setRecording(fingerprint: String, settings: RecordingSettings): RecordingSettings = core.setRecording(fingerprint, settings)
 
+    /**
+     * Has the frame install its framecorder update now. It counts as updating
+     * from here until the frame says so itself, or says why it couldn't start.
+     */
+    suspend fun startUpdate(fingerprint: String) {
+        _updating.update { it + fingerprint }
+        try {
+            core.startUpdate(fingerprint)
+        } catch (e: CoreException) {
+            _updating.update { it - fingerprint }
+            throw e
+        }
+    }
+
     /** Null if the Frame answers at its last address, else why not. */
     suspend fun check(fingerprint: String): String? = try {
         core.check(fingerprint)
@@ -172,6 +190,8 @@ class SyncHub(private val app: Application) : Events {
             val shown = if (status.state == FrameState.CONNECTING && old != null && old.state != FrameState.CONNECTED) old else status
             if (old != null) list.map { if (it.fingerprint == status.fingerprint) shown else it } else list + shown
         }
+        // once the frame says it's updating, or that there's nothing to update anymore, it speaks for itself
+        if (status.update?.let { it.updating || !it.available } == true) _updating.update { it - status.fingerprint }
     }
 
     override fun progress(progress: SyncProgress) {

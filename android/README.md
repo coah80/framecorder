@@ -48,7 +48,10 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
   with a running timer, save clip, the mic), the settings for its next
   recording (shape, clip length, quality, frame rate, game audio and mic,
   saved on the headset through framecorder-sync), what's on this phone from
-  it, the connection check, try again, unpair and pair another.
+  it, the connection check, try again, unpair and pair another. When the
+  Frame says a newer framecorder is out, a card at the top offers to install
+  it now, shows the wave while the headset does it (it drops off and comes
+  back on the new version), and goes away once it's done.
 - **Outside the app**: while a Frame records, the syncing notification
   counts along with a stop button, and offers save clip otherwise. Quick
   settings tiles for save clip and record.

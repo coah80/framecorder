@@ -62,6 +62,25 @@ impl From<engine::State> for FrameState {
     }
 }
 
+/// What the Frame says about its own framecorder updates.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FrameUpdate {
+    /// The version on the Frame.
+    pub installed: String,
+    /// The newest one, when the release says (older ones didn't).
+    pub latest: Option<String>,
+    /// There's something newer than what's installed.
+    pub available: bool,
+    /// An update's being installed right now.
+    pub updating: bool,
+}
+
+impl From<&api::UpdateStatus> for FrameUpdate {
+    fn from(u: &api::UpdateStatus) -> Self {
+        Self { installed: u.installed.clone(), latest: u.latest.clone(), available: u.available, updating: u.updating }
+    }
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct FrameStatus {
     pub fingerprint: String,
@@ -70,6 +89,9 @@ pub struct FrameStatus {
     pub addr: String,
     pub state: FrameState,
     pub message: Option<String>,
+    /// Whether there's a framecorder update for it; null until it's said,
+    /// and from Frames too old to say.
+    pub update: Option<FrameUpdate>,
 }
 
 impl From<&engine::Status> for FrameStatus {
@@ -80,6 +102,7 @@ impl From<&engine::Status> for FrameStatus {
             addr: s.addr.clone(),
             state: s.state.into(),
             message: s.message.clone(),
+            update: s.update.as_ref().map(FrameUpdate::from),
         }
     }
 }
@@ -522,6 +545,15 @@ impl Core {
         let engine = self.engine.clone();
         let settings = api::Recording::from(settings);
         Ok(self.on_rt(async move { engine.set_recording(&fingerprint, &settings).await }).await??.into())
+    }
+
+    /// Has the Frame install its framecorder update now. It restarts its
+    /// sync service on the way, so it drops off and comes back on the new
+    /// version. Fails with why not.
+    pub async fn start_update(&self, fingerprint: String) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.start_update(&fingerprint).await }).await??;
+        Ok(())
     }
 
     /// For the connection check: does the paired Frame answer at its last

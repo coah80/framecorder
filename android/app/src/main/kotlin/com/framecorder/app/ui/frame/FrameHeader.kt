@@ -87,7 +87,7 @@ fun FrameHeader(frame: FrameStatus, info: FrameInfo?, actions: @Composable RowSc
         )
         Text(dotted(frame.name), style = MaterialTheme.typography.displaySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            StatusDot(stateColor(frame.state))
+            StatusDot(stateColor(frame))
             Text(
                 "steam frame · ${stateText(frame)} · ${host(frame.addr)}",
                 style = MaterialTheme.typography.bodyMedium,
@@ -154,7 +154,7 @@ fun FramePill(frame: FrameStatus, info: FrameInfo?, remote: RemoteNow?, haze: Ha
             Box(Modifier.size(40.dp).clip(CircleShape).background(scheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
                 Icon(FcIcons.Headset, contentDescription = null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
             }
-            StatusDot(stateColor(frame.state), Modifier.align(Alignment.BottomEnd).offset(2.dp, 2.dp), size = 10.dp, ring = scheme.surfaceContainerHigh)
+            StatusDot(stateColor(frame), Modifier.align(Alignment.BottomEnd).offset(2.dp, 2.dp), size = 10.dp, ring = scheme.surfaceContainerHigh)
         }
         Text(
             frame.name,

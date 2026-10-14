@@ -96,16 +96,22 @@ class Notifier(private val context: Context) {
             }
         } else {
             val connected = frames.filter { it.state == FrameState.CONNECTED }
+            // it drops off while its update restarts framecorder, and that's why
+            val updating = frames.firstOrNull { it.update?.updating == true }
             builder
                 .setContentTitle(
                     when {
+                        updating != null -> "updating framecorder on ${updating.name}"
                         connected.isNotEmpty() -> "connected to ${connected.joinToString { it.name }}"
                         else -> "waiting for your frame"
                     },
                 )
                 .setContentText(
-                    if (connected.isNotEmpty()) "new clips land here on their own"
-                    else "syncs when it's on, on this wi-fi, with framecorder running",
+                    when {
+                        updating != null -> "the headset restarts it on its own, then it's back here"
+                        connected.isNotEmpty() -> "new clips land here on their own"
+                        else -> "syncs when it's on, on this wi-fi, with framecorder running"
+                    },
                 )
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
             val clipping = connected.firstOrNull { remotes[it.fingerprint]?.state?.clipReady == true }

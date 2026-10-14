@@ -83,13 +83,19 @@ fun stateColor(state: FrameState): Color = when (state) {
     else -> MaterialTheme.colorScheme.error
 }
 
-fun stateText(status: FrameStatus): String = when (status.state) {
-    FrameState.CONNECTED -> "connected"
-    FrameState.CONNECTING -> "looking for it..."
-    FrameState.UNREACHABLE -> "can't reach it"
-    FrameState.UNPAIRED -> "doesn't know this phone anymore"
-    FrameState.WRONG_FINGERPRINT -> "something else answered"
-    FrameState.FULL -> "this phone is out of space"
+/** While its framecorder update installs, the frame restarts and drops off; that's what's going on, not a problem. */
+@Composable
+fun stateColor(status: FrameStatus): Color =
+    if (status.update?.updating == true) MaterialTheme.colorScheme.primary else stateColor(status.state)
+
+fun stateText(status: FrameStatus): String = when {
+    status.update?.updating == true -> "updating framecorder"
+    status.state == FrameState.CONNECTED -> "connected"
+    status.state == FrameState.CONNECTING -> "looking for it..."
+    status.state == FrameState.UNREACHABLE -> "can't reach it"
+    status.state == FrameState.UNPAIRED -> "doesn't know this phone anymore"
+    status.state == FrameState.WRONG_FINGERPRINT -> "something else answered"
+    else -> "this phone is out of space"
 }
 
 fun FrameState.isTrouble() = this != FrameState.CONNECTED && this != FrameState.CONNECTING
