@@ -8,7 +8,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -32,9 +32,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -54,8 +53,10 @@ import com.framecorder.core.Clip
 
 /**
  * A clip as a square of its picture, with its length up in the corner the way a photos app marks videos.
- * A long press selects it; while anything's selected, a tap selects or deselects instead of playing, and the
- * selected ones shrink into their tile with a check on them.
+ * While anything's selected, a tap selects or deselects instead of playing, and the selected ones shrink
+ * into their tile with a check on them. The long press that starts selecting belongs to the grid
+ * ([dragToSelect]), since it may go on into a drag across other tiles; here it's only a semantics
+ * action, for a screen reader.
  */
 @Composable
 fun ClipTile(
@@ -71,7 +72,6 @@ fun ClipTile(
 ) {
     val recording = clip.kind != "clip"
     val said = listOfNotNull(if (recording) "recording" else "clip", "${day(clip.created)}, ${time(clip.created)}", clip.durationS?.let(::length))
-    val haptics = LocalHapticFeedback.current
     // how far into its selected look the tile is
     val picked by animateFloatAsState(if (selected) 1f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "picked")
     Box(
@@ -79,22 +79,21 @@ fun ClipTile(
             .aspectRatio(1f)
             // the whole tile goes to the player and back, corners and all, so nothing pops in after
             .sharedClip(clip.key, shape)
-            .combinedClickable(
+            .clickable(
                 onClickLabel = when {
                     !selecting -> "play"
                     selected -> "deselect"
                     else -> "select"
                 },
                 onClick = if (selecting) onToggle else onOpen,
-                onLongClickLabel = if (selected) "deselect" else "select",
-                onLongClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggle()
-                },
             )
             .semantics {
                 contentDescription = said.joinToString(", ")
                 if (selecting) this.selected = selected
+                onLongClick(label = if (selected) "deselect" else "select") {
+                    onToggle()
+                    true
+                }
             },
     ) {
         Box(

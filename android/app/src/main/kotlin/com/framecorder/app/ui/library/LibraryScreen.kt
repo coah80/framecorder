@@ -299,13 +299,17 @@ fun LibraryScreen(
                 )
             },
         ) {
+            val padding = PaddingValues(start = 12.dp, end = 12.dp, top = top, bottom = 140.dp)
             LazyVerticalGrid(
                 state = grid,
                 columns = GridCells.Fixed(columns),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = top, bottom = 140.dp),
+                contentPadding = padding,
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
-                modifier = Modifier.fillMaxSize().hazeSource(haze),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hazeSource(haze)
+                    .dragToSelect(grid, padding, order, picked, selecting, onPicked = { picked = it }),
             ) {
                 full("header") {
                     Header(
