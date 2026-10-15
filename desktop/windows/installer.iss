@@ -47,8 +47,9 @@ SolidCompression=yes
 Source: "{#Exe}"; DestDir: "{app}"; DestName: "framecorder.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{userprograms}\framecorder"; Filename: "{app}\framecorder.exe"
-Name: "{userdesktop}\framecorder"; Filename: "{app}\framecorder.exe"
+; the same id the app gives itself at startup, so its notifications are its own
+Name: "{userprograms}\framecorder"; Filename: "{app}\framecorder.exe"; AppUserModelID: "coah80.framecorder"
+Name: "{userdesktop}\framecorder"; Filename: "{app}\framecorder.exe"; AppUserModelID: "coah80.framecorder"
 
 [Run]
 Filename: "{app}\framecorder.exe"; Description: "open framecorder"; Flags: nowait postinstall skipifsilent
