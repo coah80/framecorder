@@ -1,14 +1,15 @@
 //! the library: everything from the frame, a day at a time, as a grid or a list.
 
 use gpui::{
-    div, img, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, ObjectFit, SharedString, Stateful, Window,
+    div, img, prelude::*, px, relative, AnyElement, ClickEvent, Context, Div, FontWeight, MouseButton, ObjectFit,
+    SharedString, Stateful, Window,
 };
 
 use crate::app::{Filter, FrameApp, Thumb};
 use crate::sync::Clip;
 use crate::theme::{self, a, c};
 use crate::widgets::{card, data, icon, kind_chip, label, outline, primary, spinner, title};
-use crate::{format, search};
+use crate::{format, search, selection};
 use framecorder_app_lib::core::engine::{State, Status};
 
 pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
@@ -19,12 +20,18 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
     let searching = app.search.is_focused(window);
     let today = chrono::Local::now().date_naive();
     let found: Vec<&Clip> = app.clips.iter().filter(|c| search::hit(c, &app.query, today)).collect();
+    let shown: Vec<&Clip> = found.iter().copied().filter(|c| kind_ok(app.filter, c)).collect();
+    let selected: Vec<Clip> = shown.iter().filter(|c| app.selection.picked.contains(&c.key)).map(|c| (*c).clone()).collect();
+    let selecting = !selected.is_empty();
     let problems: Vec<AnyElement> =
         app.problems().into_iter().cloned().collect::<Vec<_>>().iter().map(|s| problem(s, cx)).collect();
+    // the tiles note where they land as they're painted, see selection.rs
+    app.selection.tiles.borrow_mut().clear();
     div()
         .id("library")
         .track_focus(&app.library)
         .on_key_down(cx.listener(|app, ev, window, cx| app.library_key(ev, window, cx)))
+        .relative()
         .flex_1()
         .min_w_0()
         .h_full()
@@ -34,18 +41,48 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
         .child(
             div()
                 .id("gallery")
+                .track_scroll(&app.gallery)
+                .on_mouse_down(MouseButton::Left, cx.listener(|app, ev, window, cx| app.press(ev, window, cx)))
+                .on_mouse_move(cx.listener(|app, ev, _, cx| app.drag_moved(ev, cx)))
+                .on_mouse_up(MouseButton::Left, cx.listener(|app, _, _, cx| app.release(cx)))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(|app, _, _, cx| app.release(cx)))
                 .flex_1()
                 .min_h(px(0.))
                 .overflow_y_scroll()
                 .px(px(28.))
                 .pt(px(4.))
-                .pb(px(28.))
+                // room to scroll the last row out from under the bar
+                .pb(px(if selecting { 96. } else { 28. }))
                 .flex()
                 .flex_col()
                 .gap(px(26.))
                 .children(problems)
-                .children(days(app, &found, today, cx)),
+                .children(days(app, &shown, selecting, today, cx)),
         )
+        .when(selecting, |d| {
+            let all = selected.len() == shown.len();
+            d.child(
+                div()
+                    .absolute()
+                    .bottom(px(16.))
+                    .left(px(28.))
+                    .right(px(28.))
+                    .child(selection::bar(app, &selected, all, cx)),
+            )
+        })
+}
+
+fn kind_ok(filter: Filter, clip: &Clip) -> bool {
+    match filter {
+        Filter::All => true,
+        Filter::Clip => clip.is_clip,
+        Filter::Recording => !clip.is_clip,
+    }
+}
+
+/// the clips the library shows, in its order: what the search found, through the filter
+pub fn shown(app: &FrameApp, today: chrono::NaiveDate) -> Vec<&Clip> {
+    app.clips.iter().filter(|c| search::hit(c, &app.query, today) && kind_ok(app.filter, c)).collect()
 }
 
 fn header(app: &FrameApp, found: &[&Clip], searching: bool, cx: &mut Context<FrameApp>) -> impl IntoElement {
@@ -93,10 +130,7 @@ fn header(app: &FrameApp, found: &[&Clip], searching: bool, cx: &mut Context<Fra
                         .bg(if on { c(theme::MAUVE) } else { a(0, 0.) })
                         .text_color(c(if on { theme::CRUST } else { theme::SUBTEXT0 }))
                         .when(!on, |d| d.hover(|s| s.text_color(c(theme::MAUVE))))
-                        .on_click(cx.listener(move |app, _, _, cx| {
-                            app.filter = f;
-                            cx.notify();
-                        }))
+                        .on_click(cx.listener(move |app, _, _, cx| app.set_filter(f, cx)))
                         .child(name)
                         .when(n > 0, |d| d.child(data(n.to_string()).opacity(0.7)))
                 })))
@@ -306,17 +340,13 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
         .into_any_element()
 }
 
-fn days(app: &FrameApp, found: &[&Clip], today: chrono::NaiveDate, cx: &mut Context<FrameApp>) -> Vec<AnyElement> {
-    let shown: Vec<&Clip> = found
-        .iter()
-        .copied()
-        .filter(|c| match app.filter {
-            Filter::All => true,
-            Filter::Clip => c.is_clip,
-            Filter::Recording => !c.is_clip,
-        })
-        .collect();
-
+fn days(
+    app: &FrameApp,
+    shown: &[&Clip],
+    selecting: bool,
+    today: chrono::NaiveDate,
+    cx: &mut Context<FrameApp>,
+) -> Vec<AnyElement> {
     // a search shows what it found and nothing else, the download included
     let query = app.query.trim();
     let incoming = app.progress.is_some() && query.is_empty();
@@ -356,7 +386,7 @@ fn days(app: &FrameApp, found: &[&Clip], today: chrono::NaiveDate, cx: &mut Cont
     }
 
     let mut groups: Vec<(chrono::NaiveDate, Vec<&Clip>)> = Vec::new();
-    for clip in shown {
+    for &clip in shown {
         let key = format::day_key(clip.created);
         match groups.last_mut() {
             Some((d, list)) if *d == key => list.push(clip),
@@ -379,7 +409,8 @@ fn days(app: &FrameApp, found: &[&Clip], today: chrono::NaiveDate, cx: &mut Cont
             }
             for clip in list {
                 index += 1;
-                items.push(if app.grid { tile(app, clip, index, cx) } else { row(app, clip, index, cx) });
+                let look = Look { selecting, selected: app.selection.picked.contains(&clip.key) };
+                items.push(if app.grid { tile(app, clip, index, look, cx) } else { row(app, clip, index, look, cx) });
             }
             div()
                 .flex()
@@ -591,12 +622,23 @@ fn row_button(id: String, icon_name: &str, tint: u32) -> Stateful<Div> {
         .child(icon(icon_name, 16., c(tint)))
 }
 
-fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -> AnyElement {
+/// how a tile or row shows its place in the selection: whether anything's
+/// picked (the marks come out), and whether this one is
+#[derive(Clone, Copy)]
+struct Look {
+    selecting: bool,
+    selected: bool,
+}
+
+fn tile(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<FrameApp>) -> AnyElement {
     let group = SharedString::from(format!("tile-{index}"));
     let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
+    // a picked tile shrinks into its frame, like the phone's
+    let inset = if look.selected { 6. } else { 0. };
     div()
         .relative()
         .group(group.clone())
+        .child(selection::tile_bounds(&app.selection.tiles, clip.key.clone()))
         .child(
             div()
                 .id(SharedString::from(format!("open-{}", clip.key)))
@@ -604,26 +646,37 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -
                 .flex_col()
                 .gap(px(8.))
                 .cursor_pointer()
-                .on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
+                .on_click(cx.listener(move |app, ev: &ClickEvent, _, cx| app.click_clip(&open, ev.modifiers(), cx)))
                 .child(
-                    thumb(app, clip, index)
+                    div()
+                        .relative()
                         .w_full()
                         .aspect_ratio(16. / 9.)
                         .rounded(px(12.))
                         .border_2()
-                        .border_color(a(theme::MAUVE, 0.))
+                        .border_color(a(theme::MAUVE, if look.selected { 1. } else { 0. }))
+                        .when(look.selected, |d| d.bg(a(theme::MAUVE, 0.14)))
                         .group_hover(group.clone(), |s| s.border_color(c(theme::MAUVE)))
+                        .child(
+                            thumb(app, clip, index)
+                                .absolute()
+                                .inset(px(inset))
+                                .rounded(px(if look.selected { 7. } else { 10. })),
+                        )
                         .when_some(clip.duration_s, |d, len| {
                             d.child(
                                 data(format::length(len))
                                     .absolute()
-                                    .right(px(6.))
-                                    .bottom(px(6.))
+                                    .right(px(6. + inset))
+                                    .bottom(px(6. + inset))
                                     .px(px(7.))
                                     .rounded(px(6.))
                                     .text_size(px(11.))
                                     .bg(a(theme::CRUST, 0.8)),
                             )
+                        })
+                        .when(look.selecting, |d| {
+                            d.child(selection::pick_mark(look.selected).absolute().top(px(6.)).left(px(6.)))
                         }),
                 )
                 .child(
@@ -660,10 +713,11 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -
         .into_any_element()
 }
 
-fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) -> AnyElement {
+fn row(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<FrameApp>) -> AnyElement {
     let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
     div()
         .id(SharedString::from(format!("row-{}", clip.key)))
+        .relative()
         .flex()
         .items_center()
         .gap(px(14.))
@@ -671,9 +725,19 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, cx: &mut Context<FrameApp>) ->
         .py(px(8.))
         .when(index > 1, |d| d.border_t_1().border_color(theme::line()))
         .cursor_pointer()
-        .hover(|s| s.bg(a(theme::MAUVE, 0.08)))
-        .on_click(cx.listener(move |app, _, _, cx| app.open_clip(&open, cx)))
-        .child(thumb(app, clip, index).w(px(88.)).h(px(50.)).flex_none().rounded(px(8.)))
+        .when(look.selected, |d| d.bg(a(theme::MAUVE, 0.14)))
+        .hover(|s| s.bg(a(theme::MAUVE, if look.selected { 0.2 } else { 0.08 })))
+        .on_click(cx.listener(move |app, ev: &ClickEvent, _, cx| app.click_clip(&open, ev.modifiers(), cx)))
+        .child(selection::tile_bounds(&app.selection.tiles, clip.key.clone()))
+        .child(
+            div()
+                .relative()
+                .flex_none()
+                .child(thumb(app, clip, index).w(px(88.)).h(px(50.)).rounded(px(8.)))
+                .when(look.selecting, |d| {
+                    d.child(selection::pick_mark(look.selected).absolute().top(px(4.)).left(px(4.)))
+                }),
+        )
         .child(div().w(px(76.)).font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
         .child(kind_chip(clip.is_clip))
         .child(div().flex_1())

@@ -10,11 +10,12 @@ use framecorder_app_lib::core::engine::{Progress, State, Status};
 use framecorder_app_lib::core::pairlink;
 use framecorder_app_lib::core::store::Entry;
 use gpui::{
-    div, prelude::*, px, App, Context, FocusHandle, FontWeight, KeyDownEvent, SharedString, SystemNotification,
-    SystemNotificationAction, SystemNotificationResponse, Task, Window,
+    div, prelude::*, px, App, Context, FocusHandle, FontWeight, KeyDownEvent, ScrollHandle, SharedString,
+    SystemNotification, SystemNotificationAction, SystemNotificationResponse, Task, Window,
 };
 
 use crate::remote::Live;
+use crate::selection::Selection;
 use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
@@ -117,6 +118,9 @@ pub struct FrameApp {
     pub search: FocusHandle,
     /// the library itself holds the keyboard when nothing else does, for ctrl+f
     pub library: FocusHandle,
+    /// the gallery's scrolling, so a drag can scroll it at the edges
+    pub gallery: ScrollHandle,
+    pub selection: Selection,
     pub statuses: Vec<Status>,
     /// what each frame has told us since it connected, by fingerprint
     pub live: HashMap<String, Live>,
@@ -215,6 +219,8 @@ impl FrameApp {
             query: String::new(),
             search: cx.focus_handle(),
             library: cx.focus_handle(),
+            gallery: ScrollHandle::new(),
+            selection: Selection::new(),
             statuses: Vec::new(),
             live: HashMap::new(),
             frame: None,
@@ -549,17 +555,36 @@ impl FrameApp {
         cx.notify();
     }
 
+    /// what's searched or filtered changing lets the selection go, like the
+    /// android app: what's picked is always on screen
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
         self.query.clear();
+        self.clear_selection(cx);
+        cx.notify();
+    }
+
+    pub fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        self.filter = filter;
+        self.clear_selection(cx);
         cx.notify();
     }
 
     /// keys that reach the library page itself: ctrl+f (cmd+f on a mac) goes
-    /// to the search box, esc clears what was searched
+    /// to the search box, ctrl+a picks every clip on screen, esc answers the
+    /// delete question, then lets the selection go, then clears the search
     pub fn library_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
-        if (k.modifiers.control || k.modifiers.platform) && k.key == "f" {
+        let shortcut = k.modifiers.control || k.modifiers.platform;
+        if shortcut && k.key == "f" {
             self.focus_search(window, cx);
+        } else if shortcut && k.key == "a" && !self.search.is_focused(window) {
+            self.select_all(cx);
+        } else if k.key == "enter" && self.selection.asking {
+            self.delete_selected(cx);
+        } else if k.key == "escape" && self.selection.asking {
+            self.keep_selected(cx);
+        } else if k.key == "escape" && self.selecting() {
+            self.clear_selection(cx);
         } else if k.key == "escape" && !self.query.is_empty() {
             self.clear_search(cx);
         } else {
@@ -571,6 +596,7 @@ impl FrameApp {
     /// typing in the search box. esc clears it, and leaves it once it's empty
     pub fn search_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        let was = self.query.clone();
         let shortcut = k.modifiers.control || k.modifiers.platform;
         if shortcut && k.key == "v" {
             if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
@@ -590,6 +616,9 @@ impl FrameApp {
             }
         } else {
             return;
+        }
+        if self.query != was {
+            self.clear_selection(cx);
         }
         cx.stop_propagation();
         cx.notify();

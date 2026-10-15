@@ -19,6 +19,7 @@ mod pair;
 mod prefs;
 mod remote;
 mod search;
+mod selection;
 mod selfupdate;
 mod settings;
 mod sidebar;
@@ -44,9 +45,9 @@ usage:
   framecorder-desktop                  start the app
   framecorder-desktop --minimized      start in the tray, if it's set to keep running
   framecorder-desktop --demo <screen>  made up frames and clips, nothing syncs.
-                                       screens: clips, list, syncing, unreachable, pair, settings,
-                                       frame, frame-recording, frame-paused, frame-old, frame-closed,
-                                       frame-unreachable, frame-syncing, check";
+                                       screens: clips, list, clips-selecting, list-selecting, syncing,
+                                       unreachable, pair, settings, frame, frame-recording, frame-paused,
+                                       frame-old, frame-closed, frame-unreachable, frame-syncing, check";
 
 /// the one app, and its window when it has one. the window can close and
 /// come back from the tray, the app stays

@@ -17,6 +17,8 @@ use crate::sync::Clip;
 pub const SCREENS: &[&str] = &[
     "clips",
     "list",
+    "clips-selecting",
+    "list-selecting",
     "syncing",
     "unreachable",
     "pair",
@@ -117,8 +119,12 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
         app.page = Page::Frame;
         app.live.insert("demo".into(), live(Some(remote())));
     }
+    if screen.ends_with("-selecting") {
+        app.selection.picked = ["demo/0", "demo/1", "demo/3"].map(String::from).into();
+        app.selection.anchor = Some("demo/3".into());
+    }
     match screen {
-        "list" => app.grid = false,
+        "list" | "list-selecting" => app.grid = false,
         "syncing" => {
             app.statuses = vec![status(State::Connected, true)];
             app.frame_updating.insert("demo".into());
