@@ -299,6 +299,11 @@ impl Engine {
             }
         }
         self.start(&fingerprint);
+        // already following it, maybe waiting minutes after the frame forgot
+        // us: the new pairing has to show up now, not on the next retry
+        if let Some(r) = self.running.lock().unwrap().get(&fingerprint) {
+            r.nudge.notify_one();
+        }
         Ok(host)
     }
 
