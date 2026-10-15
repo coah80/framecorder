@@ -261,13 +261,13 @@ fun CoreException.reason(): String = when (this) {
 
 /**
  * Where the core keeps its pairings and what it has synced. The old app (0.1.x,
- * same package) kept them in `<data>/com.framecorder.app`, so the first start
- * after updating from it moves them here. Without that, the update unpairs the
- * frame, and pairing again downloads every clip a second time.
+ * same package, Tauri) kept them straight in the app's data folder, so the
+ * first start after updating from it moves them here. Without that, the update
+ * unpairs the frame, and pairing again downloads every clip a second time.
  */
 private fun stateDir(context: Context): File {
     val dir = File(context.filesDir, "sync")
-    val old = File(context.dataDir, "com.framecorder.app")
+    val old = context.dataDir
     if (!File(dir, "hosts.json").exists() && File(old, "hosts.json").exists()) {
         dir.mkdirs()
         for (name in listOf("hosts.json", "index.json")) {
