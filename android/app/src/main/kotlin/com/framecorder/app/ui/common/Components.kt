@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
@@ -165,6 +166,20 @@ fun AddTile(icon: ImageVector = FcIcons.Plus) {
     ) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
     }
+}
+
+/** The page fading out under whatever floats at the bottom, so the list doesn't run into it. */
+@Composable
+fun BottomFade(modifier: Modifier = Modifier) {
+    Box(
+        modifier.fillMaxWidth().height(132.dp).background(
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                0.55f to MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                1f to MaterialTheme.colorScheme.surface,
+            ),
+        ),
+    )
 }
 
 /** The tab you're on shows its name, the others just their icons. */

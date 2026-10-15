@@ -38,7 +38,10 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
   download while one runs (wavy progress, size, data rate), and pull to
   retry. Scrolled, a frosted pill says which day you're on, and a fast
   scroller notched by day shows up at the side. A Frame that can't be
-  reached shows as a small pill that leads to the frame tab.
+  reached shows as a small pill that leads to the frame tab. Holding a
+  clip selects it, tapping adds more, and the bar that takes the nav's
+  place shares them all at once (one share sheet) or deletes them with
+  the one confirmation Android shows.
 - **Frame tab**: the Frame's name and state, with its battery (the
   percentage inside the icon, like the phone's own) and free space as
   chips; scrolled, that becomes a frosted pill in the middle up top with

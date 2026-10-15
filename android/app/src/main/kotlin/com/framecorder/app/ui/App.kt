@@ -19,11 +19,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FloatingToolbarDefaults
@@ -42,8 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -53,6 +48,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.framecorder.app.Prefs
 import com.framecorder.app.sync.SyncHub
 import com.framecorder.app.sync.SyncService
+import com.framecorder.app.ui.common.BottomFade
 import com.framecorder.app.ui.common.FloatingNav
 import com.framecorder.app.ui.diagnose.DiagnoseScreen
 import com.framecorder.app.ui.frame.FrameScreen
@@ -89,6 +85,8 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
         mutableStateListOf<Screen>(if (hub.frames.value.isEmpty()) Screen.Frame() else Screen.Library)
     }
     var navShown by remember { mutableStateOf(true) }
+    // the library has clips selected, so its share and delete bar stands where the nav was
+    var selecting by remember { mutableStateOf(false) }
     // the clip the player was on, so the library can bring its tile into view on the way back
     var lastSeen by remember { mutableStateOf<String?>(null) }
 
@@ -161,6 +159,7 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
                                     onOpen = { key, among -> push(Screen.Player(key, among)) },
                                     onFrame = { go(Screen.Frame(it)) },
                                     takeLastSeen = { lastSeen.also { lastSeen = null } },
+                                    onSelecting = { selecting = it },
                                 )
                             }
                             entry<Screen.Frame>(metadata = tabChange) { key ->
@@ -202,19 +201,10 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
                         },
                     )
 
-                    if (top.isTab()) {
-                        Box(
-                            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(132.dp).background(
-                                Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    0.55f to MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-                                    1f to MaterialTheme.colorScheme.surface,
-                                ),
-                            ),
-                        )
-                    }
+                    // while clips are being selected the library puts its own bar here
+                    if (top.isTab() && !selecting) BottomFade(Modifier.align(Alignment.BottomCenter))
                     AnimatedVisibility(
-                        visible = top.isTab() && navShown,
+                        visible = top.isTab() && navShown && !selecting,
                         modifier = Modifier.align(Alignment.BottomCenter),
                         enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { it * 2 } + fadeIn(),
                         exit = slideOutVertically(MaterialTheme.motionScheme.fastSpatialSpec()) { it * 2 } + fadeOut(),

@@ -1,5 +1,10 @@
 package com.framecorder.app.ui.library
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -26,7 +31,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -66,6 +70,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -82,15 +87,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -106,7 +108,7 @@ import com.framecorder.app.sync.MediaGallery
 import com.framecorder.app.sync.SyncHub
 import com.framecorder.app.sync.Transfer
 import com.framecorder.app.ui.LocalShowNav
-import com.framecorder.app.ui.common.ClipThumbnail
+import com.framecorder.app.ui.common.BottomFade
 import com.framecorder.app.ui.common.FcIcons
 import com.framecorder.app.ui.common.GlassPill
 import com.framecorder.app.ui.common.PillRule
@@ -117,15 +119,13 @@ import com.framecorder.app.ui.common.day
 import com.framecorder.app.ui.common.dayKey
 import com.framecorder.app.ui.common.dotted
 import com.framecorder.app.ui.common.isTrouble
-import com.framecorder.app.ui.common.length
 import com.framecorder.app.ui.common.rate
-import com.framecorder.app.ui.common.sharedClip
+import com.framecorder.app.ui.common.share
 import com.framecorder.app.ui.common.shortDay
 import com.framecorder.app.ui.common.size
 import com.framecorder.app.ui.common.stateText
 import com.framecorder.app.ui.common.time
 import com.framecorder.app.ui.theme.DataStyle
-import com.framecorder.app.ui.theme.LocalStatusColors
 import com.framecorder.core.Clip
 import com.framecorder.core.FrameState
 import com.framecorder.core.FrameStatus
@@ -141,7 +141,14 @@ import kotlinx.coroutines.launch
 private enum class Filter(val label: String) { All("all"), Clips("clips"), Recordings("recordings") }
 
 @Composable
-fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame: (String?) -> Unit, takeLastSeen: () -> String?) {
+fun LibraryScreen(
+    hub: SyncHub,
+    onOpen: (String, List<String>) -> Unit,
+    onFrame: (String?) -> Unit,
+    takeLastSeen: () -> String?,
+    /** Whether clips are selected, so the nav makes way for the share and delete bar. */
+    onSelecting: (Boolean) -> Unit,
+) {
     val clips by hub.clips.collectAsStateWithLifecycle()
     val missing by hub.missing.collectAsStateWithLifecycle()
     val frames by hub.frames.collectAsStateWithLifecycle()
@@ -149,6 +156,8 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    // keys of the clips picked by long press; only the ones on screen count, so a clip that's gone can't be shared
+    var picked by rememberSaveable { mutableStateOf(emptySet<String>()) }
 
     // clips deleted in the gallery app go away from here too
     val lifecycle = LocalLifecycleOwner.current
@@ -169,6 +178,12 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
     val byDay = remember(shown) { shown.sortedByDescending { it.created }.groupBy { dayKey(it.created) }.toList() }
     val order = remember(byDay) { byDay.flatMap { (_, list) -> list.map { it.key } } }
     val trouble = frames.firstOrNull { it.state.isTrouble() }
+    val selected = shown.filter { it.key in picked }
+    val selecting = selected.isNotEmpty()
+    val clear = { picked = emptySet() }
+    LaunchedEffect(selecting) { onSelecting(selecting) }
+    DisposableEffect(Unit) { onDispose { onSelecting(false) } }
+    BackHandler(enabled = selecting, onBack = clear)
 
     // where things sit in the grid, for the pill and the fast scroller
     val above = buildList {
@@ -190,8 +205,25 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
     val search = {
         searching = !searching
         if (!searching) query = ""
+        clear()
         scope.launch { grid.animateScrollToItem(0) }
         Unit
+    }
+    // the same way the player deletes one: Android 11+ asks through its own dialog, then the clip counts as missing
+    val context = LocalContext.current
+    val deleted = {
+        scope.launch {
+            hub.refreshMissing()
+            clear()
+        }
+        Unit
+    }
+    val deleter = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) deleted()
+    }
+    val delete = {
+        val request = hub.gallery.deleteRequest(selected.map { it.location })
+        if (request != null) deleter.launch(IntentSenderRequest.Builder(request.intentSender).build()) else deleted()
     }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val density = LocalDensity.current
@@ -236,6 +268,7 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
         if (f != filter && !swapping) {
             scope.launch {
                 swapping = true
+                clear()
                 showNav()
                 swap.animateTo(0f, tween(90))
                 filter = f
@@ -281,12 +314,25 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
                         searchable = here.isNotEmpty(),
                         searching = searching,
                         paired = frames.isNotEmpty(),
+                        selected = selected,
                         onSearch = search,
                         onRetry = hub::retryNow,
                         onFrame = { onFrame(null) },
+                        onClear = clear,
                     )
                 }
-                if (searching) full("search") { Search(query, onQuery = { query = it }, modifier = Modifier.animateItem()) }
+                if (searching) {
+                    full("search") {
+                        Search(
+                            query,
+                            onQuery = {
+                                query = it
+                                clear()
+                            },
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                }
                 transfer?.let { t ->
                     full("transfer") {
                         Incoming(t, frames.firstOrNull { it.fingerprint == t.fingerprint }, onClick = { onFrame(t.fingerprint) }, modifier = Modifier.animateItem())
@@ -323,7 +369,10 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
                     columns = columns,
                     swap = { swap.value },
                     swapping = swapping,
+                    selecting = selecting,
+                    picked = picked,
                     onOpen = { onOpen(it, order) },
+                    onToggle = { picked = if (it in picked) picked - it else picked + it },
                 )
             }
 
@@ -358,12 +407,33 @@ fun LibraryScreen(hub: SyncHub, onOpen: (String, List<String>) -> Unit, onFrame:
             exit = fadeOut() + scaleOut(targetScale = 0.8f) + slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp),
         ) {
-            DayPill(
-                day = byDay.getOrNull(active)?.first?.let { day(it) } ?: "",
-                filter = filter,
-                transfer = transfer,
-                haze = haze,
-                onClick = { scope.launch { grid.animateScrollToItem(0) } },
+            if (selecting) {
+                SelectionPill(selected, haze, onClear = clear)
+            } else {
+                DayPill(
+                    day = byDay.getOrNull(active)?.first?.let { day(it) } ?: "",
+                    filter = filter,
+                    transfer = transfer,
+                    haze = haze,
+                    onClick = { scope.launch { grid.animateScrollToItem(0) } },
+                )
+            }
+        }
+
+        // share and delete stand where the nav was, which the app hides meanwhile
+        AnimatedVisibility(selecting, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) { BottomFade() }
+        AnimatedVisibility(
+            visible = selecting,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { it * 2 } + fadeIn(),
+            exit = slideOutVertically(MaterialTheme.motionScheme.fastSpatialSpec()) { it * 2 } + fadeOut(),
+        ) {
+            SelectionBar(
+                picked = selected,
+                allPicked = selected.size == shown.size,
+                onSelectAll = { picked = if (selected.size == shown.size) emptySet() else shown.map { it.key }.toSet() },
+                onDelete = delete,
+                onShare = { share(context, selected) },
             )
         }
     }
@@ -379,7 +449,10 @@ private fun LazyGridScope.days(
     columns: Int,
     swap: () -> Float,
     swapping: Boolean,
+    selecting: Boolean,
+    picked: Set<String>,
     onOpen: (String) -> Unit,
+    onToggle: (String) -> Unit,
 ) {
     var row = 0
     for ((date, list) in byDay) {
@@ -397,29 +470,15 @@ private fun LazyGridScope.days(
                 clip,
                 gallery,
                 shape = tileShape(i, list.size, columns),
-                onClick = { onOpen(clip.key) },
+                selecting = selecting,
+                selected = clip.key in picked,
+                onOpen = { onOpen(clip.key) },
+                onToggle = { onToggle(clip.key) },
                 modifier = settles(swapping).fadeThrough(swap, at + 1 + i / columns),
             )
         }
         row += 1 + (list.size + columns - 1) / columns
     }
-}
-
-/** Big corners where a day's block of tiles has its outside corners, small ones between tiles, so each day reads as one shape. */
-private fun tileShape(i: Int, n: Int, columns: Int): RoundedCornerShape {
-    val row = i / columns
-    val col = i % columns
-    val lastRow = (n - 1) / columns
-    val rowEnd = if (row == lastRow) (n - 1) % columns else columns - 1
-    // a short last row leaves the corner above its end showing too
-    val stepped = row == lastRow - 1 && col == columns - 1 && (n - 1) % columns != columns - 1
-    fun corner(outside: Boolean) = if (outside) 18.dp else 3.dp
-    return RoundedCornerShape(
-        topStart = corner(row == 0 && col == 0),
-        topEnd = corner(row == 0 && col == rowEnd),
-        bottomStart = corner(row == lastRow && col == 0),
-        bottomEnd = corner((row == lastRow && col == rowEnd) || stepped),
-    )
 }
 
 /** Moves to its new place on a spring, except while filters switch, when everything fades instead. */
@@ -445,37 +504,45 @@ private fun Header(
     searchable: Boolean,
     searching: Boolean,
     paired: Boolean,
+    selected: List<Clip>,
     onSearch: () -> Unit,
     onRetry: () -> Unit,
     onFrame: () -> Unit,
+    onClear: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(start = 4.dp)) {
-        Row(Modifier.fillMaxWidth().height(56.dp).offset(x = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            if (searchable) {
-                IconButton(onClick = onSearch) {
-                    Icon(if (searching) FcIcons.Close else FcIcons.Search, contentDescription = if (searching) "stop searching" else "search")
-                }
-            }
-            Box {
-                IconButton(onClick = { menu = true }) { Icon(FcIcons.More, contentDescription = "more") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("try again now") },
-                        leadingIcon = { Icon(FcIcons.Retry, contentDescription = null) },
-                        onClick = {
-                            menu = false
-                            onRetry()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (paired) "your frame" else "pair a frame") },
-                        leadingIcon = { Icon(FcIcons.Headset, contentDescription = null) },
-                        onClick = {
-                            menu = false
-                            onFrame()
-                        },
-                    )
+        Box(Modifier.fillMaxWidth().height(56.dp)) {
+            if (selected.isNotEmpty()) {
+                SelectionTitle(selected, onClear, Modifier.offset(x = (-8).dp))
+            } else {
+                Row(Modifier.fillMaxWidth().height(56.dp).offset(x = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    if (searchable) {
+                        IconButton(onClick = onSearch) {
+                            Icon(if (searching) FcIcons.Close else FcIcons.Search, contentDescription = if (searching) "stop searching" else "search")
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(FcIcons.More, contentDescription = "more") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("try again now") },
+                                leadingIcon = { Icon(FcIcons.Retry, contentDescription = null) },
+                                onClick = {
+                                    menu = false
+                                    onRetry()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (paired) "your frame" else "pair a frame") },
+                                leadingIcon = { Icon(FcIcons.Headset, contentDescription = null) },
+                                onClick = {
+                                    menu = false
+                                    onFrame()
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -503,47 +570,6 @@ private fun DayPill(day: String, filter: Filter, transfer: Transfer?, haze: Haze
         }
     }
 }
-
-/** A clip as a square of its picture, with its length up in the corner the way a photos app marks videos. */
-@Composable
-private fun ClipTile(clip: Clip, gallery: MediaGallery, shape: RoundedCornerShape, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val recording = clip.kind != "clip"
-    val said = listOfNotNull(if (recording) "recording" else "clip", "${day(clip.created)}, ${time(clip.created)}", clip.durationS?.let(::length))
-    Box(
-        modifier
-            .aspectRatio(1f)
-            // the whole tile goes to the player and back, corners and all, so nothing pops in after
-            .sharedClip(clip.key, shape)
-            .clickable(onClickLabel = "play", onClick = onClick)
-            .semantics { contentDescription = said.joinToString(", ") },
-    ) {
-        ClipThumbnail(clip, gallery, Modifier.fillMaxSize())
-        // just enough shade up top for the length to read on a bright picture
-        Box(
-            Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(36.dp)
-                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.35f), Color.Transparent))),
-        )
-        Row(
-            Modifier.align(Alignment.TopEnd).padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (recording) StatusDot(LocalStatusColors.current.rec, size = 7.dp)
-            clip.durationS?.let { Text(length(it), style = TileLength) }
-            Icon(FcIcons.Play, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-        }
-    }
-}
-
-private val TileLength = DataStyle.copy(
-    fontSize = 12.sp,
-    lineHeight = 14.sp,
-    color = Color.White,
-    shadow = Shadow(Color.Black.copy(alpha = 0.6f), blurRadius = 6f),
-)
 
 /** What's coming over right now. */
 @Composable

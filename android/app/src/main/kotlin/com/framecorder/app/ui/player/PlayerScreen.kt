@@ -92,6 +92,7 @@ import com.framecorder.app.ui.common.FcIcons
 import com.framecorder.app.ui.common.PlayerCorner
 import com.framecorder.app.ui.common.day
 import com.framecorder.app.ui.common.length
+import com.framecorder.app.ui.common.share
 import com.framecorder.app.ui.common.sharedClip
 import com.framecorder.app.ui.common.size
 import com.framecorder.app.ui.common.time
@@ -368,7 +369,7 @@ fun PlayerScreen(hub: SyncHub, key: String, among: List<String>, onPage: (String
                 onClick = {
                     when {
                         exporting != null -> {}
-                        !trimmed -> share(context, clip)
+                        !trimmed -> share(context, listOf(clip))
                         else -> scope.launch {
                             exporting = 0f
                             try {
@@ -498,14 +499,6 @@ private fun codecOf(context: Context, uri: Uri): String? = runCatching {
         ex.release()
     }
 }.getOrNull()
-
-private fun share(context: Context, clip: Clip) {
-    val send = Intent(Intent.ACTION_SEND)
-        .setType("video/mp4")
-        .putExtra(Intent.EXTRA_STREAM, Uri.parse(clip.location))
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    context.startActivity(Intent.createChooser(send, if (clip.kind == "clip") "share clip" else "share recording"))
-}
 
 private fun open(context: Context, clip: Clip) {
     val view = Intent(Intent.ACTION_VIEW)

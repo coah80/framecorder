@@ -21,6 +21,7 @@ object FcIcons {
     val ChevronRight = stroke("chevron", "M9.5 6l6 6-6 6")
     val Back = stroke("back", "M19 12H5M11 6l-6 6 6 6")
     val Check = stroke("check", "M5 12.5l4.5 4.5L19 7.5")
+    val SelectAll = stroke("select all", rrect(3.5f, 3.5f, 17f, 17f, 4f), "M8 12.3l2.8 2.8L16.3 9")
     val Close = stroke("close", "M6 6l12 12M18 6L6 18")
     val SaveClip = icon("save clip", strokes = listOf("M4.5 12a7.5 7.5 0 1 0 2.2-5.3", "M4.5 4.5V8H8"), fills = listOf(circle(12f, 12f, 2.6f)))
     val Play = icon("play", fills = listOf("M9 6.2v11.6a.8.8 0 0 0 1.2.7l9.2-5.8a.8.8 0 0 0 0-1.4L10.2 5.5A.8.8 0 0 0 9 6.2z"))
