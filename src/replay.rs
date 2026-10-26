@@ -174,6 +174,7 @@ impl Ring {
     }
 
     fn trim(&mut self) {
+        self.trim_stale_audio();
         let Some(start) = self.start_for(self.keep) else { return };
         while self.keyframes.front().is_some_and(|&k| k < start) {
             self.keyframes.pop_front();
@@ -188,7 +189,6 @@ impl Ring {
             self.bytes -= p.data.len();
             self.packets.pop_front();
         }
-        self.trim_stale_audio();
     }
 
     /// With the panels off there's no new video, so the trimming above stops,
@@ -297,16 +297,20 @@ mod tests {
     #[test]
     fn audio_without_video_still_gets_trimmed() {
         // the panels go off after 10 s: audio keeps coming for 10 minutes
-        let mut ring = Ring::in_memory(5, FPS);
-        fill(&mut ring, 10);
-        let rate = RATE as i64;
-        let mut pts = audio_pos(10 * FPS as i64, FPS as i64);
-        while pts < 600 * rate {
-            ring.push(audio(pts));
-            pts += 1024;
+        for saw_video in [true, false] {
+            let mut ring = Ring::in_memory(5, FPS);
+            if saw_video {
+                fill(&mut ring, 10);
+            }
+            let rate = RATE as i64;
+            let mut pts = if saw_video { audio_pos(10 * FPS as i64, FPS as i64) } else { 0 };
+            while pts < 600 * rate {
+                ring.push(audio(pts));
+                pts += 1024;
+            }
+            let audio_secs = ring.packets.iter().filter(|p| p.stream > 0).count() as i64 * 1024 / rate;
+            assert!(audio_secs <= 5 + STALE_SLACK_SECS + 1, "kept {audio_secs} s of audio, saw video: {saw_video}");
         }
-        let audio_secs = ring.packets.iter().filter(|p| p.stream > 0).count() as i64 * 1024 / rate;
-        assert!(audio_secs <= 5 + STALE_SLACK_SECS + 1, "kept {audio_secs} s of audio");
     }
 }
 
