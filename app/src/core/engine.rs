@@ -845,11 +845,23 @@ impl Sink for DirSink {
         let (stem, ext) = split_name(&name);
         let mut target = dir.join(&name);
         let mut n = 2;
-        while target.exists() {
-            target = dir.join(format!("{stem} ({n}){ext}"));
-            n += 1;
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&target) {
+                Ok(reserved) => {
+                    drop(reserved);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    target = dir.join(format!("{stem} ({n}){ext}"));
+                    n += 1;
+                }
+                Err(e) => return Err(format!("couldn't reserve a place for the video: {e}")),
+            }
         }
-        std::fs::rename(staged, &target).map_err(|e| format!("couldn't move the download into place: {e}"))?;
+        if let Err(e) = std::fs::rename(staged, &target) {
+            let _ = std::fs::remove_file(&target);
+            return Err(format!("couldn't move the download into place: {e}"));
+        }
         Ok(target.to_string_lossy().into_owned())
     }
 }
@@ -994,6 +1006,36 @@ mod tests {
         assert_eq!(safe_name("..\\..\\x.mp4"), "x.mp4");
         assert_eq!(safe_name(".."), "clip.mp4");
         assert_eq!(safe_name("a:b?.mp4"), "ab.mp4");
+    }
+
+    #[test]
+    fn concurrent_downloads_keep_every_completed_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = DirSink { root: dir.path().to_path_buf() };
+        let host = host(&"ab".repeat(32));
+        let clip =
+            RemoteClip { id: "r-test".into(), kind: "recording".into(), name: "test.mp4".into(), size: 1, duration_s: None, created: 0 };
+        std::fs::create_dir_all(sink.dir(&host, &clip)).unwrap();
+        let barrier = std::sync::Barrier::new(32);
+        std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..32u8)
+                .map(|n| {
+                    let (sink, host, clip, barrier) = (&sink, &host, &clip, &barrier);
+                    let staged = dir.path().join(format!("{n}.part"));
+                    std::fs::write(&staged, [n]).unwrap();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        sink.finish(&staged, host, clip).unwrap()
+                    })
+                })
+                .collect();
+            let places: std::collections::HashSet<_> = jobs.into_iter().map(|j| j.join().unwrap()).collect();
+            assert_eq!(places.len(), 32);
+            let contents: std::collections::HashSet<_> = places.into_iter().map(|p| std::fs::read(p).unwrap()).collect();
+            assert_eq!(contents.len(), 32);
+        });
+        assert!(sink.finish(&dir.path().join("missing.part"), &host, &clip).is_err());
+        assert_eq!(std::fs::read_dir(sink.dir(&host, &clip)).unwrap().count(), 32);
     }
 
     #[test]
