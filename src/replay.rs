@@ -24,6 +24,7 @@ use crate::writer::{Packet, Payload};
 const SEGMENT: u64 = 64 * 1024 * 1024;
 /// How much gets written before it's pushed to disk and dropped from memory.
 const FLUSH_EVERY: u64 = 4 * 1024 * 1024;
+const MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 /// Audio older than the buffer plus this many seconds goes, video or not.
 /// The slack's for one stale-audio trim to cover a second or so of audio,
 /// rather than running one per packet.
@@ -118,6 +119,10 @@ pub fn audio_pos(pts: i64, fps: i64) -> i64 {
 
 impl Ring {
     pub fn new(secs: u32, fps: u32) -> Self {
+        let spill = Spill::new();
+        if spill.is_none() {
+            log::warn!("couldn't store the replay buffer on disk; clips may be shorter, using at most 64 MiB of memory");
+        }
         Self {
             keep: secs as i64 * fps as i64,
             fps: fps as i64,
@@ -126,7 +131,7 @@ impl Ring {
             newest: None,
             newest_audio: 0,
             bytes: 0,
-            spill: Spill::new(),
+            spill,
         }
     }
 
@@ -145,7 +150,7 @@ impl Ring {
             match spill.put(bytes) {
                 Ok(on_disk) => p.data = on_disk,
                 Err(e) => {
-                    log::warn!("replay buffer: couldn't write to disk ({e}), keeping it in memory");
+                    log::warn!("couldn't write the replay buffer to disk ({e}); clips may be shorter, using at most 64 MiB of memory");
                     self.spill = None;
                 }
             }
@@ -162,6 +167,15 @@ impl Ring {
         self.bytes += p.data.len();
         self.packets.push_back(p);
         self.trim();
+        if self.spill.is_none() {
+            while self.bytes > MEMORY_BUDGET {
+                let Some(old) = self.packets.pop_front() else { break };
+                self.bytes -= old.data.len();
+                if old.stream == 0 && old.key {
+                    self.keyframes.pop_front();
+                }
+            }
+        }
     }
 
     /// The keyframe a clip of `frames` frames ending now starts at: the last
@@ -270,6 +284,25 @@ mod tests {
     #[test]
     fn empty_ring_has_no_clip() {
         assert!(Ring::in_memory(30, FPS).snapshot(10).is_none());
+    }
+
+    #[test]
+    fn clips_shorten_to_fit_memory_when_disk_is_unavailable() {
+        let failed_spill = Spill { dir: "/dev/null".into(), file: None, at: 0, flushed: 0 };
+        for spill in [None, Some(failed_spill)] {
+            let mut ring = Ring { spill, ..Ring::in_memory(120, FPS) };
+            let data: Payload = vec![0u8; 1024 * 1024].into();
+            for frame in 0..100 {
+                ring.push(Packet { data: data.clone(), ..video(frame) });
+                assert!(ring.bytes() <= MEMORY_BUDGET, "kept {} bytes", ring.bytes());
+            }
+            assert!(ring.spill.is_none());
+            let (start, clip) = ring.snapshot(120).unwrap();
+            assert!(start > 0);
+            assert!(clip.first().is_some_and(|p| p.stream == 0 && p.key));
+            assert_eq!(clip.last().unwrap().pts, 99);
+            assert!(clip.iter().map(|p| p.data.len()).sum::<usize>() <= MEMORY_BUDGET);
+        }
     }
 
     #[test]
