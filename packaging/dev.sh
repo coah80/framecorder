@@ -23,7 +23,7 @@ fi
 mkdir -p "$OUT"
 
 echo "building the headset release on $FRAME"
-rsync -a --delete --exclude target --exclude .git --exclude app/target --exclude app/gen --exclude sync/target \
+rsync -a --delete --exclude target --exclude .git --exclude app/target --exclude sync/target \
     --exclude dist --exclude installer/node_modules --exclude installer/dist ./ "$FRAME:framecorder-dev/"
 ssh "$FRAME" 'cd framecorder-dev && PATH=$HOME/.cargo/bin:$PATH packaging/release.sh >/dev/null'
 scp -q "$FRAME:framecorder-dev/dist/framecorder-arm64.tar.gz" "$FRAME:framecorder-dev/dist/framecorder-arm64.tar.gz.sha256" "$OUT/"

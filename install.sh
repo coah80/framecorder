@@ -1,4 +1,6 @@
 #!/bin/sh
+# Builds framecorder on the Steam Frame and installs it the way a release
+# does, through framecorder-setup. Run it on the headset, from this folder.
 set -eu
 
 cd "$(dirname "$0")"
