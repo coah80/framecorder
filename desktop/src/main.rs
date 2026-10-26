@@ -33,8 +33,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    px, size, AnyWindowHandle, App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions, WindowBounds,
-    WindowOptions,
+    prelude::*, px, size, AnyWindowHandle, App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions,
+    WindowBounds, WindowOptions,
 };
 
 use app::FrameApp;
@@ -140,7 +140,18 @@ fn main() {
         }
     }
     // the old app syncs from the same state, so it goes before we start
-    let closed_old = demo.is_none() && oldapp::close();
+    let closed_old = if demo.is_none() {
+        match oldapp::close() {
+            Ok(closed) => closed,
+            Err(_) => {
+                show_oldapp_error();
+                rt.shutdown_background();
+                return;
+            }
+        }
+    } else {
+        false
+    };
     #[cfg(target_os = "linux")]
     if demo.is_none() {
         appimage::integrate(assets::APP_ICON_PNG);
@@ -288,4 +299,43 @@ fn open_main(cx: &mut App) {
             }
         }
     }
+}
+
+struct OldAppError;
+
+impl Render for OldAppError {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(32.))
+            .bg(theme::c(theme::BASE))
+            .text_color(theme::c(theme::TEXT))
+            .font_family(theme::BODY)
+            .text_size(px(16.))
+            .child("the old framecorder app is still running and wouldn't close. quit it from its tray icon, then open this one again")
+    }
+}
+
+fn show_oldapp_error() {
+    gpui_platform::application().with_assets(assets::Assets).on_reopen(|cx| cx.activate(true)).run(|cx| {
+        assets::load_fonts(cx);
+        let result = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(600.), px(240.)), cx))),
+                titlebar: Some(TitlebarOptions { title: Some("framecorder".into()), ..Default::default() }),
+                app_id: Some("com.framecorder.desktop".into()),
+                ..Default::default()
+            },
+            |_, cx| cx.new(|_| OldAppError),
+        );
+        if let Err(e) = result {
+            log::error!("couldn't open a window: {e}");
+            cx.quit();
+        } else {
+            cx.activate(true);
+        }
+    });
 }
