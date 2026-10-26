@@ -84,13 +84,13 @@ fn main() {
 
     let mut demo: Option<String> = None;
     let mut minimized = false;
+    let mut after_update = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = Some(args.next().unwrap_or_else(|| "clips".into())),
             "--minimized" => minimized = true,
-            // the old version starting us after an update, nothing to do
-            "--after-update" => {}
+            "--after-update" => after_update = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return;
@@ -121,7 +121,7 @@ fn main() {
     let state_dir = if demo.is_some() { std::env::temp_dir().join("framecorder-demo") } else { sync::state_dir() };
     let _ = std::fs::create_dir_all(&state_dir);
     let _lock = if demo.is_none() {
-        match sync::single_instance(&state_dir) {
+        match sync::single_instance(&state_dir, if after_update { Duration::from_secs(10) } else { Duration::ZERO }) {
             Ok(lock) => Some(lock),
             Err(e) => {
                 eprintln!("{e}");
@@ -197,7 +197,9 @@ fn main() {
                                     TrayMsg::Record => {
                                         cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_record(cx))
                                     }
-                                    TrayMsg::Clip => cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_clip(cx)),
+                                    TrayMsg::Clip => {
+                                        cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_clip(cx))
+                                    }
                                     TrayMsg::Quit => cx.quit(),
                                 });
                             }
