@@ -122,6 +122,10 @@ struct Recording {
 }
 
 impl Recording {
+    fn new(paused: bool) -> Self {
+        Self { recorded: Duration::ZERO, running_since: (!paused).then(Instant::now), stopping: false }
+    }
+
     fn recorded(&self) -> Duration {
         self.recorded + self.running_since.map_or(Duration::ZERO, |s| s.elapsed())
     }
@@ -545,7 +549,7 @@ impl App {
         let Some(r) = &mut self.recorder else { return };
         match r.record() {
             Ok(()) => {
-                self.recording = Some(Recording { recorded: Duration::ZERO, running_since: None, stopping: false });
+                self.recording = Some(Recording::new(r.paused()));
                 self.note = None;
             }
             Err(e) => self.note = Some((format!("Couldn't start: {e:#}"), false)),
@@ -634,7 +638,8 @@ impl App {
             match event {
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
-                    let length = self.recording.take().map_or(Duration::from_secs_f64(secs), |rec| rec.recorded());
+                    self.recording = None;
+                    let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
                 }
                 recorder::Event::Saved { kind: Kind::Clip, path, bytes, secs } => {
@@ -844,4 +849,21 @@ impl App {
 
 fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_clock_starts_from_the_recorder_pause_state() {
+        let paused = Recording::new(true);
+        assert!(paused.running_since.is_none());
+        assert_eq!(paused.recorded(), Duration::ZERO);
+
+        let mut running = Recording::new(false);
+        assert!(running.running_since.is_some());
+        running.running_since = running.running_since.map(|since| since - Duration::from_secs(5));
+        assert!(running.recorded() >= Duration::from_secs(5));
+    }
 }
