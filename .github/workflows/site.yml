@@ -36,8 +36,8 @@ jobs:
         run: |
           mkdir -p site/dl
           for file in framecorder-arm64.tar.gz framecorder-arm64.tar.gz.sha256; do
-            gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl \
-              || echo "no $file on the latest release yet"
+            gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl
+            test -s "site/dl/$file"
           done
       - uses: oven-sh/setup-bun@v2
       - name: the installer site/install downloads
