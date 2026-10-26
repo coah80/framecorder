@@ -515,6 +515,12 @@ impl Core {
         self.engine.start_all();
     }
 
+    pub async fn stop(&self) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.stop().await }).await?;
+        Ok(())
+    }
+
     pub fn statuses(&self) -> Vec<FrameStatus> {
         self.engine.statuses().iter().map(FrameStatus::from).collect()
     }

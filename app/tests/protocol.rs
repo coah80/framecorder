@@ -85,3 +85,47 @@ async fn unpair_forgets_locally_even_when_the_headset_is_older() {
         task.join().unwrap();
     }
 }
+
+struct SettingsEvents(tokio::sync::mpsc::UnboundedSender<(String, Recording)>);
+impl framecorder_app_lib::core::engine::Listener for SettingsEvents {
+    fn status(&self, _: &framecorder_app_lib::core::engine::Status) {}
+    fn progress(&self, _: &framecorder_app_lib::core::engine::Progress) {}
+    fn synced(&self, _: &framecorder_app_lib::core::store::Entry) {}
+    fn recording(&self, host: &str, settings: &Recording) {
+        self.0.send((host.into(), settings.clone())).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn engine_delivers_settings_events_and_stops_its_session() {
+    use framecorder_app_lib::core::{
+        engine::{DirSink, Engine},
+        store::{Host, Hosts},
+    };
+    use std::sync::Arc;
+    let (addr, fp, _requests, task) = support::server(vec![
+        (200, "application/json", json!({"name":"frame","version":1,"fingerprint":"unused"}).to_string()),
+        (200, "text/event-stream", format!("event: settings\ndata: {SETTINGS}\n\n")),
+        (200, "application/json", "[]".into()),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    Hosts::load(dir.path())
+        .upsert(Host { fingerprint: fp.clone(), name: "frame".into(), addr, token: "t".into(), device_id: "d".into(), paired_at: 0 })
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let engine = Engine::new(
+        tokio::runtime::Handle::current(),
+        dir.path(),
+        Arc::new(DirSink { root: dir.path().join("videos") }),
+        Arc::new(SettingsEvents(tx)),
+        "test",
+        "desktop/test".into(),
+    );
+    engine.start_all();
+    let (host, settings) = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv()).await.unwrap().unwrap();
+    assert_eq!(host, fp);
+    assert_eq!(settings.eye.as_deref(), Some("right"));
+    assert_eq!(settings.panels, Some(false));
+    engine.stop().await;
+    task.join().unwrap();
+}
