@@ -77,6 +77,20 @@ class MediaGallery(private val context: Context) : Gallery {
         return uri
     }
 
+    /**
+     * The video as a file on the phone, when this app may read it directly
+     * (it saved it, or it has the videos permission). Share sheets show the
+     * last piece of a content uri, so one made from the file shows its name,
+     * where MediaStore's own would show a number.
+     */
+    fun file(location: String): File? = runCatching {
+        val columns = arrayOf(MediaStore.Video.Media.RELATIVE_PATH, MediaStore.Video.Media.DISPLAY_NAME)
+        resolver.query(Uri.parse(location), columns, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return null
+            File(Environment.getExternalStorageDirectory(), c.getString(0) + c.getString(1)).takeIf { it.canRead() }
+        }
+    }.getOrNull()
+
     /** Whether the file's still there (it may have been deleted in the gallery app). */
     fun exists(location: String): Boolean = runCatching {
         resolver.query(Uri.parse(location), arrayOf(MediaStore.Video.Media._ID), null, null, null)?.use { it.count > 0 } ?: false

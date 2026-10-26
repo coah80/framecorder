@@ -1,8 +1,5 @@
 package com.framecorder.app.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,15 +38,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
+import com.framecorder.app.AppUpdate
 import com.framecorder.app.Prefs
 import com.framecorder.app.sync.SyncHub
 import com.framecorder.app.sync.SyncService
 import com.framecorder.app.ui.common.BottomFade
+import com.framecorder.app.ui.common.FirstAsk
 import com.framecorder.app.ui.common.FloatingNav
+import com.framecorder.app.ui.common.firstAsk
 import com.framecorder.app.ui.diagnose.DiagnoseScreen
 import com.framecorder.app.ui.frame.FrameScreen
 import com.framecorder.app.ui.library.LibraryScreen
@@ -80,7 +79,7 @@ private val tabChange = NavDisplay.transitionSpec { fadeIn(tween(220, 90)) + sca
     NavDisplay.popTransitionSpec { fadeIn(tween(220, 90)) togetherWith fadeOut(tween(90)) }
 
 @Composable
-fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandled: () -> Unit) {
+fun App(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, link: String?, clip: String?, onIntentHandled: () -> Unit) {
     val backStack = remember {
         mutableStateListOf<Screen>(if (hub.frames.value.isEmpty()) Screen.Frame() else Screen.Library)
     }
@@ -108,17 +107,32 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
         if (link != null || clip != null) onIntentHandled()
     }
 
-    // after the first pairing: keep syncing with the app closed, and ask to post a note per clip
+    // the first time: one sheet saying why it wants to see your videos and to notify you, then android's own asks
     val context = LocalContext.current
+    var firstAsk by remember { mutableStateOf(!prefs.askedOnce && context.firstAsk().isNotEmpty()) }
+    val askFirst = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+    if (firstAsk) {
+        FirstAsk(
+            wants = context.firstAsk(),
+            onDismiss = {
+                firstAsk = false
+                prefs.setAskedOnce()
+            },
+            onContinue = {
+                firstAsk = false
+                prefs.setAskedOnce()
+                askFirst.launch(context.firstAsk().toTypedArray())
+            },
+        )
+    }
+
+    // after the first pairing: keep syncing with the app closed
     val frames by hub.frames.collectAsStateWithLifecycle()
-    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     var hadFrames by rememberSaveable { mutableStateOf(frames.isNotEmpty()) }
     LaunchedEffect(frames.isNotEmpty()) {
         if (frames.isEmpty() || hadFrames) return@LaunchedEffect
         hadFrames = true
         if (prefs.background.value) runCatching { SyncService.start(context) }
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !granted) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     // pairing from the frame tab scrolls the nav away; it comes back with the new frame
@@ -174,6 +188,7 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
                                 SettingsScreen(
                                     hub = hub,
                                     prefs = prefs,
+                                    appUpdate = appUpdate,
                                     onFrame = { go(Screen.Frame(it)) },
                                     onPair = { push(Screen.Pair()) },
                                 )
@@ -213,6 +228,7 @@ fun App(hub: SyncHub, prefs: Prefs, link: String?, clip: String?, onIntentHandle
                             current = top,
                             frames = hub.frames,
                             busy = hub.busy,
+                            appUpdate = appUpdate.newer,
                             onTab = ::go,
                             modifier = Modifier.navigationBarsPadding().padding(bottom = FloatingToolbarDefaults.ScreenOffset),
                         )

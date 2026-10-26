@@ -369,11 +369,11 @@ fun PlayerScreen(hub: SyncHub, key: String, among: List<String>, onPage: (String
                 onClick = {
                     when {
                         exporting != null -> {}
-                        !trimmed -> share(context, listOf(clip))
+                        !trimmed -> share(context, hub.gallery, listOf(clip))
                         else -> scope.launch {
                             exporting = 0f
                             try {
-                                val file = exportTrim(context, Uri.parse(clip.location), clip.name, trimStart, trimEnd) { exporting = it }
+                                val file = exportTrim(context, Uri.parse(clip.location), clip.key, clip.name, trimStart, trimEnd) { exporting = it }
                                 shareTrim(context, file, recording = clip.kind != "clip")
                             } catch (e: CancellationException) {
                                 throw e

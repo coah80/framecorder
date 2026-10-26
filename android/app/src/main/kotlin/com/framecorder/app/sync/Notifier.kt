@@ -8,21 +8,23 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.framecorder.app.MainActivity
+import com.framecorder.app.Prefs
 import com.framecorder.app.R
 import com.framecorder.app.ui.common.length
 import com.framecorder.app.ui.common.rate
+import com.framecorder.app.ui.common.sendIntent
+import com.framecorder.app.ui.common.shareUri
 import com.framecorder.app.ui.common.size
 import com.framecorder.core.Clip
 import com.framecorder.core.FrameState
 import com.framecorder.core.FrameStatus
 
 /** framecorder's notifications: the quiet one while syncing, and one per new clip. */
-class Notifier(private val context: Context) {
+class Notifier(private val context: Context, private val prefs: Prefs) {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
     init {
@@ -126,15 +128,9 @@ class Notifier(private val context: Context) {
 
     /** One per clip that lands, with its picture, share and open. */
     fun clipArrived(clip: Clip, from: String?, gallery: MediaGallery) {
-        if (!canPost()) return
+        if (!canPost() || !prefs.clipNotes.value) return
         val what = if (clip.kind == "clip") "clip" else "recording"
-        val share = Intent.createChooser(
-            Intent(Intent.ACTION_SEND)
-                .setType("video/mp4")
-                .putExtra(Intent.EXTRA_STREAM, Uri.parse(clip.location))
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-            "share $what",
-        )
+        val share = Intent.createChooser(sendIntent(listOf(shareUri(context, gallery, clip) to clip.name), title = clip.name), "share $what")
         val sharePending = PendingIntent.getActivity(context, clip.key.hashCode() + 1, share, PendingIntent.FLAG_IMMUTABLE)
         val builder = NotificationCompat.Builder(context, CLIPS)
             .setSmallIcon(R.drawable.ic_stat_framecorder)

@@ -437,7 +437,7 @@ fun LibraryScreen(
                 allPicked = selected.size == shown.size,
                 onSelectAll = { picked = if (selected.size == shown.size) emptySet() else shown.map { it.key }.toSet() },
                 onDelete = delete,
-                onShare = { share(context, selected) },
+                onShare = { share(context, hub.gallery, selected) },
             )
         }
     }

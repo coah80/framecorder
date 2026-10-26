@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="trims" path="trims/" />
+    <!-- the saved videos, so a share carries the file name -->
+    <external-path name="videos" path="Movies/framecorder/" />
 </paths>
