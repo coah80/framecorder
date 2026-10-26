@@ -150,7 +150,7 @@ pub fn library(engine: &Engine) -> Vec<Clip> {
 }
 
 /// only one of us syncs at a time, two would download everything twice
-pub fn single_instance(state_dir: &Path) -> Result<std::fs::File, String> {
+pub fn single_instance(state_dir: &Path, wait: std::time::Duration) -> Result<std::fs::File, String> {
     let path = state_dir.join("desktop.lock");
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -158,16 +158,24 @@ pub fn single_instance(state_dir: &Path) -> Result<std::fs::File, String> {
         .write(true)
         .open(&path)
         .map_err(|e| format!("can't open {}: {e}", path.display()))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(std::fs::TryLockError::WouldBlock) => {
-            // the running one watches for this and brings its window up
-            let _ = std::fs::write(show_marker(state_dir), b"");
-            Err("framecorder is already open, bringing it up".into())
-        }
-        Err(std::fs::TryLockError::Error(e)) => {
-            log::warn!("couldn't lock {}: {e}, carrying on", path.display());
-            Ok(file)
+    let start = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < wait => {
+                std::thread::sleep(std::time::Duration::from_millis(50).min(wait.saturating_sub(start.elapsed())));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if wait.is_zero() {
+                    let _ = std::fs::write(show_marker(state_dir), b"");
+                    return Err("framecorder is already open, bringing it up".into());
+                }
+                return Err("the old framecorder app hasn't finished closing. open framecorder again".into());
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                log::warn!("couldn't lock {}: {e}, carrying on", path.display());
+                return Ok(file);
+            }
         }
     }
 }
@@ -175,4 +183,28 @@ pub fn single_instance(state_dir: &Path) -> Result<std::fs::File, String> {
 /// a file the second launch leaves, so the first one knows to show itself
 pub fn show_marker(state_dir: &Path) -> PathBuf {
     state_dir.join("show")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn instance_lock_handoff() {
+        let dir = std::env::temp_dir().join(format!("framecorder-instance-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = single_instance(&dir, Duration::ZERO).unwrap();
+        assert!(single_instance(&dir, Duration::ZERO).unwrap_err().contains("already open"));
+        assert!(show_marker(&dir).exists());
+        std::fs::remove_file(show_marker(&dir)).unwrap();
+
+        assert!(single_instance(&dir, Duration::from_millis(1)).unwrap_err().contains("hasn't finished closing"));
+        assert!(!show_marker(&dir).exists());
+        drop(old);
+        let replacement = single_instance(&dir, Duration::from_secs(10)).unwrap();
+        assert!(!show_marker(&dir).exists());
+        drop(replacement);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
