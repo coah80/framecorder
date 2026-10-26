@@ -134,7 +134,7 @@ async fn checks(engine: Arc<Engine>, host: Host, tx: async_channel::Sender<(usiz
 
     let answers = format!("answers at {}", ip_of(&host.addr));
     put(1, &answers, "asking...".into(), Outcome::Running);
-    let problem = match Client::pinned(&host.addr, &host.fingerprint) {
+    let problem = match Client::pinned(&host.addr, &host.fingerprint, engine.app()) {
         Ok(client) => client.with_token(&host.token).hello().await.err().map(|e| e.to_string()),
         Err(e) => Some(e.to_string()),
     };
@@ -175,7 +175,7 @@ async fn checks(engine: Arc<Engine>, host: Host, tx: async_channel::Sender<(usiz
 
     put(3, BY_KNOCKING, format!("checking {}...", nets.join(", ")), Outcome::Running);
     let mut direct = None;
-    discover::sweep(SWEEP, |f| {
+    discover::sweep(SWEEP, engine.app(), |f| {
         let it = f.fingerprint == host.fingerprint;
         if it {
             direct = Some(f);

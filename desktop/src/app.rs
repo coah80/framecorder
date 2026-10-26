@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use framecorder_app_lib::core::discover::{self, Found};
-use framecorder_app_lib::core::engine::{Progress, State, Status};
+use framecorder_app_lib::core::engine::{Forgot, Progress, State, Status};
 use framecorder_app_lib::core::pairlink;
 use framecorder_app_lib::core::store::Entry;
 use gpui::{
@@ -288,6 +288,7 @@ impl FrameApp {
                 self.follow_connections(cx);
             }
             Msg::Remote(fp, remote) => self.on_remote(&fp, remote, cx),
+            Msg::Recording(fp, settings) => self.on_recording(&fp, settings, cx),
             Msg::About(fp, about) => self.on_about(&fp, about, cx),
             Msg::Progress(p) => {
                 let switched = self.progress.as_ref().is_none_or(|old| old.id != p.id);
@@ -509,28 +510,42 @@ impl FrameApp {
     pub fn unpair(&mut self, fingerprint: &str, cx: &mut Context<Self>) {
         self.unpairing = None;
         let name = self.statuses.iter().find(|s| s.fingerprint == fingerprint).map(|s| s.name.clone());
-        let done = if self.demo {
+        if self.demo {
             self.statuses.retain(|s| s.fingerprint != fingerprint);
-            true
-        } else {
-            match self.core.engine.unpair(fingerprint) {
-                Ok(()) => true,
-                Err(e) => {
-                    self.toast(format!("couldn't unpair it: {e}"), cx);
-                    false
+            self.forgot(fingerprint, name, Forgot::Both, cx);
+            return;
+        }
+        let (engine, fp) = (self.core.engine.clone(), fingerprint.to_string());
+        let job = self.core.rt.spawn(async move { engine.unpair(&fp).await });
+        let fp = fingerprint.to_string();
+        cx.spawn(async move |this, cx| {
+            let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
+            let _ = this.update(cx, |app, cx| match res {
+                Ok(result) => app.forgot(&fp, name, result, cx),
+                Err(e) => app.toast(format!("couldn't unpair it: {e}"), cx),
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn forgot(&mut self, fingerprint: &str, name: Option<String>, result: Forgot, cx: &mut Context<Self>) {
+        self.refresh();
+        self.live.remove(fingerprint);
+        if self.frame.as_deref() == Some(fingerprint) {
+            self.frame = None;
+        }
+        self.sync_tray();
+        match result {
+            Forgot::LocalOnly => self.toast(
+                "forgotten here. the frame still lists this device until you remove it in framecorder's sync settings on the headset.",
+                cx,
+            ),
+            Forgot::Both => {
+                if let Some(name) = name {
+                    self.toast(format!("unpaired {name}"), cx);
                 }
             }
-        };
-        self.refresh();
-        if done {
-            self.live.remove(fingerprint);
-            if self.frame.as_deref() == Some(fingerprint) {
-                self.frame = None;
-            }
-            self.sync_tray();
-        }
-        if let Some(name) = name.filter(|_| done) {
-            self.toast(format!("unpaired {name}"), cx);
         }
         if self.statuses.is_empty() && !self.demo {
             self.open_pair(None, cx);
@@ -812,10 +827,12 @@ impl FrameApp {
         // that drop multicast), a few seconds at a time, for as long as this
         // screen's up
         let rt = self.core.rt.clone();
+        let app = self.core.engine.app().to_string();
         p.tasks.push(cx.spawn(async move |_, cx| loop {
             let tx = tx.clone();
+            let app = app.clone();
             let job = rt.spawn(async move {
-                discover::look(Duration::from_secs(6), true, move |f| tx.try_send(f).is_ok()).await;
+                discover::look(Duration::from_secs(6), true, &app, move |f| tx.try_send(f).is_ok()).await;
             });
             let _ = job.await;
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -969,7 +986,8 @@ impl FrameApp {
         self.pairing.error = None;
         cx.notify();
         let shown = addr.clone();
-        let job = self.core.rt.spawn(async move { discover::identify(&addr).await });
+        let app = self.core.engine.app().to_string();
+        let job = self.core.rt.spawn(async move { discover::identify(&addr, &app).await });
         cx.spawn_in(window, async move |this, cx| {
             let found = job.await.ok().flatten();
             let _ = this.update_in(cx, |app, window, cx| {
