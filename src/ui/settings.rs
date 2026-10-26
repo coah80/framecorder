@@ -246,6 +246,7 @@ mod tests {
     #[test]
     fn clip_length_round_trips() {
         let dir = std::env::temp_dir().join(format!("framecorder-settings-{}", std::process::id()));
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
         std::env::set_var("XDG_CONFIG_HOME", &dir);
         // Nothing saved yet: a new user, who gets the setup.
         assert!(!Settings::load().onboarded);
@@ -259,6 +260,19 @@ mod tests {
         assert_eq!(off.clip_secs, 60);
         std::fs::write(dir.join("framecorder/ui.conf"), "clip=off\n").unwrap();
         assert_eq!(Settings::load().clipping(), None);
+        let initial = Settings { onboarded: true, ..s };
+        initial.save();
+        let mut app = super::super::App::new(initial, false, false);
+        let changed = Settings { mic: false, quality: Quality::Standard, ..initial };
+        changed.save();
+        assert!(app.prepare_recording().is_ok());
+        assert_eq!(app.settings, changed);
+        assert!(app.settings_checked.elapsed() < super::super::SETTINGS_EVERY);
+        if let Some(previous) = previous {
+            std::env::set_var("XDG_CONFIG_HOME", previous);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

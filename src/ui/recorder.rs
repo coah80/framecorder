@@ -260,6 +260,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remote_record_retries_until_the_old_recorder_has_stopped() {
+        let settings = Settings { onboarded: true, ..Settings::default() };
+        let mut app = super::super::App::new(settings, false, false);
+        let mut child = Command::new("cat").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let (_, events) = mpsc::channel();
+        app.recorder = Some(Recorder {
+            stdin: child.stdin.take(),
+            child,
+            events,
+            log: PathBuf::new(),
+            args: vec!["previous settings".into()],
+            replay: settings.clipping(),
+            paused: false,
+            quitting: None,
+        });
+        let result = app.from_phone(super::super::remote::Command::Record, "a phone");
+        let mut recorder = app.recorder.take().unwrap();
+        recorder.stdin = None;
+        let output = recorder.child.wait_with_output().unwrap();
+        assert!(result.contains("try Record again"), "{result}");
+        assert!(app.recording.is_none());
+        assert_eq!(output.stdout, b"quit\n");
+    }
+
+    #[test]
     fn parses_what_the_recorder_says() {
         assert_eq!(parse_event("recording /home/a/x.mp4"), Some(Event::Started("/home/a/x.mp4".into())));
         assert_eq!(
