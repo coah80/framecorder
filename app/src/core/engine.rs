@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -124,6 +124,8 @@ pub struct Engine {
     device_name: String,
     app: String,
     running: Mutex<HashMap<String, Running>>,
+    transfers: Mutex<HashMap<String, (u64, Progress)>>,
+    next_transfer: AtomicU64,
     statuses: Mutex<HashMap<String, Status>>,
     updates: Mutex<HashMap<String, UpdateStatus>>,
     requested_updates: Mutex<HashMap<String, Option<String>>>,
@@ -138,6 +140,18 @@ pub struct Engine {
 
 pub fn now_unix() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+struct Transfer<'a> {
+    engine: &'a Engine,
+    fingerprint: String,
+    generation: u64,
+}
+
+impl Drop for Transfer<'_> {
+    fn drop(&mut self) {
+        self.engine.clear_transfer(&self.fingerprint, Some(self.generation));
+    }
 }
 
 impl Engine {
@@ -158,6 +172,8 @@ impl Engine {
             device_name: device_name.to_string(),
             app,
             running: Mutex::new(HashMap::new()),
+            transfers: Mutex::new(HashMap::new()),
+            next_transfer: AtomicU64::new(0),
             statuses: Mutex::new(HashMap::new()),
             updates: Mutex::new(HashMap::new()),
             requested_updates: Mutex::new(HashMap::new()),
@@ -255,6 +271,9 @@ impl Engine {
         if let Some(r) = self.running.lock().unwrap().remove(fingerprint) {
             r.task.abort();
         }
+        self.clear_transfer(fingerprint, None);
+        self.listener.remote(fingerprint, None);
+        self.listener.about(fingerprint, None);
         let remote = async {
             let host = host.as_ref().ok_or_else(|| ApiError::Other("that frame isn't paired".into()))?;
             Client::pinned(&host.addr, fingerprint, &self.app)?.with_token(&host.token).unpair().await
@@ -530,7 +549,6 @@ impl Engine {
             e = self.download_all(&client, &host, rx) => e,
             e = self.watch_updates(&client, &host) => e,
         };
-        self.listener.busy(false);
         self.listener.remote(&host.fingerprint, None);
         self.listener.about(&host.fingerprint, None);
         (true, err)
@@ -609,6 +627,42 @@ impl Engine {
         Ok(())
     }
 
+    fn begin_transfer(&self, progress: Progress) -> Transfer<'_> {
+        let generation = self.next_transfer.fetch_add(1, Ordering::Relaxed);
+        let fingerprint = progress.fingerprint.clone();
+        let mut transfers = self.transfers.lock().unwrap();
+        let was_empty = transfers.is_empty();
+        transfers.insert(fingerprint.clone(), (generation, progress));
+        if was_empty {
+            self.listener.busy(true);
+        }
+        Transfer { engine: self, fingerprint, generation }
+    }
+
+    fn transfer_progress(&self, progress: &Progress, generation: u64) {
+        let mut transfers = self.transfers.lock().unwrap();
+        if let Some((active, current)) = transfers.get_mut(&progress.fingerprint) {
+            if *active != generation {
+                return;
+            }
+            *current = progress.clone();
+            self.listener.progress(progress);
+        }
+    }
+
+    fn clear_transfer(&self, fingerprint: &str, generation: Option<u64>) {
+        let mut transfers = self.transfers.lock().unwrap();
+        if transfers.get(fingerprint).is_none_or(|(current, _)| generation.is_some_and(|g| g != *current)) {
+            return;
+        }
+        transfers.remove(fingerprint);
+        if let Some((_, progress)) = transfers.values().next() {
+            self.listener.progress(progress);
+        } else {
+            self.listener.busy(false);
+        }
+    }
+
     async fn download_all(&self, client: &Client, host: &Host, mut rx: mpsc::UnboundedReceiver<RemoteClip>) -> ApiError {
         // the smallest file that didn't fit, while the rest still get their turn
         let mut full: Option<ApiError> = None;
@@ -616,7 +670,6 @@ impl Engine {
             if self.index.lock().unwrap().contains(&host.fingerprint, &clip.id) {
                 continue;
             }
-            self.listener.busy(true);
             match self.download_one(client, host, &clip, rx.len()).await {
                 Ok(()) => {}
                 // gone from the Frame in the meantime, nothing to get
@@ -632,7 +685,6 @@ impl Engine {
                 Err(e) => return e,
             }
             if rx.is_empty() {
-                self.listener.busy(false);
                 if let Some(e) = full.take() {
                     return e;
                 }
@@ -645,7 +697,6 @@ impl Engine {
         let part = self.sink.staging(host, clip);
         let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0).min(clip.size);
         space::room_for(clip.size, have, self.sink.copies(), space::free(&part))?;
-        let listener = self.listener.clone();
         let mut progress = Progress {
             fingerprint: host.fingerprint.clone(),
             id: clip.id.clone(),
@@ -654,11 +705,12 @@ impl Engine {
             total: clip.size,
             queued,
         };
+        let transfer = self.begin_transfer(progress.clone());
         client
             .download(clip, &part, |done, total| {
                 progress.done = done;
                 progress.total = total;
-                listener.progress(&progress);
+                self.transfer_progress(&progress, transfer.generation);
             })
             .await?;
 
@@ -812,6 +864,48 @@ mod tests {
         assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(1800));
         engine.requested_updates.lock().unwrap().insert(host.fingerprint.clone(), None);
         assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(4));
+    }
+
+    fn progress(fingerprint: &str) -> Progress {
+        Progress { fingerprint: fingerprint.into(), id: "r-test".into(), name: "test.mp4".into(), done: 0, total: 10, queued: 0 }
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_frame_keeps_the_other_transfer_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = Arc::new(TestListener::default());
+        let engine = engine(dir.path(), listener.clone());
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task_engine = engine.clone();
+        let task = tokio::spawn(async move {
+            let _transfer = task_engine.begin_transfer(progress("first"));
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        let second = engine.begin_transfer(progress("second"));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(*listener.busy.lock().unwrap(), [true]);
+        assert_eq!(engine.transfers.lock().unwrap().len(), 1);
+        drop(second);
+        assert_eq!(*listener.busy.lock().unwrap(), [true, false]);
+        assert!(engine.transfers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unpair_clears_busy_and_late_cancellation_keeps_a_new_transfer() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = Arc::new(TestListener::default());
+        let engine = engine(dir.path(), listener.clone());
+        let old = engine.begin_transfer(progress("frame"));
+        assert_eq!(engine.unpair("frame").await.unwrap(), Forgot::LocalOnly);
+        assert_eq!(*listener.busy.lock().unwrap(), [true, false]);
+        let new = engine.begin_transfer(progress("frame"));
+        drop(old);
+        assert_eq!(*listener.busy.lock().unwrap(), [true, false, true]);
+        drop(new);
+        assert_eq!(*listener.busy.lock().unwrap(), [true, false, true, false]);
     }
 
     #[test]
