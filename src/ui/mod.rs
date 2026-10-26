@@ -708,7 +708,7 @@ impl App {
     fn check_remote(&mut self) {
         if let Some((command, from)) = self.remote.poll() {
             log::info!("{from} asked to {command:?}");
-            let result = self.from_phone(command, &from);
+            let result = self.handle_remote(command, &from);
             self.remote.answer(result);
             self.dirty = true;
         }
@@ -739,7 +739,7 @@ impl App {
     }
 
     /// "ok", or why not, in words for the phone.
-    fn from_phone(&mut self, command: remote::Command, from: &str) -> String {
+    fn handle_remote(&mut self, command: remote::Command, from: &str) -> String {
         if !self.settings.onboarded {
             return "finish setting up framecorder on the headset first".into();
         }
@@ -875,21 +875,4 @@ impl App {
 
 fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recording_clock_starts_from_the_recorder_pause_state() {
-        let paused = Recording::new(true);
-        assert!(paused.running_since.is_none());
-        assert_eq!(paused.recorded(), Duration::ZERO);
-
-        let mut running = Recording::new(false);
-        assert!(running.running_since.is_some());
-        running.running_since = running.running_since.map(|since| since - Duration::from_secs(5));
-        assert!(running.recorded() >= Duration::from_secs(5));
-    }
 }

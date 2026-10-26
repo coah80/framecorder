@@ -259,23 +259,51 @@ fn log_path() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn remote_record_retries_until_the_old_recorder_has_stopped() {
-        let settings = Settings { onboarded: true, ..Settings::default() };
-        let mut app = super::super::App::new(settings, false, false);
+    fn test_recorder(settings: &Settings) -> (Recorder, mpsc::Sender<Event>) {
         let mut child = Command::new("cat").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        let (_, events) = mpsc::channel();
-        app.recorder = Some(Recorder {
+        let (tx, events) = mpsc::channel();
+        let recorder = Recorder {
             stdin: child.stdin.take(),
             child,
             events,
             log: PathBuf::new(),
-            args: vec!["previous settings".into()],
+            args: settings.recorder_args(false),
             replay: settings.clipping(),
             paused: false,
             quitting: None,
-        });
-        let result = app.from_phone(super::super::remote::Command::Record, "a phone");
+        };
+        (recorder, tx)
+    }
+
+    #[test]
+    fn recording_clock_and_saved_note_follow_the_recorder() {
+        let mut observed = Vec::new();
+        for paused in [true, false] {
+            let settings = Settings { onboarded: true, ..Settings::default() };
+            let mut app = super::super::App::new(settings, false, false);
+            let (mut recorder, events) = test_recorder(&settings);
+            recorder.paused = paused;
+            app.recorder = Some(recorder);
+            app.toggle_recording();
+            let running = app.recording.as_ref().unwrap().running_since.is_some();
+            events.send(parse_event("saved recording 100 7.0 /tmp/test.mp4").unwrap()).unwrap();
+            app.check_recorder();
+            let mut recorder = app.recorder.take().unwrap();
+            recorder.quit();
+            recorder.child.wait_with_output().unwrap();
+            observed.push((running, app.recording.is_none(), app.note.as_ref().unwrap().0.contains("00:00:07")));
+        }
+        assert_eq!(observed, [(false, true, true), (true, true, true)]);
+    }
+
+    #[test]
+    fn remote_record_retries_until_the_old_recorder_has_stopped() {
+        let settings = Settings { onboarded: true, ..Settings::default() };
+        let mut app = super::super::App::new(settings, false, false);
+        let (mut recorder, _) = test_recorder(&settings);
+        recorder.args = vec!["previous settings".into()];
+        app.recorder = Some(recorder);
+        let result = app.handle_remote(super::super::remote::Command::Record, "a phone");
         let mut recorder = app.recorder.take().unwrap();
         recorder.stdin = None;
         let output = recorder.child.wait_with_output().unwrap();
