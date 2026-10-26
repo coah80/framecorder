@@ -70,6 +70,7 @@ pub struct Progress {
 
 /// Where downloads go. Plain folders on desktop, MediaStore on Android.
 pub trait Sink: Send + Sync {
+    fn completed(&self, host: &Host, clip: &RemoteClip) -> Result<Option<String>, String>;
     fn staging(&self, host: &Host, clip: &RemoteClip) -> PathBuf;
     /// Moves a complete download to its final place and says where that is.
     fn finish(&self, staged: &Path, host: &Host, clip: &RemoteClip) -> Result<String, String>;
@@ -694,27 +695,32 @@ impl Engine {
     }
 
     async fn download_one(&self, client: &Client, host: &Host, clip: &RemoteClip, queued: usize) -> Result<(), ApiError> {
-        let part = self.sink.staging(host, clip);
-        let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0).min(clip.size);
-        space::room_for(clip.size, have, self.sink.copies(), space::free(&part))?;
-        let mut progress = Progress {
-            fingerprint: host.fingerprint.clone(),
-            id: clip.id.clone(),
-            name: clip.name.clone(),
-            done: 0,
-            total: clip.size,
-            queued,
-        };
-        let transfer = self.begin_transfer(progress.clone());
-        client
-            .download(clip, &part, |done, total| {
-                progress.done = done;
-                progress.total = total;
-                self.transfer_progress(&progress, transfer.generation);
-            })
-            .await?;
+        let location = match self.sink.completed(host, clip).map_err(ApiError::Other)? {
+            Some(location) => location,
+            None => {
+                let part = self.sink.staging(host, clip);
+                let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0).min(clip.size);
+                space::room_for(clip.size, have, self.sink.copies(), space::free(&part))?;
+                let mut progress = Progress {
+                    fingerprint: host.fingerprint.clone(),
+                    id: clip.id.clone(),
+                    name: clip.name.clone(),
+                    done: 0,
+                    total: clip.size,
+                    queued,
+                };
+                let transfer = self.begin_transfer(progress.clone());
+                client
+                    .download(clip, &part, |done, total| {
+                        progress.done = done;
+                        progress.total = total;
+                        self.transfer_progress(&progress, transfer.generation);
+                    })
+                    .await?;
 
-        let location = self.sink.finish(&part, host, clip).map_err(ApiError::Other)?;
+                self.sink.finish(&part, host, clip).map_err(ApiError::Other)?
+            }
+        };
         let entry = Entry {
             host: host.fingerprint.clone(),
             id: clip.id.clone(),
@@ -764,13 +770,18 @@ pub struct DirSink {
 }
 
 impl DirSink {
-    fn dir(&self, clip: &RemoteClip) -> PathBuf {
+    fn dir(&self, host: &Host, clip: &RemoteClip) -> PathBuf {
+        let root = self.root.join(host_folder(&host.fingerprint));
         if clip.kind == "clip" {
-            self.root.join("clips")
+            root.join("clips")
         } else {
-            self.root.clone()
+            root
         }
     }
+}
+
+pub fn host_folder(fingerprint: &str) -> String {
+    super::tls::normalize_fingerprint(fingerprint).unwrap_or_else(|| super::tls::sha256_hex(fingerprint.as_bytes()))
 }
 
 /// Keeps a file name to its last path component, so a hostile name can't
@@ -786,19 +797,52 @@ pub fn safe_name(name: &str) -> String {
     }
 }
 
+fn split_name(name: &str) -> (&str, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) => (stem, format!(".{ext}")),
+        None => (name, String::new()),
+    }
+}
+
 impl Sink for DirSink {
-    fn staging(&self, host: &Host, clip: &RemoteClip) -> PathBuf {
-        let short = &host.fingerprint[..8.min(host.fingerprint.len())];
-        self.dir(clip).join(format!("{}.{short}.part", safe_name(&clip.name)))
+    fn completed(&self, host: &Host, clip: &RemoteClip) -> Result<Option<String>, String> {
+        let dir = self.dir(host, clip);
+        let name = safe_name(&clip.name);
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("couldn't check the saved videos: {e}")),
+        };
+        let (stem, ext) = split_name(&name);
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("couldn't check the saved video: {e}"))?;
+            let filename = entry.file_name();
+            let filename = filename.to_string_lossy();
+            let numbered = filename
+                .strip_prefix(&format!("{stem} ("))
+                .and_then(|rest| rest.strip_suffix(&format!("){ext}")))
+                .and_then(|n| n.parse::<u64>().ok())
+                .is_some_and(|n| n >= 2);
+            if filename != name && !numbered {
+                continue;
+            }
+            let meta = entry.metadata().map_err(|e| format!("couldn't check the saved video: {e}"))?;
+            if meta.is_file() && meta.len() == clip.size {
+                return Ok(Some(entry.path().to_string_lossy().into_owned()));
+            }
+        }
+        Ok(None)
     }
 
-    fn finish(&self, staged: &Path, _host: &Host, clip: &RemoteClip) -> Result<String, String> {
-        let dir = self.dir(clip);
+    fn staging(&self, host: &Host, clip: &RemoteClip) -> PathBuf {
+        let short = &host.fingerprint[..8.min(host.fingerprint.len())];
+        self.dir(host, clip).join(format!("{}.{short}.part", safe_name(&clip.name)))
+    }
+
+    fn finish(&self, staged: &Path, host: &Host, clip: &RemoteClip) -> Result<String, String> {
+        let dir = self.dir(host, clip);
         let name = safe_name(&clip.name);
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) => (s.to_string(), format!(".{e}")),
-            None => (name.clone(), String::new()),
-        };
+        let (stem, ext) = split_name(&name);
         let mut target = dir.join(&name);
         let mut n = 2;
         while target.exists() {
@@ -908,6 +952,41 @@ mod tests {
         assert_eq!(*listener.busy.lock().unwrap(), [true, false, true, false]);
     }
 
+    #[tokio::test]
+    async fn completed_video_restores_a_missing_index_without_downloading() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = Arc::new(TestListener::default());
+        let engine = engine(dir.path(), listener.clone());
+        let host = host(&"ab".repeat(32));
+        let clip =
+            RemoteClip { id: "c-test".into(), kind: "clip".into(), name: "test.mp4".into(), size: 5, duration_s: Some(2.0), created: 42 };
+        let sink = DirSink { root: dir.path().join("videos") };
+        let path = sink.dir(&host, &clip).join(&clip.name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"video").unwrap();
+        let client = Client::pinned("127.0.0.1:1", &host.fingerprint, "desktop/test").unwrap();
+        engine.download_one(&client, &host, &clip, 0).await.unwrap();
+        let entries = Index::load(dir.path()).list();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "c-test");
+        assert_eq!(entries[0].location, path.to_string_lossy());
+        assert_eq!(entries[0].size, 5);
+        assert_eq!(listener.synced.lock().unwrap().len(), 1);
+        assert!(listener.busy.lock().unwrap().is_empty());
+        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        let other = host_with_fingerprint(&host, &"cd".repeat(32));
+        assert_eq!(sink.completed(&other, &clip).unwrap(), None);
+        std::fs::write(&path, b"wrong size").unwrap();
+        assert_eq!(sink.completed(&host, &clip).unwrap(), None);
+        let numbered = path.with_file_name("test (2).mp4");
+        std::fs::write(&numbered, b"video").unwrap();
+        assert_eq!(sink.completed(&host, &clip).unwrap(), Some(numbered.to_string_lossy().into_owned()));
+    }
+
+    fn host_with_fingerprint(host: &Host, fingerprint: &str) -> Host {
+        Host { fingerprint: fingerprint.into(), ..host.clone() }
+    }
+
     #[test]
     fn names_stay_in_the_folder() {
         assert_eq!(safe_name("2026-09-26_14-00-00.mp4"), "2026-09-26_14-00-00.mp4");
@@ -933,7 +1012,7 @@ mod tests {
         let mut places = Vec::new();
         for _ in 0..2 {
             let part = sink.staging(&host, &clip);
-            assert!(part.starts_with(dir.path().join("clips")));
+            assert!(part.starts_with(dir.path().join(host_folder(&host.fingerprint)).join("clips")));
             std::fs::create_dir_all(part.parent().unwrap()).unwrap();
             std::fs::write(&part, b"x").unwrap();
             places.push(sink.finish(&part, &host, &clip).unwrap());
