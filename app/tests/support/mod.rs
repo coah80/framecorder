@@ -27,6 +27,7 @@ pub fn server(responses: Vec<(u16, &'static str, String)>) -> (String, String, m
     let addr = listener.local_addr().unwrap().to_string();
     let (tx, rx) = mpsc::channel();
     let task = std::thread::spawn(move || {
+        let mut streams = Vec::new();
         for (status, content_type, body) in responses {
             let (stream, _) = listener.accept().unwrap();
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
@@ -38,7 +39,7 @@ pub fn server(responses: Vec<(u16, &'static str, String)>) -> (String, String, m
             let mut length = 0;
             loop {
                 let mut header = String::new();
-                tls.read_line(&mut header).unwrap();
+                assert!(tls.read_line(&mut header).unwrap() > 0);
                 if header == "\r\n" {
                     break;
                 }
@@ -50,13 +51,15 @@ pub fn server(responses: Vec<(u16, &'static str, String)>) -> (String, String, m
             let mut data = vec![0; length];
             tls.read_exact(&mut data).unwrap();
             tx.send(Request { line, headers, body: String::from_utf8(data).unwrap() }).unwrap();
-            write!(
-                tls.get_mut(),
-                "HTTP/1.1 {status} OK\r\nConnection: close\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+            write!(tls.get_mut(), "HTTP/1.1 {status} OK\r\nConnection: close\r\nContent-Type: {content_type}\r\n").unwrap();
+            if content_type != "text/event-stream" {
+                write!(tls.get_mut(), "Content-Length: {}\r\n", body.len()).unwrap();
+            }
+            write!(tls.get_mut(), "\r\n{body}").unwrap();
             tls.get_mut().flush().unwrap();
+            if content_type == "text/event-stream" {
+                streams.push(tls);
+            }
         }
     });
     (addr, fp, rx, task)

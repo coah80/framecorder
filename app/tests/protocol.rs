@@ -122,10 +122,75 @@ async fn engine_delivers_settings_events_and_stops_its_session() {
         "desktop/test".into(),
     );
     engine.start_all();
-    let (host, settings) = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv()).await.unwrap().unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
+    engine.stop().await;
+    task.join().unwrap();
+    let (host, settings) = result.unwrap().unwrap();
     assert_eq!(host, fp);
     assert_eq!(settings.eye.as_deref(), Some("right"));
     assert_eq!(settings.panels, Some(false));
+}
+
+struct UpdateEvents(tokio::sync::mpsc::UnboundedSender<framecorder_app_lib::core::api::UpdateStatus>);
+impl framecorder_app_lib::core::engine::Listener for UpdateEvents {
+    fn status(&self, status: &framecorder_app_lib::core::engine::Status) {
+        if let Some(update) = &status.update {
+            let _ = self.0.send(update.clone());
+        }
+    }
+    fn progress(&self, _: &framecorder_app_lib::core::engine::Progress) {}
+    fn synced(&self, _: &framecorder_app_lib::core::store::Entry) {}
+}
+
+#[tokio::test]
+async fn failed_update_check_retries_the_requested_update_promptly() {
+    use framecorder_app_lib::core::{
+        engine::{DirSink, Engine},
+        store::{Host, Hosts},
+    };
+    use std::sync::Arc;
+    let hello = json!({"name":"frame","version":1,"fingerprint":"unused"}).to_string();
+    let (addr, fp, requests, task) = support::server(vec![
+        (200, "application/json", hello.clone()),
+        (204, "application/json", String::new()),
+        (200, "application/json", hello),
+        (200, "text/event-stream", ": keepalive\n\n".into()),
+        (200, "application/json", "[]".into()),
+        (502, "application/json", r#"{"error":"release check failed"}"#.into()),
+        (200, "application/json", r#"{"installed":"0.2.0","latest":null,"available":false,"updating":false}"#.into()),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    Hosts::load(dir.path())
+        .upsert(Host {
+            fingerprint: fp.clone(),
+            name: "frame".into(),
+            addr: addr.clone(),
+            token: "t".into(),
+            device_id: "d".into(),
+            paired_at: 0,
+        })
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let engine = Engine::new(
+        tokio::runtime::Handle::current(),
+        dir.path(),
+        Arc::new(DirSink { root: dir.path().join("videos") }),
+        Arc::new(UpdateEvents(tx)),
+        "test",
+        "desktop/test".into(),
+    );
+    engine.start_update(&fp).await.unwrap();
+    engine.start_all();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(6), rx.recv()).await;
     engine.stop().await;
+    if result.is_err() {
+        let client = Client::pinned(&addr, &fp, "desktop/test").unwrap();
+        let _ = client.update_status().await;
+    }
     task.join().unwrap();
+    let update = result.expect("a failed update check must retry in four seconds").unwrap();
+    assert_eq!(update.installed, "0.2.0");
+    assert!(!update.updating);
+    let requests: Vec<_> = requests.try_iter().collect();
+    assert_eq!(requests.iter().filter(|r| r.line.starts_with("GET /update ")).count(), 2);
 }
