@@ -214,6 +214,12 @@ impl Devices {
         }
     }
 
+    pub fn update_status(&self, state: &str, error: Option<&str>) {
+        self.change_clients(|clients| {
+            clients.update = serde_json::json!({"state": state, "error": error})
+        });
+    }
+
     pub fn refresh_clients(&self) {
         self.change_clients(|_| {});
     }
