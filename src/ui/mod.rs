@@ -10,6 +10,7 @@ mod paint;
 mod recorder;
 mod remote;
 mod settings;
+mod storage;
 mod text;
 mod texture;
 mod view;
@@ -29,7 +30,8 @@ use recorder::{Kind, Recorder};
 use remote::Remote;
 use settings::Settings;
 use text::Fonts;
-use pairing::{Device, Pairing};
+use pairing::clients::{Transfer, Update};
+use pairing::{Device, Pairing, Presence};
 use view::{Action, Hit, Model, Screen, Section, Status, Step, SyncView};
 
 const KEY: &str = "framecorder.dashboard";
@@ -51,6 +53,8 @@ const SERVER_POLL: Duration = Duration::from_secs(2);
 const CLIP_COOLDOWN: Duration = Duration::from_secs(1);
 /// How often the paired devices get looked up while the tab's on screen.
 const SYNC_POLL: Duration = Duration::from_secs(3);
+/// And while something's moving: a download, an update, a code that's out.
+const SYNC_POLL_BUSY: Duration = Duration::from_secs(1);
 
 static QUIT: AtomicBool = AtomicBool::new(false);
 /// Set when an update replaced this program, to restart into it.
@@ -96,6 +100,10 @@ fn only_one() -> Result<Option<std::fs::File>> {
 struct Sync {
     available: bool,
     devices: Vec<Device>,
+    /// An update of framecorder an app or the timer started.
+    update: Update,
+    /// Which page of the devices list the sync section is on.
+    page: usize,
     /// The code on show while pairing.
     pairing: Option<Result<Pairing, String>>,
     checked: Instant,
@@ -103,7 +111,19 @@ struct Sync {
 
 impl Sync {
     fn look() -> Self {
-        Self { available: pairing::available(), devices: pairing::devices(), pairing: None, checked: Instant::now() }
+        let paired = pairing::paired();
+        Self { available: pairing::available(), devices: paired.devices, update: paired.update, page: 0, pairing: None, checked: Instant::now() }
+    }
+
+    /// Whether something's changing by the second: worth looking more often.
+    fn busy(&self) -> bool {
+        self.pairing.is_some() || self.update == Update::Updating || self.devices.iter().any(|d| d.transfer.is_some())
+    }
+
+    /// Keeps the page on the list after a device went.
+    fn clamp_page(&mut self) {
+        let pages = self.devices.len().div_ceil(view::DEVICES_PER_PAGE).max(1);
+        self.page = self.page.min(pages - 1);
     }
 
     fn stop_pairing(&mut self) {
@@ -159,11 +179,16 @@ struct App {
     unlocked: bool,
     /// An update took the panels' permission away.
     relocked: bool,
+    /// Bytes free for recordings, measured while the home screen's up.
+    free: Option<u64>,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
 /// the look without a headset on. `state` is idle, recording, saved or toast,
 /// a settings section, or a step of the setup (setup-welcome and so on).
+/// For what sync shows: live and sync-live (a download, a device away, one
+/// on the old app), updating, update-failed, low-space, long-name, many and
+/// many-2 (the second page), each with -home for the home screen's card.
 pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut fonts = Fonts::load()?;
     if state == "toast" {
@@ -181,7 +206,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
-        "sync" | "pair" => Screen::Settings(Section::Sync),
+        "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
         "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
         "setup-quality" => Screen::Onboarding(Step::Quality),
@@ -196,15 +221,48 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         _ => settings,
     };
     let sample = Pairing::sample()?;
-    let devices = [Device { id: "a".into(), name: "Pixel 9".into() }, Device { id: "b".into(), name: "COLEPCWIN".into() }];
+    // "many-home" and the like: the same devices, on the home screen.
+    let devices = sample_devices(state.trim_end_matches("-home"));
     let pairing = matches!(state, "pair" | "setup-pair").then_some(Ok(&sample));
-    let sync = SyncView { available: state != "setup-no-sync", devices: &devices, pairing };
+    let update = match state {
+        "updating" => Update::Updating,
+        "update-failed" => Update::Failed(Some("couldn't download the update, the site isn't reachable".into())),
+        _ => Update::Idle,
+    };
+    let page = usize::from(state == "many-2");
+    let sync = SyncView { available: state != "setup-no-sync", devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover = (state == "idle").then_some(Action::Record);
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
-    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked" });
+    let free = Some(if state == "low-space" { 1_400_000_000 } else { 128_400_000_000 });
+    let model = Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked", free };
+    view::draw(&mut canvas, &mut fonts, &model);
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
+}
+
+/// Made up paired devices for the previews: a couple that are just there,
+/// or for the live states, one downloading, one away and one on the old app.
+fn sample_devices(state: &str) -> Vec<Device> {
+    let live = |id: &str, name: &str, presence, old_app, transfer| Device { presence, old_app, transfer, ..Device::paired(id, name) };
+    let getting = Some(Transfer { name: "2026-10-15_12-27-10.mp4".into(), done: 19_200_000, total: 48_000_000 });
+    match state {
+        "live" | "sync-live" | "updating" | "update-failed" | "low-space" => vec![
+            live("a", "Pixel 9", Presence::Connected, false, getting),
+            live("b", "COLEPCWIN", Presence::Away, false, None),
+            live("c", "Sam's MacBook Pro", Presence::Connected, true, None),
+        ],
+        "long-name" => vec![
+            live("a", &"W".repeat(64), Presence::Connected, false, None),
+            live("b", "Sam's work laptop with the long hostname nobody ever shortened", Presence::Away, false, getting),
+        ],
+        "many" | "many-2" => ["Pixel 9", "COLEPCWIN", "Sam's MacBook Pro", "Living room PC", "Galaxy S25", "Work laptop"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| live(&i.to_string(), name, if i % 2 == 0 { Presence::Connected } else { Presence::Away }, false, None))
+            .collect(),
+        _ => vec![Device::paired("a", "Pixel 9"), Device::paired("b", "COLEPCWIN")],
+    }
 }
 
 pub fn run() -> Result<()> {
@@ -400,6 +458,7 @@ impl App {
             clipped_at: None,
             unlocked,
             relocked,
+            free: storage::free_for_recordings(),
         }
     }
 
@@ -442,6 +501,11 @@ impl App {
             Action::FinishSetup => return self.finish_setup(),
             Action::Pair => return self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}"))),
             Action::ClosePair => return self.sync.stop_pairing(),
+            Action::DevicePage(page) => {
+                self.sync.page = page;
+                self.sync.clamp_page();
+                return;
+            }
             Action::RemoveDevice(i) => {
                 if let Some(d) = self.sync.devices.get(i) {
                     match pairing::remove(&d.id) {
@@ -449,7 +513,8 @@ impl App {
                         Err(e) => self.note = Some((format!("Couldn't remove {}: {e:#}", d.name), false)),
                     }
                 }
-                self.sync.devices = pairing::devices();
+                self.sync.devices = pairing::paired().devices;
+                self.sync.clamp_page();
                 return;
             }
             Action::Shape(shape) => s.shape = shape,
@@ -785,21 +850,33 @@ impl App {
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
         }
+        if screen == Screen::Home {
+            self.free = storage::free_for_recordings();
+        }
         self.screen = screen;
         self.hover = None;
         self.dirty = true;
     }
 
     /// Keeps the paired devices up to date, once a second while pairing (so
-    /// the countdown ticks and a new device shows up right away), every few
-    /// seconds otherwise. Runs while the tab's on screen, or with a code out.
+    /// the countdown ticks and a new device shows up right away) or while a
+    /// download or an update is moving, every few seconds otherwise. Runs
+    /// while the tab's on screen, or with a code out.
     fn check_sync(&mut self, visible: bool) {
         let pairing = self.sync.pairing.is_some();
-        let every = if pairing { Duration::from_secs(1) } else { SYNC_POLL };
+        let every = if self.sync.busy() { SYNC_POLL_BUSY } else { SYNC_POLL };
         if self.sync.checked.elapsed() < every {
             return;
         }
         self.sync.checked = Instant::now();
+        if visible && self.screen == Screen::Home {
+            let free = storage::free_for_recordings();
+            let shown = |f: Option<u64>| f.map(|b| view::free_space(b, self.settings.quality.mbps()));
+            if shown(free) != shown(self.free) {
+                self.dirty = true;
+            }
+            self.free = free;
+        }
         let unlocked = crate::setup::panels_unlocked();
         let relocked = crate::setup::relocked();
         if unlocked != self.unlocked || relocked != self.relocked {
@@ -808,18 +885,22 @@ impl App {
             self.dirty = true;
         }
         let available = pairing::available();
-        let devices = pairing::devices();
+        let pairing::Paired { devices, update } = pairing::paired();
         if let Some(new) = devices.iter().find(|d| !self.sync.devices.iter().any(|old| old.id == d.id)) {
             self.note = Some((format!("Paired {}", new.name), true));
             self.toast = Some((format!("Paired {}", new.name), true));
             // That's what the code was for, back to the list.
             self.sync.stop_pairing();
         }
-        if pairing || available != self.sync.available || devices.len() != self.sync.devices.len() {
+        // A download's progress or a device coming and going repaints too,
+        // at most once a second, and only while someone's looking.
+        if pairing || available != self.sync.available || devices != self.sync.devices || update != self.sync.update {
             self.dirty = true;
         }
         self.sync.available = available;
         self.sync.devices = devices;
+        self.sync.update = update;
+        self.sync.clamp_page();
         // Used up by something that didn't get paired, or run out: a fresh
         // one if someone's looking, otherwise that's the end of it.
         if self.sync.pairing.as_ref().is_some_and(|p| p.as_ref().is_ok_and(|p| !p.waiting())) {
@@ -857,7 +938,9 @@ impl App {
         let sync = SyncView {
             available: self.sync.available,
             devices: &self.sync.devices,
+            page: self.sync.page,
             pairing: self.sync.pairing.as_ref().map(|p| p.as_ref().map_err(|e| e.as_str())),
+            update: &self.sync.update,
         };
         Model {
             settings: &self.settings,
@@ -869,6 +952,7 @@ impl App {
             hover: self.hover,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: self.relocked,
+            free: self.free,
         }
     }
 }

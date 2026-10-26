@@ -262,7 +262,8 @@ fn pair(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hi
     for (i, d) in list.iter().take(SHOWN).enumerate() {
         let line = y + 52.0 + i as f32 * 34.0;
         c.fill_circle(x + 6.0, line - 7.0, 5.0, GREEN, 1.0);
-        c.text(f, Face::BodyMedium, 19.0, x + 24.0, line, &d.name, TEXT, 1.0);
+        let name = f.fit(Face::BodyMedium, 19.0, &d.name, inner.x + inner.w - x - 24.0);
+        c.text(f, Face::BodyMedium, 19.0, x + 24.0, line, &name, TEXT, 1.0);
     }
     if list.len() > SHOWN {
         let more = format!("and {} more", list.len() - SHOWN);
