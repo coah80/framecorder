@@ -715,13 +715,21 @@ impl FrameApp {
                     self.toast("this is where it'd restart", cx);
                     return;
                 }
-                match selfupdate::apply_and_restart(&path) {
-                    Ok(()) => cx.quit(),
-                    Err(e) => {
-                        self.desktop = DesktopUpdate::Ready(path);
-                        self.toast(e, cx);
-                    }
-                }
+                let job = cx.background_executor().spawn(async move {
+                    let result = selfupdate::apply_and_restart(&path);
+                    (path, result)
+                });
+                cx.spawn(async move |this, cx| {
+                    let (path, result) = job.await;
+                    let _ = this.update(cx, |app, cx| match result {
+                        Ok(()) => cx.quit(),
+                        Err(e) => {
+                            app.desktop = DesktopUpdate::Ready(path);
+                            app.toast(e, cx);
+                        }
+                    });
+                })
+                .detach();
             }
             other => self.desktop = other,
         }
