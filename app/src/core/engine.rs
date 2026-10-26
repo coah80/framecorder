@@ -126,6 +126,7 @@ pub struct Engine {
     running: Mutex<HashMap<String, Running>>,
     statuses: Mutex<HashMap<String, Status>>,
     updates: Mutex<HashMap<String, UpdateStatus>>,
+    requested_updates: Mutex<HashMap<String, Option<String>>>,
     /// Wakes the update checks, after asking for an update.
     update_nudge: Arc<Notify>,
     finder: Mutex<Option<Arc<dyn Finder>>>,
@@ -159,6 +160,7 @@ impl Engine {
             running: Mutex::new(HashMap::new()),
             statuses: Mutex::new(HashMap::new()),
             updates: Mutex::new(HashMap::new()),
+            requested_updates: Mutex::new(HashMap::new()),
             update_nudge: Arc::new(Notify::new()),
             finder: Mutex::new(None),
             mdns: AtomicBool::new(true),
@@ -263,6 +265,7 @@ impl Engine {
         };
         self.statuses.lock().unwrap().remove(fingerprint);
         self.updates.lock().unwrap().remove(fingerprint);
+        self.requested_updates.lock().unwrap().remove(fingerprint);
         self.hosts.lock().unwrap().remove(fingerprint).map_err(|e| e.to_string())?;
         Ok(forgot)
     }
@@ -550,7 +553,7 @@ impl Engine {
                 Ok(None) => return std::future::pending().await,
                 Err(e) => {
                     log::info!("{}: couldn't check for a framecorder update: {e}", host.name);
-                    UPDATE_CHECK
+                    self.update_wait(&host.fingerprint)
                 }
             };
             tokio::select! {
@@ -560,7 +563,27 @@ impl Engine {
         }
     }
 
-    fn set_update(&self, host: &Host, update: UpdateStatus) {
+    fn update_wait(&self, fingerprint: &str) -> Duration {
+        if self.requested_updates.lock().unwrap().contains_key(fingerprint)
+            || self.updates.lock().unwrap().get(fingerprint).is_some_and(|u| u.updating)
+        {
+            UPDATE_WATCH
+        } else {
+            UPDATE_CHECK
+        }
+    }
+
+    fn set_update(&self, host: &Host, mut update: UpdateStatus) {
+        {
+            let mut requested = self.requested_updates.lock().unwrap();
+            if let Some(installed) = requested.get(&host.fingerprint) {
+                let changed = installed.as_ref().is_some_and(|old| *old != update.installed);
+                if changed || !update.updating {
+                    requested.remove(&host.fingerprint);
+                    update.updating = false;
+                }
+            }
+        }
         let changed = self.updates.lock().unwrap().insert(host.fingerprint.clone(), update.clone()) != Some(update);
         if changed {
             if let Some(status) = self.statuses().into_iter().find(|s| s.fingerprint == host.fingerprint) {
@@ -578,6 +601,7 @@ impl Engine {
         let client = self.connect(&host).await.map_err(|e| e.to_string())?;
         client.start_update().await.map_err(|e| e.to_string())?;
         let current = self.updates.lock().unwrap().get(fingerprint).cloned();
+        self.requested_updates.lock().unwrap().insert(fingerprint.to_string(), current.as_ref().map(|u| u.installed.clone()));
         if let Some(update) = current {
             self.set_update(&host, UpdateStatus { updating: true, ..update });
         }
@@ -737,6 +761,58 @@ impl Sink for DirSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct TestListener {
+        busy: Mutex<Vec<bool>>,
+        synced: Mutex<Vec<Entry>>,
+    }
+
+    impl Listener for TestListener {
+        fn status(&self, _: &Status) {}
+        fn progress(&self, _: &Progress) {}
+        fn synced(&self, entry: &Entry) {
+            self.synced.lock().unwrap().push(entry.clone());
+        }
+        fn busy(&self, busy: bool) {
+            self.busy.lock().unwrap().push(busy);
+        }
+    }
+
+    fn host(fingerprint: &str) -> Host {
+        Host {
+            fingerprint: fingerprint.into(),
+            name: "frame".into(),
+            addr: "127.0.0.1:1".into(),
+            token: "t".into(),
+            device_id: "d".into(),
+            paired_at: 0,
+        }
+    }
+
+    fn engine(dir: &Path, listener: Arc<TestListener>) -> Arc<Engine> {
+        Engine::new(Handle::current(), dir, Arc::new(DirSink { root: dir.join("videos") }), listener, "test", "desktop/test".into())
+    }
+
+    #[tokio::test]
+    async fn unresolved_updates_keep_polling_until_service_or_version_settles() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine(dir.path(), Arc::new(TestListener::default()));
+        let host = host("frame");
+        let update = UpdateStatus { installed: "0.1.1".into(), latest: None, available: false, updating: true };
+        engine.requested_updates.lock().unwrap().insert(host.fingerprint.clone(), Some("0.1.1".into()));
+        engine.set_update(&host, update.clone());
+        assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(4));
+        engine.set_update(&host, UpdateStatus { updating: false, ..update.clone() });
+        assert!(!engine.updates.lock().unwrap()[&host.fingerprint].updating);
+        assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(1800));
+        engine.requested_updates.lock().unwrap().insert(host.fingerprint.clone(), Some("0.1.1".into()));
+        engine.set_update(&host, UpdateStatus { installed: "0.2.0".into(), ..update });
+        assert!(!engine.updates.lock().unwrap()[&host.fingerprint].updating);
+        assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(1800));
+        engine.requested_updates.lock().unwrap().insert(host.fingerprint.clone(), None);
+        assert_eq!(engine.update_wait(&host.fingerprint), Duration::from_secs(4));
+    }
 
     #[test]
     fn names_stay_in_the_folder() {
