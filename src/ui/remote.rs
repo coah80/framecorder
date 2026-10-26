@@ -2,7 +2,7 @@
 //! phone asked for to command.json; the tab does it and writes status.json,
 //! which also tells phones what's going on, recording or not.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -39,6 +39,7 @@ pub struct Remote {
     done: u64,
     result: String,
     published: Option<(Status, u64)>,
+    status_path: Option<PathBuf>,
 }
 
 fn path(name: &str) -> Option<PathBuf> {
@@ -61,7 +62,7 @@ impl Remote {
     /// Whatever was asked for before we started is old news.
     pub fn new() -> Self {
         let done = command_file().and_then(|c| c["id"].as_u64()).unwrap_or(0);
-        Self { seen: modified("command.json"), done, result: "ok".into(), published: None }
+        Self { seen: modified("command.json"), done, result: "ok".into(), published: None, status_path: path("status.json") }
     }
 
     /// A new command and who sent it, if one's come in.
@@ -101,16 +102,12 @@ impl Remote {
 
     /// Writes status.json when something phones care about changed.
     pub fn publish(&mut self, status: &Status) {
-        let Some(file) = path("status.json").filter(|f| f.parent().is_some_and(|d| d.is_dir())) else { return };
-        self.publish_to(&file, status);
-    }
-
-    fn publish_to(&mut self, file: &Path, status: &Status) {
         // the recorded time moves on its own; phones work it out from `at`
         let key = Status { recorded_ms: 0, ..status.clone() };
         if self.published.as_ref().is_some_and(|(s, done)| *s == key && *done == self.done) {
             return;
         }
+        let Some(file) = self.status_path.as_ref().filter(|f| f.parent().is_some_and(|d| d.is_dir())) else { return };
         let body = json!({
             "pid": std::process::id(),
             "ready": status.ready,
@@ -125,7 +122,7 @@ impl Remote {
             "result": self.result,
         });
         let tmp = file.with_extension("json.tmp");
-        match std::fs::write(&tmp, body.to_string()).and_then(|_| std::fs::rename(&tmp, &file)) {
+        match std::fs::write(&tmp, body.to_string()).and_then(|_| std::fs::rename(&tmp, file)) {
             Ok(()) => self.published = Some((key, self.done)),
             Err(e) => log::warn!("couldn't write {}: {e}", file.display()),
         }
@@ -142,12 +139,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("status.json");
         let mut remote = Remote::new();
+        remote.status_path = Some(file.clone());
         for panels in [true, false] {
-            remote.publish_to(&file, &Status { ready: true, panels, ..Status::default() });
+            let status = Status { ready: true, panels, ..Status::default() };
+            remote.publish(&status);
             let body: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
             assert_eq!(body["panels"], panels);
             assert_eq!(body["ready"], true);
             assert_eq!(body["recording"], false);
+            std::fs::remove_file(&file).unwrap();
+            remote.publish(&Status { recorded_ms: 1000, ..status });
+            assert!(!file.exists());
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
