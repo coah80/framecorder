@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString, Window};
 
-use crate::app::{FrameApp, Page};
+use crate::app::{narrow, FrameApp, Page};
 use crate::theme::{self, a, c};
 use crate::widgets::{card, data, icon, primary, spinner, title, wordmark};
 
@@ -13,9 +13,12 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
     }
     let can_cancel = !app.statuses.is_empty() || app.demo;
     let again = app.pairing.replaces.is_some();
-    div().size_full().flex().child(left(again)).child(
+    // both columns tighten in a narrow window, so the steps stay side by side
+    let narrow = narrow(window);
+    let pad = if narrow { 28. } else { 40. };
+    div().size_full().flex().child(left(again, narrow)).child(
         div()
-            .w(px(460.))
+            .w(px(if narrow { 380. } else { 460. }))
             .flex_none()
             .h_full()
             .relative()
@@ -23,14 +26,14 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
             .flex_col()
             .justify_center()
             .gap(px(28.))
-            .px(px(40.))
+            .px(px(pad))
             .when(can_cancel, |d| {
                 d.child(
                     div()
                         .id("cancel")
                         .absolute()
                         .top(px(30.))
-                        .right(px(40.))
+                        .right(px(pad))
                         .text_size(px(13.))
                         .text_color(c(theme::MAUVE))
                         .cursor_pointer()
@@ -119,7 +122,7 @@ fn step_title(text: &str) -> Div {
 }
 
 /// `again` is pairing a frame we already know, whose clips carry over
-fn left(again: bool) -> impl IntoElement {
+fn left(again: bool, narrow: bool) -> impl IntoElement {
     let bullet = |parts: Vec<(&'static str, bool)>| {
         div()
             .flex()
@@ -132,19 +135,20 @@ fn left(again: bool) -> impl IntoElement {
     };
     div()
         .flex_1()
+        .min_w_0()
         .h_full()
         .flex()
         .flex_col()
         .justify_between()
         .gap(px(32.))
-        .px(px(44.))
+        .px(px(if narrow { 32. } else { 44. }))
         .py(px(40.))
         .bg(c(theme::MANTLE))
         .border_r_1()
         .border_color(theme::line())
         .child(wordmark())
         .child(
-            div().flex().flex_col().gap(px(14.)).child(title(if again { "pair it again" } else { "pair your frame" }, 38.)).child(
+            div().flex().flex_col().gap(px(14.)).child(title(if again { "pair it again" } else { "pair your frame" }, if narrow { 30. } else { 38. })).child(
                 div().max_w(px(340.)).text_size(px(15.)).text_color(c(theme::SUBTEXT1)).child(if again {
                     "what's already here stays, and nothing comes down twice."
                 } else {

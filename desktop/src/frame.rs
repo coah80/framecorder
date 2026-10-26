@@ -6,9 +6,9 @@ use std::time::Instant;
 
 use framecorder_app_lib::core::api::{About, Recording, Remote};
 use framecorder_app_lib::core::engine::{State, Status};
-use gpui::{div, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, SharedString, Stateful};
+use gpui::{div, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, SharedString, Stateful, Window};
 
-use crate::app::{status_color, status_text, FrameApp, Page};
+use crate::app::{narrow, status_color, status_text, FrameApp, Page};
 use crate::format;
 use crate::remote;
 use crate::sync::Clip;
@@ -16,6 +16,7 @@ use crate::theme::{self, a, c};
 use crate::widgets::{card, data, dot, icon, label, outline, primary, spinner, switch, title};
 
 const SHAPES: [(&str, &str); 4] = [("wide", "16:9"), ("square", "1:1"), ("tall", "9:16"), ("both", "both eyes")];
+const EYES: [(&str, &str); 2] = [("left", "left eye"), ("right", "right eye")];
 /// 0 is clips off
 const LENGTHS: [(u32, &str); 5] = [(0, "off"), (15, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
 const QUALITIES: [(&str, &str); 3] = [("standard", "standard"), ("high", "high"), ("max", "max")];
@@ -44,10 +45,11 @@ fn mbps(quality: &str) -> u32 {
     }
 }
 
-pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
+pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let Some(s) = app.picked().cloned() else {
         return nothing(cx).into_any_element();
     };
+    let narrow = narrow(window);
     let connected = s.state == State::Connected;
     let live = app.live(&s.fingerprint);
     let remote = live.and_then(|l| l.remote.clone()).filter(|_| connected);
@@ -85,11 +87,11 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
             // side by side, the headset under the remote once the window's too narrow for both
             div()
                 .flex()
-                .flex_wrap()
+                .when(narrow, |d| d.flex_col())
                 .items_stretch()
                 .gap(px(14.))
                 .child(now(&s, remote.as_ref(), elapsed, sending, settings.as_ref(), syncing, cx).flex_1().min_w(px(300.)))
-                .child(headset(connected, about.as_ref())),
+                .child(headset(connected, about.as_ref(), narrow)),
         )
         .child(
             div()
@@ -488,8 +490,15 @@ fn mic_button(fp: &str, settings: Option<&Recording>, cx: &mut Context<FrameApp>
 
 // the headset
 
-fn headset(connected: bool, about: Option<&About>) -> Div {
-    let col = card().w(px(250.)).flex_none().flex().flex_col().gap(px(12.)).p(px(16.)).child(label("the headset"));
+fn headset(connected: bool, about: Option<&About>, narrow: bool) -> Div {
+    let col = card()
+        .when(!narrow, |d| d.w(px(250.)))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .p(px(16.))
+        .child(label("the headset"));
     let quiet = |t: &str| div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(t.to_string());
     match about {
         _ if !connected => col.child(quiet("battery and storage show up once it's connected.")),
@@ -586,7 +595,11 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
     let enabled = connected && settings.is_some();
     let r = settings.cloned().unwrap_or_else(defaults);
     let fp = s.fingerprint.clone();
-    let shape = SHAPES.iter().position(|(v, _)| *v == r.shape).unwrap_or(0);
+    // without the panels unlocked it records steamvr's view, 16:9 from the left eye, whatever was picked
+    let locked = r.panels == Some(false);
+    let shape = if locked { 0 } else { SHAPES.iter().position(|(v, _)| *v == r.shape).unwrap_or(0) };
+    let both = SHAPES[shape].0 == "both";
+    let eye = r.eye.as_deref().map(|e| if locked { 0 } else { EYES.iter().position(|(v, _)| *v == e).unwrap_or(0) });
     let length = if r.clips { LENGTHS.iter().position(|(v, _)| *v == r.clip).unwrap_or(2) } else { 0 };
     let quality = QUALITIES.iter().position(|(v, _)| *v == r.quality).unwrap_or(1);
     let rate = RATES.iter().position(|(v, _)| *v == r.fps).unwrap_or(0);
@@ -595,8 +608,10 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
         let r = r.clone();
         Rc::new(move |i| f(&r, i))
     };
-    let shapes: Vec<Choice> = SHAPES.iter().map(|&(v, l)| Choice { label: l, glyph: Some(v) }).collect();
-    let lengths: Vec<Choice> = LENGTHS.iter().map(|&(_, l)| Choice { label: l, glyph: None }).collect();
+    let shapes: Vec<Choice> =
+        SHAPES.iter().enumerate().map(|(i, &(v, l))| Choice { label: l, glyph: Some(v), off: locked && i > 0 }).collect();
+    let eyes: Vec<Choice> = EYES.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: locked || both }).collect();
+    let lengths: Vec<Choice> = LENGTHS.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: false }).collect();
 
     card()
         .flex()
@@ -611,6 +626,19 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
             with(|r, i| Recording { shape: SHAPES[i].0.into(), ..r.clone() }),
             cx,
         )))
+        // older headsets don't say which eye, and then there's nothing to pick
+        .when_some(eye, |d, eye| {
+            d.child(setting(false, "eye", both.then(|| "both are in the video".into())).child(choices(
+                &fp,
+                "eye",
+                &eyes,
+                eye,
+                enabled,
+                with(|r, i| Recording { eye: Some(EYES[i].0.into()), ..r.clone() }),
+                cx,
+            )))
+        })
+        .when(locked, |d| d.child(locked_note(eye.is_some())))
         .child(setting(false, "clips", Some("the last moments, saved on demand".into())).child(choices(
             &fp,
             "clips",
@@ -639,28 +667,54 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
             cx,
         )))
         .child(
-            setting(false, "sound", None)
-                .child(toggle(
-                    &fp,
-                    "game-audio",
-                    "game audio",
-                    "what you hear in the headset",
-                    r.game_audio,
-                    enabled,
-                    with(|r, _| Recording { game_audio: !r.game_audio, ..r.clone() }),
-                    cx,
-                ))
-                .child(toggle(
-                    &fp,
-                    "mic",
-                    "mic",
-                    "your voice, mixed in",
-                    r.mic,
-                    enabled,
-                    with(|r, _| Recording { mic: !r.mic, ..r.clone() }),
-                    cx,
-                )),
+            // the two switches side by side, one under the other in a narrow window
+            setting(false, "sound", None).child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_wrap()
+                    .gap_x(px(16.))
+                    .gap_y(px(10.))
+                    .child(toggle(
+                        &fp,
+                        "game-audio",
+                        "game audio",
+                        "what you hear in the headset",
+                        r.game_audio,
+                        enabled,
+                        with(|r, _| Recording { game_audio: !r.game_audio, ..r.clone() }),
+                        cx,
+                    ))
+                    .child(toggle(
+                        &fp,
+                        "mic",
+                        "mic",
+                        "your voice, mixed in",
+                        r.mic,
+                        enabled,
+                        with(|r, _| Recording { mic: !r.mic, ..r.clone() }),
+                        cx,
+                    )),
+            ),
         )
+}
+
+/// why the shapes and the eye are greyed out: the panels aren't unlocked on the headset
+fn locked_note(has_eye: bool) -> Div {
+    let what = if has_eye { "square, vertical, both eyes and the eye choice" } else { "square, vertical and both eyes" };
+    div()
+        .flex()
+        .items_start()
+        .gap(px(10.))
+        .px(px(16.))
+        .py(px(10.))
+        .border_t_1()
+        .border_color(theme::line())
+        .text_size(px(12.))
+        .text_color(c(theme::SUBTEXT0))
+        .child(icon("lock", 14., c(theme::PEACH)).mt(px(2.)))
+        .child(div().flex_1().min_w_0().child(format!("{what} need the panels unlocked on the headset; until then it records SteamVR's view.")))
 }
 
 fn setting(first: bool, name: &str, hint: Option<String>) -> Div {
@@ -686,10 +740,12 @@ struct Choice {
     label: &'static str,
     /// a shape to draw the outline of, over the label
     glyph: Option<&'static str>,
+    /// greyed out: the headset can't do it right now
+    off: bool,
 }
 
 fn plain(options: &[(&str, &'static str)]) -> Vec<Choice> {
-    options.iter().map(|&(_, l)| Choice { label: l, glyph: None }).collect()
+    options.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: false }).collect()
 }
 
 /// one row of options with one picked, like the library's filters
@@ -707,6 +763,7 @@ fn choices(fp: &str, name: &str, options: &[Choice], picked: usize, enabled: boo
         .border_color(theme::card_line())
         .children(options.iter().enumerate().map(|(i, o)| {
             let on = i == picked;
+            let can = enabled && !on && !o.off;
             let ink = if on { theme::CRUST } else { theme::SUBTEXT0 };
             let (fp, pick) = (fp.to_string(), pick.clone());
             div()
@@ -723,10 +780,9 @@ fn choices(fp: &str, name: &str, options: &[Choice], picked: usize, enabled: boo
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(c(ink))
                 .when(on, |d| d.bg(c(theme::MAUVE)))
-                .when(enabled && !on, |d| {
-                    d.cursor_pointer().hover(|s| s.text_color(c(theme::MAUVE)).bg(a(theme::MAUVE, 0.08)))
-                })
-                .when(enabled && !on, |d| d.on_click(cx.listener(move |app, _, _, cx| app.change_settings(&fp, pick(i), cx))))
+                .when(o.off, |d| d.opacity(0.4))
+                .when(can, |d| d.cursor_pointer().hover(|s| s.text_color(c(theme::MAUVE)).bg(a(theme::MAUVE, 0.08))))
+                .when(can, |d| d.on_click(cx.listener(move |app, _, _, cx| app.change_settings(&fp, pick(i), cx))))
                 .when_some(o.glyph, |d, g| d.child(shape_glyph(g, ink)))
                 .child(o.label)
         }))
@@ -750,7 +806,7 @@ fn toggle(fp: &str, id: &str, name: &str, sub: &str, on: bool, enabled: bool, pi
     let fp = fp.to_string();
     div()
         .flex_1()
-        .min_w_0()
+        .min_w(px(190.))
         .flex()
         .items_center()
         .gap(px(12.))
