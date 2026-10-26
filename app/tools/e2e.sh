@@ -10,7 +10,15 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 PORT=${PORT:-38699}
-trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$WORK"' EXIT
+SYNC_PID=""
+APP_PID=""
+cleanup() {
+    for pid in "$APP_PID" "$SYNC_PID"; do
+        [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
+    done
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
 
 cargo build -q --release --manifest-path "$ROOT/sync/Cargo.toml"
 cargo build -q --no-default-features --manifest-path "$ROOT/app/Cargo.toml"
@@ -41,6 +49,7 @@ head -c 20000000 /dev/urandom > "$V/clips/2026-09-26_14-00-00.mp4"
 
 HOME="$H" FAKE_SCENE="$WORK/scene" FRAMECORDER_OPENVR_LIB="$WORK/libopenvr_api.so" \
     "$SYNC" --port "$PORT" --no-mdns > "$WORK/daemon.log" 2>&1 &
+SYNC_PID=$!
 for _ in $(seq 50); do [ -f "$S/info.json" ] && break; sleep 0.1; done
 FP=$(sed -n 's/.*"fingerprint": "\([0-9a-f]*\)".*/\1/p' "$S/info.json")
 
@@ -64,14 +73,13 @@ DL="$WORK/dl"
 "$APP" --headless-sync "$DL" --state "$WORK/state" \
     --pair "framecorder://pair?host=127.0.0.1&port=$PORT&fp=$FP&code=111111&name=Frame" > "$WORK/app.log" 2>&1 &
 APP_PID=$!
-EXISTING=""
+EXISTING="$DL/clips/2026-09-26_14-00-00.mp4"
 for _ in $(seq 100); do
-    EXISTING=$(find "$DL" -type f -name '2026-09-26_14-00-00.mp4' -print -quit 2>/dev/null || true)
-    [ -n "$EXISTING" ] && break
+    [ -f "$EXISTING" ] && break
     sleep 0.1
 done
-[ -n "$EXISTING" ] || fail "existing clip didn't download"
-HOST_DL=$(dirname "$(dirname "$EXISTING")")
+[ -f "$EXISTING" ] || fail "existing clip didn't download into clips/"
+HOST_DL="$DL"
 cmp -s "$EXISTING" "$V/clips/2026-09-26_14-00-00.mp4" || fail "existing clip"
 pass "paired, existing clip downloaded"
 
@@ -86,6 +94,30 @@ TOOK=$(( ($(date +%s%N) - START) / 1000000 ))
 cmp -s "$HOST_DL/clips/x.mp4" "$V/clips/x.mp4" || fail "new clip"
 [ "$TOOK" -lt 1000 ] || fail "new clip took ${TOOK}ms"
 pass "rename to .mp4 synced in ${TOOK}ms"
+
+# Losing the index must recover files in the same folders, not download copies.
+for _ in $(seq 100); do
+    grep -q '"id":"c-x"' "$WORK/state/index.json" && break
+    sleep 0.02
+done
+grep -q '"id":"c-x"' "$WORK/state/index.json" || fail "new clip wasn't indexed"
+kill "$APP_PID"; wait "$APP_PID" 2>/dev/null || true
+APP_PID=""
+rm "$WORK/state/index.json"
+"$APP" --headless-sync "$DL" --state "$WORK/state" > "$WORK/recovery.log" 2>&1 &
+APP_PID=$!
+for _ in $(seq 100); do
+    if [ -f "$WORK/state/index.json" ] && grep -q '"id":"c-x"' "$WORK/state/index.json" &&
+        grep -q '"id":"c-2026-09-26_14-00-00"' "$WORK/state/index.json"; then break; fi
+    sleep 0.05
+done
+grep -q '"id":"c-x"' "$WORK/state/index.json" || fail "lost index didn't recover the new clip"
+grep -q '"id":"c-2026-09-26_14-00-00"' "$WORK/state/index.json" || fail "lost index didn't recover the existing clip"
+[ "$(find "$DL" -type f | wc -l)" -eq 2 ] || fail "index recovery created a copy"
+cmp -s "$EXISTING" "$V/clips/2026-09-26_14-00-00.mp4" || fail "recovery changed the existing clip"
+cmp -s "$DL/clips/x.mp4" "$V/clips/x.mp4" || fail "recovery changed the new clip"
+if grep -q 'bytes)' "$WORK/recovery.log"; then fail "recovery downloaded files again"; fi
+pass "index lost, files present: recovered without downloading or numbered copies"
 
 # a big one while a "game" runs (8 MB/s), killed halfway, then resumed
 echo 3 > "$WORK/scene"
@@ -103,6 +135,7 @@ PART=$(stat -c %s "$HOST_DL"/big.mp4.*.part)
 [ "$PART" -gt 0 ] && [ "$PART" -lt 60000000 ] || fail "expected a partial download, got $PART bytes"
 echo 0 > "$WORK/scene"
 "$APP" --headless-sync "$DL" --state "$WORK/state" > "$WORK/app2.log" 2>&1 &
+APP_PID=$!
 for _ in $(seq 300); do [ -f "$HOST_DL/big.mp4" ] && break; sleep 0.1; done
 grep -q "resuming big.mp4 at $PART" "$WORK/app2.log" || fail "didn't resume: $(cat "$WORK/app2.log")"
 cmp -s "$HOST_DL/big.mp4" "$V/big.mp4" || fail "resumed file differs"
