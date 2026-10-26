@@ -715,6 +715,7 @@ impl App {
         let rec = self.recording.as_ref().filter(|r| !r.stopping);
         let status = remote::Status {
             ready: self.settings.onboarded,
+            panels: self.unlocked,
             recording: rec.is_some(),
             running: rec.is_some_and(|r| r.running_since.is_some()),
             recorded_ms: rec.map_or(0, |r| r.recorded().as_millis() as u64),
