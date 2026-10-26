@@ -122,6 +122,16 @@ fn run(args: Args) -> std::io::Result<()> {
         devices.count(),
         identity.fingerprint
     );
+    let updates = Arc::new(update::Updates::new(&paths, devices.clone()));
+    let updating = updates.clone();
+    std::thread::Builder::new()
+        .name("update-watch".into())
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            if let Err(e) = updating.watch() {
+                log::warn!("couldn't watch the update service: {e}");
+            }
+        })?;
     let state = Arc::new(server::State {
         paths: paths.clone(),
         name,
@@ -132,7 +142,7 @@ fn run(args: Args) -> std::io::Result<()> {
         devices,
         pairing: devices::Pairing::new(&paths.pairing()),
         throttle,
-        updates: update::Updates::default(),
+        updates,
         remote: remote::Remote::default(),
         connections: AtomicUsize::new(0),
     });

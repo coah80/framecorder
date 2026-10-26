@@ -72,7 +72,7 @@ Measured on the x86_64 dev box (release build, `/proc/<pid>/stat` and
 | transfer at full speed over localhost (~1.5 GB/s) | ~98% of one core | 5.0 MB |
 
 Full speed on loopback is TLS-bound; over Wi-Fi (tens of MB/s) that scales
-down to a few percent. Threads: 4 idle (accept, inotify, game check, mDNS)
+down to a few percent. Threads: 5 idle (accept, inotify, game check, mDNS, systemd signals)
 plus one per open connection. Binary is ~1.9 MB stripped. On-headset numbers
 are still to be taken (the Frame was offline while this was written).
 
@@ -109,6 +109,8 @@ if it's taken another one is picked and written to info.json).
 | `GET /hello` | `{"name","version":1,"fingerprint"}` |
 | `POST /pair` `{"code","device_name"}` | `{"token","device_id"}`. 403 with a reason for a wrong/expired/missing code, 429 + `Retry-After` after 5 wrong codes in a minute (then even the right code waits) |
 | `DELETE /pair` | 204. Forgets the device identified by its bearer token |
+| `GET /update` | `{"installed","latest":string\|null,"available","updating"}`. An offline check still returns HTTP 200 with the installed version, current service state, and `error` |
+| `POST /update` | Starts the update service. 202 with `{"started":true}`, or 500 with `error` if it cannot start |
 | `GET /clips` | `[{"id","kind":"clip"\|"recording","name","size","duration_s"\|null,"created"}]`, newest first. `id` is `c-<stem>` / `r-<stem>` (hex after `~` for odd names), URL-safe and stable |
 | `GET\|HEAD /clips/{id}/file` | the MP4. `Range: bytes=` (single range, open-ended and suffix too) gets a 206 with `Content-Range`; unsatisfiable gets 416. `ETag` + `If-Range` supported. `Content-Type: video/mp4` |
 | `GET /events` | Server-Sent Events: `event: new` + clip JSON when a file finishes, `event: removed` + `{"id"}`, `event: settings` with the recording settings on connection and whenever they change, `: keepalive` every 25 s. One stream per device; a new one replaces the old |
@@ -141,7 +143,11 @@ A file counts as finished when it's renamed (or written and closed) to
   `{"name","done","total"}`, in bytes, including a resumed offset. Progress
   writes happen at most once a second across all transfers; start, finish,
   connect and disconnect write immediately. The file stays untouched while
-  nothing changes.
+  nothing changes. Update state is `idle`, `updating` while the systemd service
+  runs, or `failed` with an error after an app-started update fails. Systemd
+  signals cover timer updates without polling.
+- `update.json`, ours: remembers app-started update requests and failures across
+  a sync restart during installation.
 - `settings.json`, optional: `delete_after_sync` (bool), `port`, `name`,
   `game_rate_mb`.
 - `cert.pem` / `key.pem` (0600): made with rcgen on first run, reused after.
