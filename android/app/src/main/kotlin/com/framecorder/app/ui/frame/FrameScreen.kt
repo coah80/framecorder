@@ -102,9 +102,10 @@ import com.framecorder.app.ui.theme.DataStyle
 import com.framecorder.app.ui.theme.LocalStatusColors
 import com.framecorder.core.Clip
 import com.framecorder.core.CoreException
+import com.framecorder.core.Forgot
 import com.framecorder.core.FrameState
 import com.framecorder.core.FrameStatus
-import com.framecorder.core.RecordingSettings
+import com.framecorder.core.RecordingPatch
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
@@ -130,25 +131,23 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val connected = frame.state == FrameState.CONNECTED
-    var recording by remember(frame.fingerprint) { mutableStateOf<RecordingSettings?>(null) }
+    val recordings by hub.recordings.collectAsStateWithLifecycle()
+    val recording = recordings[frame.fingerprint]
     var asked by remember(frame.fingerprint) { mutableStateOf(false) }
     LaunchedEffect(frame.fingerprint, connected) {
         if (!connected) return@LaunchedEffect
         try {
-            recording = hub.recording(frame.fingerprint)
+            hub.recording(frame.fingerprint)
             asked = true
         } catch (e: CoreException) {
             // tried again when it reconnects
         }
     }
-    fun change(new: RecordingSettings) {
-        val old = recording
-        recording = new
+    fun change(patch: RecordingPatch) {
         scope.launch {
             try {
-                recording = hub.setRecording(frame.fingerprint, new)
+                hub.setRecording(frame.fingerprint, patch)
             } catch (e: CoreException) {
-                recording = old
                 Toast.makeText(context, "couldn't change that: ${e.reason()}", Toast.LENGTH_LONG).show()
             }
         }
@@ -270,7 +269,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                     sending = sending,
                     onCommand = ::command,
                     mic = recording?.mic,
-                    onMic = { recording?.let { change(it.copy(mic = !it.mic)) } },
+                    onMic = { recording?.let { change(RecordingPatch(mic = !it.mic)) } },
                     onDiagnose = { onDiagnose(frame.fingerprint) },
                 )
             }
@@ -338,8 +337,21 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                 confirmButton = {
                     TextButton(onClick = {
                         unpairing = false
-                        picked = null
-                        hub.unpair(frame.fingerprint)
+                        scope.launch {
+                            try {
+                                val result = hub.unpair(frame.fingerprint)
+                                picked = null
+                                if (result == Forgot.LOCAL_ONLY) {
+                                    Toast.makeText(
+                                        context,
+                                        "forgotten here. the frame still lists this device until you remove it in framecorder's sync settings on the headset.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            } catch (e: CoreException) {
+                                Toast.makeText(context, "couldn't unpair it: ${e.reason()}", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }) { Text("unpair") }
                 },
                 dismissButton = { TextButton(onClick = { unpairing = false }) { Text("keep it") } },
