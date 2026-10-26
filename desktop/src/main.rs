@@ -317,7 +317,11 @@ impl Render for OldAppError {
             .text_color(theme::c(theme::TEXT))
             .font_family(theme::BODY)
             .text_size(px(16.))
-            .child("the old framecorder app is still running and wouldn't close. quit it from its tray icon, then open this one again")
+            .child(
+                gpui::div().w_full().min_w_0().whitespace_normal().child(
+                    "the old framecorder app is still running and wouldn't close. quit it from its tray icon, then open this one again",
+                ),
+            )
     }
 }
 
