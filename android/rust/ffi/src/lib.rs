@@ -311,6 +311,8 @@ pub struct PairLinkInfo {
 /// Where finished downloads go: MediaStore, so they show up in the gallery.
 #[uniffi::export(with_foreign)]
 pub trait Gallery: Send + Sync {
+    fn completed(&self, name: String, size: u64, subdir: String) -> Result<Option<String>, CoreError>;
+
     /// Moves the finished download at `path` into Movies/framecorder/`subdir`
     /// as `name` and returns its content:// uri. Called off the main thread.
     fn save(&self, path: String, name: String, subdir: String) -> Result<String, CoreError>;
@@ -348,7 +350,23 @@ struct GallerySink {
     staging: PathBuf,
 }
 
+impl GallerySink {
+    fn subdir(host: &store::Host, clip: &RemoteClip) -> String {
+        let folder = engine::host_folder(&host.fingerprint);
+        if clip.kind == "clip" {
+            format!("{folder}/clips")
+        } else {
+            folder
+        }
+    }
+}
+
 impl engine::Sink for GallerySink {
+    fn completed(&self, host: &store::Host, clip: &RemoteClip) -> Result<Option<String>, String> {
+        tokio::task::block_in_place(|| self.gallery.completed(engine::safe_name(&clip.name), clip.size, Self::subdir(host, clip)))
+            .map_err(|e| e.to_string())
+    }
+
     fn staging(&self, host: &store::Host, clip: &RemoteClip) -> PathBuf {
         let short = &host.fingerprint[..8.min(host.fingerprint.len())];
         self.staging.join(format!("{short}-{}.part", engine::safe_name(&clip.name)))
@@ -359,11 +377,11 @@ impl engine::Sink for GallerySink {
         2
     }
 
-    fn finish(&self, staged: &Path, _host: &store::Host, clip: &RemoteClip) -> Result<String, String> {
-        let subdir = if clip.kind == "clip" { "clips" } else { "" };
+    fn finish(&self, staged: &Path, host: &store::Host, clip: &RemoteClip) -> Result<String, String> {
+        let subdir = Self::subdir(host, clip);
         let (path, name) = (staged.to_string_lossy().into_owned(), engine::safe_name(&clip.name));
         // the copy can take a while for a long recording
-        tokio::task::block_in_place(|| self.gallery.save(path, name, subdir.into())).map_err(|e| e.to_string())
+        tokio::task::block_in_place(|| self.gallery.save(path, name, subdir)).map_err(|e| e.to_string())
     }
 }
 
