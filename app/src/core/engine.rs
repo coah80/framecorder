@@ -135,6 +135,7 @@ pub struct Engine {
     finder: Mutex<Option<Arc<dyn Finder>>>,
     /// Off where the platform finder covers mDNS (Android).
     mdns: AtomicBool,
+    enabled: AtomicBool,
     /// Per Frame, when it was last swept for.
     swept: Mutex<HashMap<String, Instant>>,
 }
@@ -181,6 +182,7 @@ impl Engine {
             update_nudge: Arc::new(Notify::new()),
             finder: Mutex::new(None),
             mdns: AtomicBool::new(true),
+            enabled: AtomicBool::new(true),
             swept: Mutex::new(HashMap::new()),
         })
     }
@@ -236,6 +238,7 @@ impl Engine {
     }
 
     pub fn start_all(self: &Arc<Self>) {
+        self.enabled.store(true, Ordering::SeqCst);
         for host in self.hosts() {
             self.start(&host.fingerprint);
         }
@@ -243,7 +246,7 @@ impl Engine {
 
     pub fn start(self: &Arc<Self>, fingerprint: &str) {
         let mut running = self.running.lock().unwrap();
-        if running.get(fingerprint).is_some_and(|r| !r.task.is_finished()) {
+        if !self.enabled.load(Ordering::SeqCst) || running.get(fingerprint).is_some_and(|r| !r.task.is_finished()) {
             return;
         }
         let nudge = Arc::new(Notify::new());
@@ -257,6 +260,31 @@ impl Engine {
             }
         });
         running.insert(fingerprint.to_string(), Running { task, nudge });
+    }
+
+    pub async fn stop(&self) {
+        let tasks: Vec<_> = {
+            let mut running = self.running.lock().unwrap();
+            self.enabled.store(false, Ordering::SeqCst);
+            running
+                .drain()
+                .map(|(_, running)| {
+                    running.task.abort();
+                    running.task
+                })
+                .collect()
+        };
+        for task in tasks {
+            let _ = task.await;
+        }
+        let active: Vec<_> = self.transfers.lock().unwrap().keys().cloned().collect();
+        for fingerprint in active {
+            self.clear_transfer(&fingerprint, None);
+        }
+        for host in self.hosts() {
+            self.listener.remote(&host.fingerprint, None);
+            self.listener.about(&host.fingerprint, None);
+        }
     }
 
     /// Skip the backoff and try every Frame right now, sweep included.
@@ -997,6 +1025,33 @@ mod tests {
 
     fn host_with_fingerprint(host: &Host, fingerprint: &str) -> Host {
         Host { fingerprint: fingerprint.into(), ..host.clone() }
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_all_hosts_and_start_restarts_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = Arc::new(TestListener::default());
+        let engine = engine(dir.path(), listener.clone());
+        for fingerprint in ["first", "second"] {
+            engine.hosts.lock().unwrap().upsert(host(fingerprint)).unwrap();
+        }
+        engine.start_all();
+        let old: Vec<_> = engine.running.lock().unwrap().values().map(|r| r.task.abort_handle()).collect();
+        assert_eq!(old.len(), 2);
+        let transfer = engine.begin_transfer(progress("first"));
+        engine.stop().await;
+        assert!(old.iter().all(|task| task.is_finished()));
+        assert!(engine.running.lock().unwrap().is_empty());
+        assert_eq!(*listener.busy.lock().unwrap(), [true, false]);
+        engine.start("first");
+        assert!(engine.running.lock().unwrap().is_empty());
+        engine.start_all();
+        let new: Vec<_> = engine.running.lock().unwrap().values().map(|r| r.task.abort_handle()).collect();
+        assert_eq!(new.len(), 2);
+        drop(transfer);
+        engine.stop().await;
+        assert!(new.iter().all(|task| task.is_finished()));
+        assert_eq!(engine.hosts().len(), 2);
     }
 
     #[test]
