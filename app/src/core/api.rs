@@ -74,6 +74,30 @@ pub struct Recording {
     pub clips: bool,
     /// How long a clip is, in seconds: 15, 30, 60 or 120.
     pub clip: u32,
+    #[serde(default)]
+    pub eye: Option<String>,
+    #[serde(default)]
+    pub panels: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clips: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eye: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -125,7 +149,10 @@ pub enum ApiError {
     /// The Frame said no, with its reason.
     Refused(u16, String),
     /// This device doesn't have the space for a file.
-    Full { need: u64, free: u64 },
+    Full {
+        need: u64,
+        free: u64,
+    },
     Other(String),
 }
 
@@ -155,18 +182,21 @@ pub struct Client {
 
 impl Client {
     /// A client that only talks to the Frame with this fingerprint.
-    pub fn pinned(addr: &str, fingerprint: &str) -> Result<Self, ApiError> {
-        Self::build(addr, PinnedVerifier::pinned(fingerprint))
+    pub fn pinned(addr: &str, fingerprint: &str, app: &str) -> Result<Self, ApiError> {
+        Self::build(addr, PinnedVerifier::pinned(fingerprint), app)
     }
 
     /// Accepts whatever certificate is there and tells you its fingerprint
     /// afterwards. Only for pairing with a Frame typed in by address.
-    pub fn capture(addr: &str) -> Result<Self, ApiError> {
-        Self::build(addr, PinnedVerifier::capture())
+    pub fn capture(addr: &str, app: &str) -> Result<Self, ApiError> {
+        Self::build(addr, PinnedVerifier::capture(), app)
     }
 
-    fn build(addr: &str, verifier: Arc<PinnedVerifier>) -> Result<Self, ApiError> {
+    fn build(addr: &str, verifier: Arc<PinnedVerifier>, app: &str) -> Result<Self, ApiError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("X-Framecorder-App", app.parse().map_err(|_| ApiError::Other("invalid app identity".into()))?);
         let http = reqwest::Client::builder()
+            .default_headers(headers)
             .use_preconfigured_tls(client_config(verifier.clone()))
             .connect_timeout(CONNECT_TIMEOUT)
             .no_proxy()
@@ -238,6 +268,11 @@ impl Client {
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
     }
 
+    pub async fn unpair(&self) -> Result<(), ApiError> {
+        let rb = self.request(reqwest::Method::DELETE, "/pair").timeout(Duration::from_secs(3));
+        self.send(rb).await.map(|_| ())
+    }
+
     pub async fn clips(&self) -> Result<Vec<RemoteClip>, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/clips").timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
@@ -281,7 +316,7 @@ impl Client {
         }
     }
 
-    pub async fn set_recording(&self, settings: &Recording) -> Result<Recording, ApiError> {
+    pub async fn set_recording(&self, settings: &RecordingPatch) -> Result<Recording, ApiError> {
         let rb = self.request(reqwest::Method::PATCH, "/recording").json(settings).timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
     }
@@ -310,12 +345,7 @@ impl Client {
 
     /// Downloads `clip` into `part`, picking up where an earlier try left off.
     /// `progress` gets (bytes so far, total).
-    pub async fn download(
-        &self,
-        clip: &RemoteClip,
-        part: &Path,
-        mut progress: impl FnMut(u64, u64),
-    ) -> Result<(), ApiError> {
+    pub async fn download(&self, clip: &RemoteClip, part: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), ApiError> {
         let size = clip.size;
         let io = move |e: std::io::Error| {
             if super::space::is_full(&e) {
@@ -359,14 +389,8 @@ impl Client {
         if let Some(dir) = part.parent() {
             tokio::fs::create_dir_all(dir).await.map_err(io)?;
         }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(resumed)
-            .truncate(!resumed)
-            .open(part)
-            .await
-            .map_err(io)?;
+        let mut file =
+            tokio::fs::OpenOptions::new().create(true).write(true).append(resumed).truncate(!resumed).open(part).await.map_err(io)?;
         if resumed {
             log::info!("resuming {} at {have} of {}", clip.name, clip.size);
         }
