@@ -368,8 +368,9 @@ impl engine::Sink for GallerySink {
     }
 
     fn staging(&self, host: &store::Host, clip: &RemoteClip) -> PathBuf {
-        let short = &host.fingerprint[..8.min(host.fingerprint.len())];
-        self.staging.join(format!("{short}-{}.part", engine::safe_name(&clip.name)))
+        let host = engine::host_folder(&host.fingerprint);
+        let id: String = clip.id.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        self.staging.join(format!("{host}-{id}.part"))
     }
 
     /// The download in our cache, and the gallery's copy of it.
@@ -665,6 +666,54 @@ pub fn sweep_networks() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestGallery;
+
+    impl Gallery for TestGallery {
+        fn completed(&self, _: String, _: u64, _: String) -> Result<Option<String>, CoreError> {
+            Ok(None)
+        }
+        fn save(&self, _: String, _: String, _: String) -> Result<String, CoreError> {
+            Err("not saving in this test".into())
+        }
+    }
+
+    #[test]
+    fn partial_names_keep_the_full_remote_identity() {
+        use engine::Sink;
+        let sink = GallerySink { gallery: Arc::new(TestGallery), staging: PathBuf::from("cache") };
+        let host = store::Host {
+            fingerprint: "ab".repeat(32),
+            name: "frame".into(),
+            addr: "x".into(),
+            token: "t".into(),
+            device_id: "d".into(),
+            paired_at: 0,
+        };
+        let mut clip = RemoteClip {
+            id: "r-2026-10-15_12-27-10".into(),
+            kind: "recording".into(),
+            name: "2026-10-15_12-27-10.mp4".into(),
+            size: 5,
+            duration_s: None,
+            created: 0,
+        };
+        let recording = sink.staging(&host, &clip);
+        clip.id = "c-2026-10-15_12-27-10".into();
+        clip.kind = "clip".into();
+        let replay = sink.staging(&host, &clip);
+        assert_ne!(recording, replay);
+        clip.id = "../../a/b".into();
+        let slash = sink.staging(&host, &clip);
+        clip.id = "..\\..\\a\\b".into();
+        let backslash = sink.staging(&host, &clip);
+        assert_ne!(slash, backslash);
+        assert_eq!(slash.parent(), Some(Path::new("cache")));
+        assert_eq!(backslash.parent(), Some(Path::new("cache")));
+        let other = store::Host { fingerprint: format!("{}{}", "ab".repeat(4), "cd".repeat(28)), ..host.clone() };
+        assert_ne!(sink.staging(&host, &clip), sink.staging(&other, &clip));
+        assert_eq!(sink.staging(&host, &clip), sink.staging(&host, &clip));
+    }
 
     #[test]
     fn addresses_get_the_default_port() {
