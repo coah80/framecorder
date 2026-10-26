@@ -351,19 +351,14 @@ struct GallerySink {
 }
 
 impl GallerySink {
-    fn subdir(host: &store::Host, clip: &RemoteClip) -> String {
-        let folder = engine::host_folder(&host.fingerprint);
-        if clip.kind == "clip" {
-            format!("{folder}/clips")
-        } else {
-            folder
-        }
+    fn subdir(clip: &RemoteClip) -> String {
+        if clip.kind == "clip" { "clips" } else { "" }.into()
     }
 }
 
 impl engine::Sink for GallerySink {
-    fn completed(&self, host: &store::Host, clip: &RemoteClip) -> Result<Option<String>, String> {
-        tokio::task::block_in_place(|| self.gallery.completed(engine::safe_name(&clip.name), clip.size, Self::subdir(host, clip)))
+    fn completed(&self, _host: &store::Host, clip: &RemoteClip) -> Result<Option<String>, String> {
+        tokio::task::block_in_place(|| self.gallery.completed(engine::safe_name(&clip.name), clip.size, Self::subdir(clip)))
             .map_err(|e| e.to_string())
     }
 
@@ -378,8 +373,8 @@ impl engine::Sink for GallerySink {
         2
     }
 
-    fn finish(&self, staged: &Path, host: &store::Host, clip: &RemoteClip) -> Result<String, String> {
-        let subdir = Self::subdir(host, clip);
+    fn finish(&self, staged: &Path, _host: &store::Host, clip: &RemoteClip) -> Result<String, String> {
+        let subdir = Self::subdir(clip);
         let (path, name) = (staged.to_string_lossy().into_owned(), engine::safe_name(&clip.name));
         // the copy can take a while for a long recording
         tokio::task::block_in_place(|| self.gallery.save(path, name, subdir)).map_err(|e| e.to_string())
@@ -704,9 +699,11 @@ mod tests {
             duration_s: None,
             created: 0,
         };
+        assert_eq!(GallerySink::subdir(&clip), "");
         let recording = sink.staging(&host, &clip);
         clip.id = "c-2026-10-15_12-27-10".into();
         clip.kind = "clip".into();
+        assert_eq!(GallerySink::subdir(&clip), "clips");
         let replay = sink.staging(&host, &clip);
         assert_ne!(recording, replay);
         clip.id = "../../a/b".into();

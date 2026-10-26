@@ -140,6 +140,10 @@ impl Index {
         out
     }
 
+    pub fn location_taken(&self, location: &str, host: &str, id: &str) -> bool {
+        self.entries.iter().any(|e| e.location == location && (e.host != host || e.id != id))
+    }
+
     pub fn insert(&mut self, entry: Entry) -> io::Result<()> {
         self.entries.retain(|e| !(e.host == entry.host && e.id == entry.id));
         self.entries.push(entry);
