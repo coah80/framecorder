@@ -188,11 +188,14 @@ fun FloatingNav(
     current: Screen,
     frames: StateFlow<List<FrameStatus>>,
     busy: StateFlow<Boolean>,
+    appUpdate: StateFlow<String?>,
     onTab: (Screen) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val list by frames.collectAsStateWithLifecycle()
     val syncing by busy.collectAsStateWithLifecycle()
+    // a newer framecorder for this phone waits in settings
+    val newer by appUpdate.collectAsStateWithLifecycle()
     val frameDot = when {
         list.isEmpty() -> null
         list.any { it.state == FrameState.CONNECTED } -> LocalStatusColors.current.ok
@@ -208,7 +211,7 @@ fun FloatingNav(
     ) {
         NavItem(current is Screen.Library, FcIcons.Library, "library") { onTab(Screen.Library) }
         NavItem(current is Screen.Frame, FcIcons.Headset, "frame", badge = frameDot, pulsing = syncing) { onTab(Screen.Frame()) }
-        NavItem(current is Screen.Settings, FcIcons.Settings, "settings") { onTab(Screen.Settings) }
+        NavItem(current is Screen.Settings, FcIcons.Settings, "settings", badge = if (newer != null) MaterialTheme.colorScheme.primary else null) { onTab(Screen.Settings) }
     }
 }
 

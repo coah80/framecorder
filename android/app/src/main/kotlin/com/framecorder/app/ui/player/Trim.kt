@@ -52,6 +52,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.framecorder.app.ui.common.length
+import com.framecorder.app.ui.common.sendIntent
 import com.framecorder.app.ui.theme.DataStyle
 import java.io.File
 import kotlin.coroutines.resume
@@ -75,14 +76,18 @@ fun span(ms: Long): String = if (ms < 60_000) "${(ms + 500) / 1000} s" else leng
 /**
  * Cuts [startMs] to [endMs] out of the video into the cache, for sharing.
  * Only the cut's first moments get re-encoded; the rest is copied as is.
+ * The cut is kept under the clip's [key] and its exact bounds, so a second
+ * clip with the same name, or a nudged handle, never gets an earlier cut.
  */
-suspend fun exportTrim(context: Context, uri: Uri, name: String, startMs: Long, endMs: Long, onProgress: (Float) -> Unit): File =
+suspend fun exportTrim(context: Context, uri: Uri, key: String, name: String, startMs: Long, endMs: Long, onProgress: (Float) -> Unit): File =
     withContext(Dispatchers.Main) {
-        val dir = File(context.cacheDir, "trims").apply { mkdirs() }
-        val out = File(dir, "${name.removeSuffix(".mp4")}-trim-${startMs / 100}-${endMs / 100}.mp4")
+        val trims = File(context.cacheDir, "trims")
+        val dir = File(trims, "${key.replace(Regex("[^A-Za-z0-9._-]"), "_")}-$startMs-$endMs")
+        val out = File(dir, "${name.removeSuffix(".mp4")}-trim.mp4")
         if (out.length() > 0) return@withContext out
         // only the latest one is kept around
-        dir.listFiles()?.forEach { it.delete() }
+        trims.listFiles()?.forEach { it.deleteRecursively() }
+        dir.mkdirs()
 
         val item = MediaItem.Builder()
             .setUri(uri)
@@ -119,10 +124,7 @@ suspend fun exportTrim(context: Context, uri: Uri, name: String, startMs: Long, 
 
 fun shareTrim(context: Context, file: File, recording: Boolean) {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-    val send = Intent(Intent.ACTION_SEND)
-        .setType("video/mp4")
-        .putExtra(Intent.EXTRA_STREAM, uri)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    val send = sendIntent(listOf(uri to file.name), title = file.name)
     context.startActivity(Intent.createChooser(send, if (recording) "share the trimmed recording" else "share the trimmed clip"))
 }
 

@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
                 App(
                     hub = app.hub,
                     prefs = app.prefs,
+                    appUpdate = app.appUpdate,
                     link = pendingLink,
                     clip = pendingClip,
                     onIntentHandled = {
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         val app = application as FramecorderApp
         app.hub.retryNow()
+        app.appUpdate.checkIfDue()
         if (app.prefs.background.value && app.hub.frames.value.isNotEmpty()) SyncService.start(this)
     }
 
