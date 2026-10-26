@@ -243,6 +243,12 @@ impl Client {
         Err(ApiError::Refused(code, msg))
     }
 
+    async fn send_stream(&self, rb: reqwest::RequestBuilder) -> Result<reqwest::Response, ApiError> {
+        tokio::time::timeout(REQUEST_TIMEOUT, self.send(rb))
+            .await
+            .map_err(|_| ApiError::Unreachable("timed out waiting for the frame".into()))?
+    }
+
     fn classify(&self, e: reqwest::Error) -> ApiError {
         let text = error_chain(&e);
         if text.contains("ApplicationVerificationFailure") || text.contains("application verification failure") {
@@ -339,7 +345,7 @@ impl Client {
 
     pub async fn events(&self) -> Result<Events, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/events").header("Accept", "text/event-stream");
-        let resp = self.send(rb).await?;
+        let resp = self.send_stream(rb).await?;
         Ok(Events { body: Box::pin(resp.bytes_stream()), parser: SseParser::default(), pending: Vec::new() })
     }
 
@@ -367,7 +373,7 @@ impl Client {
         if have > 0 {
             rb = rb.header("Range", format!("bytes={have}-"));
         }
-        let resp = match self.send(rb).await {
+        let resp = match self.send_stream(rb).await {
             Err(ApiError::Refused(416, _)) => {
                 // what we have doesn't fit the file anymore, start over
                 tokio::fs::remove_file(part).await.ok();
@@ -530,6 +536,63 @@ impl Events {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn streaming_requests_time_out_before_headers() {
+        use tokio::io::AsyncReadExt;
+        for file in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let (tx, ready) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(stream.read_u8().await.unwrap());
+                }
+                tx.send(()).unwrap();
+                std::future::pending::<()>().await;
+                drop(stream);
+            });
+            let mut client = Client::capture(&addr, "desktop/test").unwrap();
+            client.base = format!("http://{addr}");
+            let dir = tempfile::tempdir().unwrap();
+            let part = dir.path().join("test.part");
+            let call = tokio::spawn(async move {
+                if file {
+                    let clip = RemoteClip {
+                        id: "r-test".into(),
+                        kind: "recording".into(),
+                        name: "test.mp4".into(),
+                        size: 5,
+                        duration_s: None,
+                        created: 0,
+                    };
+                    client.download(&clip, &part, |_, _| {}).await
+                } else {
+                    client.events().await.map(|_| ())
+                }
+            });
+            ready.await.unwrap();
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(16)).await;
+            let result = tokio::time::timeout(Duration::from_secs(1), call).await.expect("header wait must be bounded").unwrap();
+            assert!(matches!(result, Err(ApiError::Unreachable(_))));
+            tokio::time::resume();
+            server.abort();
+            assert!(server.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn event_body_keeps_its_separate_idle_timeout() {
+        let mut events = Events { body: Box::pin(futures_util::stream::pending()), parser: SseParser::default(), pending: Vec::new() };
+        let next = tokio::spawn(async move { events.next().await });
+        tokio::time::advance(Duration::from_secs(16)).await;
+        assert!(!next.is_finished());
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert_eq!(next.await.unwrap().unwrap_err(), ApiError::Unreachable("the frame went quiet".into()));
+    }
 
     #[test]
     fn parses_sse_across_chunks() {
