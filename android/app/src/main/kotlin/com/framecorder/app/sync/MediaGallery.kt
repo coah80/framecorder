@@ -1,6 +1,7 @@
 package com.framecorder.app.sync
 
 import android.app.PendingIntent
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -25,6 +26,22 @@ class MediaGallery(private val context: Context) : Gallery {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
+    override fun completed(name: String, size: ULong, subdir: String): String? {
+        try {
+            val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val selection = "${MediaStore.Video.Media.DISPLAY_NAME} = ? AND ${MediaStore.Video.Media.SIZE} = ? AND " +
+                "${MediaStore.Video.Media.RELATIVE_PATH} = ? AND ${MediaStore.Video.Media.IS_PENDING} = 0"
+            val args = arrayOf(name, size.toString(), folder(subdir))
+            val cursor = resolver.query(collection, arrayOf(MediaStore.Video.Media._ID), selection, args, null)
+                ?: error("MediaStore couldn't check the saved videos")
+            return cursor.use {
+                if (it.moveToFirst()) ContentUris.withAppendedId(collection, it.getLong(0)).toString() else null
+            }
+        } catch (e: Exception) {
+            throw CoreException.Failed("couldn't check the saved videos: ${e.message}")
+        }
+    }
+
     override fun save(path: String, name: String, subdir: String): String {
         try {
             return copyIn(File(path), name, subdir).toString()
@@ -33,12 +50,14 @@ class MediaGallery(private val context: Context) : Gallery {
         }
     }
 
+    private fun folder(subdir: String): String =
+        listOf(Environment.DIRECTORY_MOVIES, "framecorder", subdir).filter { it.isNotEmpty() }.joinToString("/", postfix = "/")
+
     private fun copyIn(source: File, name: String, subdir: String): Uri {
-        val folder = listOf(Environment.DIRECTORY_MOVIES, "framecorder", subdir).filter { it.isNotEmpty() }.joinToString("/")
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, folder)
+            put(MediaStore.Video.Media.RELATIVE_PATH, folder(subdir))
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
         val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)

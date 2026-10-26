@@ -6,14 +6,17 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import com.framecorder.app.BuildConfig
 import com.framecorder.core.Clip
 import com.framecorder.core.Core
 import com.framecorder.core.CoreException
 import com.framecorder.core.Events
+import com.framecorder.core.Forgot
 import com.framecorder.core.FoundFrame
 import com.framecorder.core.FrameInfo
 import com.framecorder.core.FrameState
 import com.framecorder.core.FrameStatus
+import com.framecorder.core.RecordingPatch
 import com.framecorder.core.RecordingSettings
 import com.framecorder.core.RemoteState
 import com.framecorder.core.SyncProgress
@@ -78,6 +81,9 @@ class SyncHub(private val app: Application) : Events {
     /** Per frame, its battery and storage, while we're in touch with it. */
     val about: StateFlow<Map<String, FrameInfo>> = _about
 
+    private val _recordings = MutableStateFlow<Map<String, RecordingSettings>>(emptyMap())
+    val recordings: StateFlow<Map<String, RecordingSettings>> = _recordings
+
     private val _updating = MutableStateFlow<Set<String>>(emptySet())
     /** Frames we asked to update, until they say they are. */
     val updating: StateFlow<Set<String>> = _updating
@@ -103,6 +109,7 @@ class SyncHub(private val app: Application) : Events {
         stateDir = stateDir(app).path,
         stagingDir = File(app.cacheDir, "downloads").path,
         deviceName = deviceName(app),
+        app = "android/${BuildConfig.VERSION_NAME}",
         gallery = gallery,
         events = this,
         finder = finder,
@@ -115,6 +122,9 @@ class SyncHub(private val app: Application) : Events {
 
     /** Starts following every paired Frame. Safe to call again. */
     fun start() = core.start()
+
+    /** Waits for transfers to stop and releases the download wake lock. */
+    suspend fun stop() = core.stop()
 
     fun retryNow() = core.retryNow()
 
@@ -143,10 +153,12 @@ class SyncHub(private val app: Application) : Events {
         core.command(fingerprint, what).also { remote(fingerprint, it) }
 
     /** The frame's recording settings, or null when its framecorder is older than them. */
-    suspend fun recording(fingerprint: String): RecordingSettings? = core.recording(fingerprint)
+    suspend fun recording(fingerprint: String): RecordingSettings? =
+        core.recording(fingerprint).also { settings -> if (settings != null) recording(fingerprint, settings) }
 
     /** Saves them on the frame, for its next recording. */
-    suspend fun setRecording(fingerprint: String, settings: RecordingSettings): RecordingSettings = core.setRecording(fingerprint, settings)
+    suspend fun setRecording(fingerprint: String, settings: RecordingPatch): RecordingSettings =
+        core.setRecording(fingerprint, settings).also { recording(fingerprint, it) }
 
     /**
      * Has the frame install its framecorder update now. It counts as updating
@@ -175,9 +187,14 @@ class SyncHub(private val app: Application) : Events {
         _missing.value = _clips.value.filterNot { gallery.exists(it.location) }.map { it.key }.toSet()
     }
 
-    fun unpair(fingerprint: String) {
-        core.unpair(fingerprint)
+    suspend fun unpair(fingerprint: String): Forgot {
+        val result = core.unpair(fingerprint)
         _frames.update { list -> list.filter { it.fingerprint != fingerprint } }
+        _recordings.update { it - fingerprint }
+        _remotes.update { it - fingerprint }
+        _about.update { it - fingerprint }
+        _updating.update { it - fingerprint }
+        return result
     }
 
     // the core calls these from its own threads
@@ -243,6 +260,10 @@ class SyncHub(private val app: Application) : Events {
 
     override fun remote(host: String, state: RemoteState?) {
         _remotes.update { if (state == null) it - host else it + (host to RemoteNow(state)) }
+    }
+
+    override fun recording(host: String, settings: RecordingSettings) {
+        _recordings.update { it + (host to settings) }
     }
 
     override fun about(host: String, info: FrameInfo?) {

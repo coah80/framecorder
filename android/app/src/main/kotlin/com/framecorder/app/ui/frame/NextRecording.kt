@@ -44,6 +44,7 @@ import com.framecorder.app.ui.common.GroupLabel
 import com.framecorder.app.ui.common.SegmentRow
 import com.framecorder.app.ui.common.dotted
 import com.framecorder.app.ui.common.segmentShape
+import com.framecorder.core.RecordingPatch
 import com.framecorder.core.RecordingSettings
 
 private val Shapes = listOf("wide" to "16:9", "square" to "1:1", "tall" to "9:16", "both" to "both eyes")
@@ -52,7 +53,7 @@ private val Qualities = listOf("standard" to "standard", "high" to "high", "max"
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -72,7 +73,7 @@ private fun audio(s: RecordingSettings) = when {
  * rest in a sheet. [settings] is null until the frame has said what they are.
  */
 @Composable
-fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (RecordingSettings) -> Unit, modifier: Modifier = Modifier) {
+fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (RecordingPatch) -> Unit, modifier: Modifier = Modifier) {
     var more by rememberSaveable { mutableStateOf(false) }
     val enabled = settings != null
     val s = settings ?: Defaults
@@ -80,10 +81,10 @@ fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (Record
         GroupLabel("next recording")
         Column(Modifier.alpha(if (enabled) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Group(0, 3, "shape") {
-                Choices(Shapes, s.shape, enabled, tall = true, glyph = { ShapeGlyph(it) }) { onChange(s.copy(shape = it)) }
+                Choices(Shapes, s.shape, enabled, tall = true, glyph = { ShapeGlyph(it) }) { onChange(RecordingPatch(shape = it)) }
             }
             Group(1, 3, "clip length") {
-                Choices(Lengths, s.clipSecs, enabled) { onChange(s.copy(clipSecs = it, clips = true)) }
+                Choices(Lengths, s.clipSecs, enabled) { onChange(RecordingPatch(clipSecs = it, clips = true)) }
             }
             SegmentRow(
                 2, 3, "quality, frame rate, audio",
@@ -110,16 +111,16 @@ fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (Record
             ) {
                 Text(dotted("next recording"), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 8.dp, bottom = 14.dp))
                 Group(0, 3, "quality · ${mbps(settings.quality)} Mbit/s") {
-                    Choices(Qualities, settings.quality, true) { onChange(settings.copy(quality = it)) }
+                    Choices(Qualities, settings.quality, true) { onChange(RecordingPatch(quality = it)) }
                 }
                 Group(1, 3, "frame rate") {
-                    Choices(Rates, settings.fps, true) { onChange(settings.copy(fps = it)) }
+                    Choices(Rates, settings.fps, true) { onChange(RecordingPatch(fps = it)) }
                 }
                 Column(
                     Modifier.fillMaxWidth().clip(segmentShape(2, 3, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
                 ) {
-                    Toggle("game audio", "what you hear in the headset", settings.gameAudio) { onChange(settings.copy(gameAudio = it)) }
-                    Toggle("mic", "your voice, mixed in", settings.mic) { onChange(settings.copy(mic = it)) }
+                    Toggle("game audio", "what you hear in the headset", settings.gameAudio) { onChange(RecordingPatch(gameAudio = it)) }
+                    Toggle("mic", "your voice, mixed in", settings.mic) { onChange(RecordingPatch(mic = it)) }
                 }
                 Text(
                     "these take effect from the frame's next recording.",
