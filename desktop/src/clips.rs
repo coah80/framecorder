@@ -1,11 +1,11 @@
 //! the library: everything from the frame, a day at a time, as a grid or a list.
 
 use gpui::{
-    div, img, prelude::*, px, relative, AnyElement, ClickEvent, Context, Div, FontWeight, MouseButton, ObjectFit,
-    SharedString, Stateful, Window,
+    div, img, prelude::*, px, relative, AnyElement, ClickEvent, Context, Div, FontWeight, MouseButton, MouseUpEvent,
+    ObjectFit, SharedString, Stateful, Window,
 };
 
-use crate::app::{Filter, FrameApp, Thumb};
+use crate::app::{narrow, Filter, FrameApp, Thumb};
 use crate::sync::Clip;
 use crate::theme::{self, a, c};
 use crate::widgets::{card, data, icon, kind_chip, label, outline, primary, spinner, title};
@@ -18,13 +18,14 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
         app.library.focus(window, cx);
     }
     let searching = app.search.is_focused(window);
+    let narrow = narrow(window);
     let today = chrono::Local::now().date_naive();
     let found: Vec<&Clip> = app.clips.iter().filter(|c| search::hit(c, &app.query, today)).collect();
     let shown: Vec<&Clip> = found.iter().copied().filter(|c| kind_ok(app.filter, c)).collect();
     let selected: Vec<Clip> = shown.iter().filter(|c| app.selection.picked.contains(&c.key)).map(|c| (*c).clone()).collect();
     let selecting = !selected.is_empty();
     let problems: Vec<AnyElement> =
-        app.problems().into_iter().cloned().collect::<Vec<_>>().iter().map(|s| problem(s, cx)).collect();
+        app.problems().into_iter().cloned().collect::<Vec<_>>().iter().map(|s| problem(s, narrow, cx)).collect();
     // the tiles note where they land as they're painted, see selection.rs
     app.selection.tiles.borrow_mut().clear();
     div()
@@ -44,7 +45,12 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .track_scroll(&app.gallery)
                 .on_mouse_down(MouseButton::Left, cx.listener(|app, ev, window, cx| app.press(ev, window, cx)))
                 .on_mouse_move(cx.listener(|app, ev, _, cx| app.drag_moved(ev, cx)))
-                .on_mouse_up(MouseButton::Left, cx.listener(|app, _, _, cx| app.release(cx)))
+                // in the capture phase, so it runs before a tile button's click can stop the event
+                .capture_any_mouse_up(cx.listener(|app, ev: &MouseUpEvent, _, cx| {
+                    if ev.button == MouseButton::Left {
+                        app.release(cx);
+                    }
+                }))
                 .on_mouse_up_out(MouseButton::Left, cx.listener(|app, _, _, cx| app.release(cx)))
                 .flex_1()
                 .min_h(px(0.))
@@ -57,7 +63,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .flex_col()
                 .gap(px(26.))
                 .children(problems)
-                .children(days(app, &shown, selecting, today, cx)),
+                .children(days(app, &shown, selecting, narrow, today, cx)),
         )
         .when(selecting, |d| {
             let all = selected.len() == shown.len();
@@ -92,8 +98,10 @@ fn header(app: &FrameApp, found: &[&Clip], searching: bool, cx: &mut Context<Fra
         (Filter::Clip, "clips", clips),
         (Filter::Recording, "recordings", found.len() - clips),
     ];
+    // the filters drop under the search box once the window's too narrow for both
     div()
         .flex()
+        .flex_wrap()
         .items_end()
         .justify_between()
         .gap(px(16.))
@@ -226,7 +234,7 @@ fn layout_button(name: &'static str, on: bool, grid: bool, cx: &mut Context<Fram
 }
 
 /// a frame that can't sync gets a whole panel saying why, and what to do
-fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
+fn problem(s: &Status, narrow: bool, cx: &mut Context<FrameApp>) -> AnyElement {
     let red = matches!(s.state, State::Unreachable | State::Full);
     let tint = if red { theme::RED } else { theme::PEACH };
     let (icon_name, heading, text, action): (&str, String, String, &str) = match s.state {
@@ -260,8 +268,10 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
     };
     let pair = action == "pair again";
     let fp = s.fingerprint.clone();
+    // the button goes under the words once the window's too narrow for it beside them
     div()
         .flex()
+        .flex_wrap()
         .items_start()
         .gap(px(18.))
         .p(px(20.))
@@ -283,7 +293,7 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(240.))
                 .flex()
                 .flex_col()
                 .gap(px(10.))
@@ -304,7 +314,7 @@ fn problem(s: &Status, cx: &mut Context<FrameApp>) -> AnyElement {
                 )
                 .when(s.state == State::Unreachable, |d| {
                     d.child(
-                        div().grid().grid_cols(3).gap(px(8.)).children(
+                        div().grid().grid_cols(if narrow { 1 } else { 3 }).gap(px(8.)).children(
                             [
                                 ("power", "your frame is on"),
                                 ("wifi", "it's on this wi-fi"),
@@ -344,6 +354,7 @@ fn days(
     app: &FrameApp,
     shown: &[&Clip],
     selecting: bool,
+    narrow: bool,
     today: chrono::NaiveDate,
     cx: &mut Context<FrameApp>,
 ) -> Vec<AnyElement> {
@@ -426,7 +437,8 @@ fn days(
                         .when(incoming && is_today, |d| d.child(counter(app))),
                 )
                 .child(if app.grid {
-                    div().grid().grid_cols(3).gap_x(px(16.)).gap_y(px(18.)).children(items)
+                    // two across in a narrow window, so the captions still fit under the tiles
+                    div().grid().grid_cols(if narrow { 2 } else { 3 }).gap_x(px(16.)).gap_y(px(18.)).children(items)
                 } else {
                     card().overflow_hidden().flex().flex_col().children(items)
                 })
@@ -548,13 +560,13 @@ fn incoming_row(app: &FrameApp) -> AnyElement {
     div()
         .flex()
         .items_center()
-        .gap(px(14.))
+        .gap(px(8.))
         .px(px(10.))
         .py(px(8.))
         .child(
             div()
-                .w(px(88.))
-                .h(px(50.))
+                .w(px(80.))
+                .h(px(45.))
                 .flex_none()
                 .rounded(px(8.))
                 .border_1()
@@ -612,7 +624,7 @@ fn tile_button(id: String, group: SharedString, icon_name: &str, tint: u32) -> S
 fn row_button(id: String, icon_name: &str, tint: u32) -> Stateful<Div> {
     div()
         .id(SharedString::from(id))
-        .size(px(36.))
+        .size(px(32.))
         .flex()
         .items_center()
         .justify_center()
@@ -685,9 +697,9 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<
                         .items_center()
                         .gap(px(8.))
                         .px(px(2.))
-                        .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
-                        .child(kind_chip(clip.is_clip))
-                        .child(data(format::size(clip.size)).text_size(px(12.)).text_color(c(theme::OVERLAY2))),
+                        .child(div().flex_1().min_w_0().truncate().font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
+                        .child(kind_chip(clip.is_clip).flex_none())
+                        .child(data(format::size(clip.size)).flex_none().text_size(px(12.)).text_color(c(theme::OVERLAY2))),
                 ),
         )
         .child(
@@ -720,7 +732,7 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<F
         .relative()
         .flex()
         .items_center()
-        .gap(px(14.))
+        .gap(px(8.))
         .px(px(10.))
         .py(px(8.))
         .when(index > 1, |d| d.border_t_1().border_color(theme::line()))
@@ -733,36 +745,43 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<F
             div()
                 .relative()
                 .flex_none()
-                .child(thumb(app, clip, index).w(px(88.)).h(px(50.)).rounded(px(8.)))
+                .child(thumb(app, clip, index).w(px(80.)).h(px(45.)).rounded(px(8.)))
                 .when(look.selecting, |d| {
                     d.child(selection::pick_mark(look.selected).absolute().top(px(4.)).left(px(4.)))
                 }),
         )
-        .child(div().w(px(76.)).font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
-        .child(kind_chip(clip.is_clip))
-        .child(div().flex_1())
+        .child(div().w(px(68.)).flex_none().font_weight(FontWeight::MEDIUM).child(format::time(clip.created)))
+        .child(kind_chip(clip.is_clip).flex_none())
+        .child(div().flex_1().min_w_0())
         .when_some(clip.duration_s, |d, len| {
-            d.child(data(format::length(len)).text_size(px(12.)).text_color(c(theme::SUBTEXT0)))
+            d.child(data(format::length(len)).flex_none().text_size(px(12.)).text_color(c(theme::SUBTEXT0)))
         })
         .child(
             data(format::size(clip.size))
-                .min_w(px(60.))
+                .min_w(px(52.))
+                .flex_none()
                 .flex()
                 .justify_end()
                 .text_size(px(12.))
                 .text_color(c(theme::OVERLAY2)),
         )
-        .child(row_button(format!("rowdelete-{}", clip.key), "trash", theme::SUBTEXT0).on_click(cx.listener(
-            move |app, _, _, cx| {
-                cx.stop_propagation();
-                app.delete_clip(&delete, cx);
-            },
-        )))
-        .child(row_button(format!("rowreveal-{}", clip.key), "folder", theme::SUBTEXT0).on_click(cx.listener(
-            move |app, _, _, cx| {
-                cx.stop_propagation();
-                app.reveal_clip(&reveal, cx);
-            },
-        )))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .gap(px(2.))
+                .child(row_button(format!("rowdelete-{}", clip.key), "trash", theme::SUBTEXT0).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.delete_clip(&delete, cx);
+                    },
+                )))
+                .child(row_button(format!("rowreveal-{}", clip.key), "folder", theme::SUBTEXT0).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.reveal_clip(&reveal, cx);
+                    },
+                ))),
+        )
         .into_any_element()
 }
