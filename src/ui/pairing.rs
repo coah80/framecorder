@@ -25,6 +25,114 @@ pub struct Device {
     pub name: String,
 }
 
+#[allow(dead_code)]
+pub mod clients {
+    use std::path::Path;
+
+    use serde_json::Value;
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Device {
+        pub id: String,
+        pub name: String,
+        pub app: Option<String>,
+        pub connected: bool,
+        pub transfer: Option<Transfer>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Transfer {
+        pub name: String,
+        pub done: u64,
+        pub total: u64,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum Update {
+        Idle,
+        Updating,
+        Failed(Option<String>),
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct State {
+        pub devices: Vec<Device>,
+        pub update: Update,
+    }
+
+    pub fn read() -> Option<State> {
+        read_at(&super::dir()?.join("clients.json"))
+    }
+
+    fn read_transfer(transfer: &Value) -> Option<Transfer> {
+        Some(Transfer { name: transfer["name"].as_str()?.into(), done: transfer["done"].as_u64()?, total: transfer["total"].as_u64()? })
+    }
+
+    fn read_at(path: &Path) -> Option<State> {
+        let body: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+        let devices = body["devices"]
+            .as_array()?
+            .iter()
+            .filter_map(|device| {
+                Some(Device {
+                    id: device["id"].as_str()?.into(),
+                    name: device["name"].as_str().unwrap_or("a device").into(),
+                    app: device["app"].as_str().map(String::from),
+                    connected: device["connected"].as_bool().unwrap_or(false),
+                    transfer: read_transfer(&device["transfer"]),
+                })
+            })
+            .collect();
+        let update = match body["update"]["state"].as_str() {
+            Some("updating") => Update::Updating,
+            Some("failed") => Update::Failed(body["update"]["error"].as_str().map(String::from)),
+            _ => Update::Idle,
+        };
+        Some(State { devices, update })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn reads_live_clients_and_tolerates_older_files() {
+            let dir = std::env::temp_dir().join(format!("framecorder-clients-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("clients.json");
+            assert_eq!(read_at(&path), None);
+            std::fs::write(&path, r#"{
+                "devices": [
+                    {"id":"phone", "name":"cole's phone", "app":"android/0.2.0", "connected":true,
+                     "transfer":{"name":"clip.mp4", "done":31000000, "total":48000000}},
+                    {"id":"pc", "name":"desktop", "app":null, "connected":false, "transfer":null}
+                ],
+                "update":{"state":"failed", "error":"couldn't download the update"}
+            }"#).unwrap();
+            assert_eq!(read_at(&path), Some(State {
+                devices: vec![
+                    Device {
+                        id: "phone".into(), name: "cole's phone".into(), app: Some("android/0.2.0".into()), connected: true,
+                        transfer: Some(Transfer { name: "clip.mp4".into(), done: 31_000_000, total: 48_000_000 }),
+                    },
+                    Device { id: "pc".into(), name: "desktop".into(), app: None, connected: false, transfer: None },
+                ],
+                update: Update::Failed(Some("couldn't download the update".into())),
+            }));
+            std::fs::write(&path, r#"{"devices":[{"id":"old"}]}"#).unwrap();
+            assert_eq!(read_at(&path), Some(State {
+                devices: vec![Device { id: "old".into(), name: "a device".into(), app: None, connected: false, transfer: None }],
+                update: Update::Idle,
+            }));
+            std::fs::write(&path, r#"{"devices":[],"update":{"state":"updating"}}"#).unwrap();
+            assert_eq!(read_at(&path).unwrap().update, Update::Updating);
+            std::fs::write(&path, "unfinished").unwrap();
+            assert_eq!(read_at(&path), None);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}
+
 pub(super) fn dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
