@@ -48,7 +48,12 @@ import com.framecorder.core.RecordingPatch
 import com.framecorder.core.RecordingSettings
 
 private val Shapes = listOf("wide" to "16:9", "square" to "1:1", "tall" to "9:16", "both" to "both eyes")
-private val Lengths = listOf(15u to "15 s", 30u to "30 s", 60u to "1 min", 120u to "2 min")
+private val Eyes = listOf("left" to "left eye", "right" to "right eye")
+/** 0 is clips off, like the desktop app's. */
+private val Lengths = listOf(0u to "off", 15u to "15 s", 30u to "30 s", 60u to "1 min", 120u to "2 min")
+
+/** Without the panels unlocked, the recorder records SteamVR's view: 16:9, the left eye. */
+private const val PANELS_NOTE = "square, vertical, both eyes and the eye choice need the panels unlocked on the headset; until then it records SteamVR's view."
 private val Qualities = listOf("standard" to "standard", "high" to "high", "max" to "max")
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 
@@ -77,25 +82,49 @@ fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (Record
     var more by rememberSaveable { mutableStateOf(false) }
     val enabled = settings != null
     val s = settings ?: Defaults
+    // an older headset doesn't say which eye; one without the panels only records 16:9 of the left
+    val eyes = s.eye != null
+    val panels = s.panels != false
+    val rows = if (eyes) 4 else 3
     Column(modifier) {
         GroupLabel("next recording")
         Column(Modifier.alpha(if (enabled) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Group(0, 3, "shape") {
-                Choices(Shapes, s.shape, enabled, tall = true, glyph = { ShapeGlyph(it) }) { onChange(RecordingPatch(shape = it)) }
+            Group(0, rows, "shape") {
+                Choices(
+                    Shapes, if (panels) s.shape else "wide", enabled,
+                    tall = true,
+                    glyph = { ShapeGlyph(it) },
+                    allowed = { panels || it == "wide" },
+                ) { onChange(RecordingPatch(shape = it)) }
             }
-            Group(1, 3, "clip length") {
-                Choices(Lengths, s.clipSecs, enabled) { onChange(RecordingPatch(clipSecs = it, clips = true)) }
+            if (eyes) {
+                Group(1, rows, "eye") {
+                    Choices(Eyes, if (panels) s.eye ?: "left" else "left", enabled && panels) { onChange(RecordingPatch(eye = it)) }
+                }
+            }
+            Group(rows - 2, rows, "clip length") {
+                Choices(Lengths, if (s.clips) s.clipSecs else 0u, enabled) { secs ->
+                    onChange(
+                        when {
+                            secs == 0u -> RecordingPatch(clips = false)
+                            // the length it remembers: just turn clips back on
+                            !s.clips && secs == s.clipSecs -> RecordingPatch(clips = true)
+                            s.clips -> RecordingPatch(clipSecs = secs)
+                            else -> RecordingPatch(clipSecs = secs, clips = true)
+                        },
+                    )
+                }
             }
             SegmentRow(
-                2, 3, "quality, frame rate, audio",
+                rows - 1, rows, "quality, frame rate, audio",
                 subtitle = "${s.quality} · ${Rates.first { it.first == s.fps }.second} · ${audio(s)}",
                 onClick = if (enabled) ({ more = true }) else null,
                 trailing = { Chevron() },
             )
         }
-        if (note != null) {
+        if (note != null || (enabled && !panels)) {
             Text(
-                note,
+                note ?: PANELS_NOTE,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp),
@@ -156,6 +185,7 @@ private fun <T> Choices(
     enabled: Boolean,
     tall: Boolean = false,
     glyph: (@Composable (T) -> Unit)? = null,
+    allowed: (T) -> Boolean = { true },
     onPick: (T) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
@@ -163,7 +193,7 @@ private fun <T> Choices(
             ToggleButton(
                 checked = value == picked,
                 onCheckedChange = { if (value != picked) onPick(value) },
-                enabled = enabled,
+                enabled = enabled && allowed(value),
                 modifier = Modifier.weight(1f).height(if (tall) 60.dp else 40.dp).semantics { role = Role.RadioButton },
                 shapes = when (i) {
                     0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
