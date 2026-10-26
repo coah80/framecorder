@@ -260,13 +260,21 @@ impl From<api::Recording> for RecordingSettings {
 
 #[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
 pub struct RecordingPatch {
+    #[uniffi(default = None)]
     pub shape: Option<String>,
+    #[uniffi(default = None)]
     pub quality: Option<String>,
+    #[uniffi(default = None)]
     pub fps: Option<String>,
+    #[uniffi(default = None)]
     pub game_audio: Option<bool>,
+    #[uniffi(default = None)]
     pub mic: Option<bool>,
+    #[uniffi(default = None)]
     pub clips: Option<bool>,
+    #[uniffi(default = None)]
     pub clip_secs: Option<u32>,
+    #[uniffi(default = None)]
     pub eye: Option<String>,
 }
 
