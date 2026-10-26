@@ -44,11 +44,20 @@ fn found_from(info: &mdns_sd::ResolvedService) -> Option<Found> {
     Some(Found { name, fingerprint, addr: addrs.first()?.clone(), addrs })
 }
 
+struct Browsing(ServiceDaemon);
+
+impl Drop for Browsing {
+    fn drop(&mut self) {
+        let _ = self.0.stop_browse(SERVICE);
+        let _ = self.0.shutdown();
+    }
+}
+
 /// Browses for `window`, calling `on_found` for every Frame that shows up.
 /// Stops early once `on_found` returns false.
 pub async fn browse(window: Duration, mut on_found: impl FnMut(Found) -> bool) -> Result<(), String> {
-    let mdns = ServiceDaemon::new().map_err(|e| format!("mDNS isn't available: {e}"))?;
-    let rx = mdns.browse(SERVICE).map_err(|e| e.to_string())?;
+    let mdns = Browsing(ServiceDaemon::new().map_err(|e| format!("mDNS isn't available: {e}"))?);
+    let rx = mdns.0.browse(SERVICE).map_err(|e| e.to_string())?;
     let deadline = Instant::now() + window;
     let mut seen: HashMap<String, Found> = HashMap::new();
     loop {
@@ -71,8 +80,6 @@ pub async fn browse(window: Duration, mut on_found: impl FnMut(Found) -> bool) -
             Ok(Err(_)) | Err(_) => break,
         }
     }
-    let _ = mdns.stop_browse(SERVICE);
-    let _ = mdns.shutdown();
     Ok(())
 }
 
@@ -163,29 +170,34 @@ pub async fn look(window: Duration, mdns: bool, app: &str, mut on_found: impl Fn
         let sweeping = sweep(window, &app, move |f| tx.send(f).is_ok());
         tokio::join!(browsing, sweeping);
     };
-    tokio::spawn(producers);
-
-    let mut seen: HashMap<String, Found> = HashMap::new();
-    while let Some(found) = rx.recv().await {
-        let merged = match seen.get(&found.fingerprint) {
-            Some(old) => {
-                let mut merged = old.clone();
-                for a in &found.addrs {
-                    if !merged.addrs.contains(a) {
-                        merged.addrs.push(a.clone());
+    let consume = async {
+        let mut seen: HashMap<String, Found> = HashMap::new();
+        while let Some(found) = rx.recv().await {
+            let merged = match seen.get(&found.fingerprint) {
+                Some(old) => {
+                    let mut merged = old.clone();
+                    for a in &found.addrs {
+                        if !merged.addrs.contains(a) {
+                            merged.addrs.push(a.clone());
+                        }
                     }
+                    if merged == *old {
+                        continue;
+                    }
+                    merged
                 }
-                if merged == *old {
-                    continue;
-                }
-                merged
+                None => found,
+            };
+            seen.insert(merged.fingerprint.clone(), merged.clone());
+            if !on_found(merged) {
+                break;
             }
-            None => found,
-        };
-        seen.insert(merged.fingerprint.clone(), merged.clone());
-        if !on_found(merged) {
-            break;
         }
+    };
+    tokio::pin!(consume);
+    tokio::select! {
+        _ = producers => consume.await,
+        _ = &mut consume => {},
     }
 }
 
