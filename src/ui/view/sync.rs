@@ -2,10 +2,12 @@
 //! code on the left, and what's paired on the right.
 
 use super::widgets::{button, card, label};
+use super::{device_line, presence_color};
 use super::*;
 
-const SHOWN: usize = 4;
-const DEVICES_W: f32 = 340.0;
+/// Rows a page of the list holds.
+pub const SHOWN: usize = 4;
+const DEVICES_W: f32 = 360.0;
 const INSET: f32 = 32.0;
 
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, pane: Rect, hits: &mut Vec<Hit>) {
@@ -41,26 +43,73 @@ fn devices(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<Hit
     if list.is_empty() {
         c.text(f, Face::BodyMedium, 18.0, x + 4.0, r.y + 84.0, "Nothing paired yet", TEXT, 1.0);
     }
-    for (i, d) in list.iter().take(SHOWN).enumerate() {
-        let row = Rect::new(x, r.y + 56.0 + i as f32 * 70.0, r.w - 40.0, 58.0);
+    let pages = list.len().div_ceil(SHOWN).max(1);
+    let page = m.sync.page.min(pages - 1);
+    let first = page * SHOWN;
+    for (i, d) in list.iter().enumerate().skip(first).take(SHOWN) {
+        let row = Rect::new(x, r.y + 56.0 + (i - first) as f32 * 70.0, r.w - 40.0, 58.0);
         c.fill_rrect(row, 14.0, BASE, 0.6);
-        c.fill_circle(row.x + 20.5, row.y + row.h / 2.0, 4.5, GREEN, 1.0);
-        c.text(f, Face::BodyMedium, 18.0, row.x + 35.0, row.y + row.h / 2.0 + 6.5, &d.name, TEXT, 1.0);
+        c.fill_circle(row.x + 20.5, row.y + row.h / 2.0, 4.5, presence_color(d), 1.0);
 
         let remove = Rect::new(row.x + row.w - 8.0 - 96.0, row.y + 8.0, 96.0, 42.0);
+        let name_w = remove.x - 10.0 - (row.x + 35.0);
+        let line = device_line(f, d, name_w);
+        // The name sits in the middle on its own, or over the line about it.
+        let name_y = if line.is_some() { row.y + 25.0 } else { row.y + row.h / 2.0 + 6.5 };
+        let name = f.fit(Face::BodyMedium, 18.0, &d.name, name_w);
+        c.text(f, Face::BodyMedium, 18.0, row.x + 35.0, name_y, &name, TEXT, 1.0);
+        if let Some((line, color)) = line {
+            c.text(f, Face::Body, 14.0, row.x + 35.0, row.y + 46.0, &line, color, 1.0);
+        }
+        if let Some(t) = &d.transfer {
+            let track = Rect::new(row.x + 35.0, row.y + row.h - 6.0, name_w, 2.0);
+            c.fill_rect(track, MAUVE, 0.2);
+            c.fill_rect(Rect::new(track.x, track.y, track.w * t.percent() as f32 / 100.0, track.h), MAUVE, 0.9);
+        }
+
         let hovered = m.hover == Some(Action::RemoveDevice(i));
         c.stroke_rrect(remove, 12.0, 1.5, if hovered { RED } else { SURFACE1 }, if hovered { 0.9 } else { 0.6 });
         let (rx, ry) = remove.center();
         c.text_centered(f, Face::Body, 15.0, rx, ry + 5.5, "Remove", if hovered { RED } else { SUBTEXT0 }, 1.0);
         hits.push(Hit { rect: remove, action: Action::RemoveDevice(i) });
     }
-    if list.len() > SHOWN {
-        let more = format!("and {} more", list.len() - SHOWN);
-        c.text(f, Face::Body, 15.0, x + 4.0, r.y + 56.0 + SHOWN as f32 * 70.0 + 16.0, &more, OVERLAY1, 1.0);
+    if pages > 1 {
+        pager(c, f, m, Rect::new(x, r.y + 56.0 + SHOWN as f32 * 70.0, r.w - 40.0, 44.0), page, pages, hits);
     }
-    let note = ["Paired devices get every new clip on", "their own. Removing one stops that."];
+
+    let note: Vec<String> = match list.iter().find(|d| d.old_app) {
+        Some(d) => {
+            let tail = f.measure(Face::Body, 15.0, " has the old app.");
+            let name = f.fit(Face::Body, 15.0, &d.name, r.w - 48.0 - tail);
+            vec![format!("{name} has the old app."), "It can't update itself: get the new one".into(), "at framecorder.coah80.com".into()]
+        }
+        None => vec!["Paired devices get every new clip on".into(), "their own. Removing one stops that.".into()],
+    };
+    let color = if list.iter().any(|d| d.old_app) { YELLOW } else { OVERLAY2 };
+    let top = r.y + r.h - 24.0 - note.len() as f32 * 24.0;
     for (i, line) in note.iter().enumerate() {
-        c.text(f, Face::Body, 15.0, x + 4.0, r.y + r.h - 48.0 + i as f32 * 24.0, line, OVERLAY2, 1.0);
+        c.text(f, Face::Body, 15.0, x + 4.0, top + i as f32 * 24.0, line, color, 1.0);
+    }
+}
+
+/// Which page of the list is showing, with a way to the ones either side.
+#[allow(clippy::too_many_arguments)]
+fn pager(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, page: usize, pages: usize, hits: &mut Vec<Hit>) {
+    let text = format!("Page {} of {pages}", page + 1);
+    c.text(f, Face::Body, 15.0, r.x + 4.0, r.y + r.h / 2.0 + 5.5, &text, OVERLAY1, 1.0);
+    let arrows = [("‹", page.checked_sub(1)), ("›", (page + 1 < pages).then_some(page + 1))];
+    for (i, (glyph, to)) in arrows.into_iter().enumerate() {
+        let b = Rect::new(r.x + r.w - 2.0 * 50.0 + i as f32 * 50.0, r.y, 44.0, r.h);
+        let Some(to) = to else {
+            c.text_centered(f, Face::Body, 26.0, b.x + b.w / 2.0, r.y + r.h / 2.0 + 9.0, glyph, OVERLAY1, 0.35);
+            continue;
+        };
+        let action = Action::DevicePage(to);
+        let hovered = m.hover == Some(action);
+        c.fill_rrect(b, 12.0, if hovered { MAUVE } else { SURFACE0 }, if hovered { 0.12 } else { 0.4 });
+        c.stroke_rrect(b, 12.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, 0.6);
+        c.text_centered(f, Face::Body, 26.0, b.x + b.w / 2.0, r.y + r.h / 2.0 + 9.0, glyph, if hovered { MAUVE } else { TEXT }, 1.0);
+        hits.push(Hit { rect: b, action });
     }
 }
 

@@ -20,12 +20,39 @@ pub struct Pairing {
     pub size: usize,
 }
 
+/// Whether a device is talking to the sync service right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    /// No live state: the sync service is older, or not running.
+    Unknown,
+    Connected,
+    Away,
+}
+
+/// A paired device, with what the sync service sees of it right now.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Device {
     pub id: String,
     pub name: String,
+    pub presence: Presence,
+    /// The first app, which can't update itself.
+    pub old_app: bool,
+    pub transfer: Option<clients::Transfer>,
 }
 
-#[allow(dead_code)]
+impl Device {
+    /// A device with nothing known about it beyond the pairing.
+    pub fn paired(id: &str, name: &str) -> Self {
+        Self { id: id.into(), name: name.into(), presence: Presence::Unknown, old_app: false, transfer: None }
+    }
+}
+
+/// Everything paired, and whether an update is going on.
+pub struct Paired {
+    pub devices: Vec<Device>,
+    pub update: clients::Update,
+}
+
 pub mod clients {
     use std::path::Path;
 
@@ -45,6 +72,15 @@ pub mod clients {
         pub name: String,
         pub done: u64,
         pub total: u64,
+    }
+
+    impl Transfer {
+        pub fn percent(&self) -> u64 {
+            if self.total == 0 {
+                return 0;
+            }
+            (self.done * 100 / self.total).min(100)
+        }
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -270,11 +306,29 @@ pub fn end() {
     }
 }
 
-pub fn devices() -> Vec<Device> {
-    let Some(Value::Array(list)) = read_json("devices.json") else { return Vec::new() };
-    list.iter()
-        .filter_map(|d| Some(Device { id: d["id"].as_str()?.to_string(), name: d["name"].as_str().unwrap_or("a device").to_string() }))
-        .collect()
+/// The paired devices from the sync service's list, each with its live
+/// state when the service is writing one.
+pub fn paired() -> Paired {
+    let live = clients::read();
+    let Some(Value::Array(list)) = read_json("devices.json") else { return Paired { devices: Vec::new(), update: clients::Update::Idle } };
+    let devices = list
+        .iter()
+        .filter_map(|d| {
+            let id = d["id"].as_str()?;
+            let name = d["name"].as_str().unwrap_or("a device");
+            let mut device = Device::paired(id, name);
+            if let Some(live) = &live {
+                device.presence = Presence::Away;
+                if let Some(seen) = live.devices.iter().find(|c| c.id == id) {
+                    device.presence = if seen.connected { Presence::Connected } else { Presence::Away };
+                    device.old_app = seen.app.is_none();
+                    device.transfer = seen.transfer.as_ref().map(|t| clients::Transfer { name: t.name.clone(), done: t.done, total: t.total });
+                }
+            }
+            Some(device)
+        })
+        .collect();
+    Paired { devices, update: live.map_or(clients::Update::Idle, |l| l.update) }
 }
 
 /// Forgets a device; the sync service locks it out right away.

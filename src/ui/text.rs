@@ -92,4 +92,40 @@ impl Fonts {
         let tracking = self.tracking(face) * size;
         s.chars().map(|c| self.glyph(face, size, c).advance + tracking).sum()
     }
+
+    /// `s` as is when it fits in `max` px, otherwise as much of it as does
+    /// with an ellipsis on the end.
+    pub fn fit(&mut self, face: Face, size: f32, s: &str, max: f32) -> String {
+        if self.measure(face, size, s) <= max {
+            return s.to_string();
+        }
+        let tracking = self.tracking(face) * size;
+        let room = max - self.measure(face, size, "…");
+        let mut out = String::new();
+        let mut width = 0.0;
+        for ch in s.chars() {
+            width += self.glyph(face, size, ch).advance + tracking;
+            if width > room {
+                break;
+            }
+            out.push(ch);
+        }
+        format!("{}…", out.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_keeps_short_names_and_cuts_long_ones_to_the_width() {
+        let mut fonts = Fonts::load().unwrap();
+        assert_eq!(fonts.fit(Face::BodyMedium, 18.0, "Pixel 9", 200.0), "Pixel 9");
+        let long = "W".repeat(64);
+        let cut = fonts.fit(Face::BodyMedium, 18.0, &long, 150.0);
+        assert!(cut.ends_with('…') && cut.len() < long.len());
+        assert!(fonts.measure(Face::BodyMedium, 18.0, &cut) <= 150.0);
+        assert!(fonts.measure(Face::BodyMedium, 18.0, &format!("{cut}W")) > 150.0, "cuts no more than it has to");
+    }
 }
