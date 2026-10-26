@@ -42,6 +42,9 @@ pub struct Selection {
     /// the question before the picked clips go to the trash
     pub asking: bool,
     pub tiles: Tiles,
+    /// the drag the last mouse-up ended. the mouse-up is seen before the
+    /// click it makes, so the click still knows whether it was a drag
+    ended: Option<Drag>,
     /// the once-a-frame look while dragging, see `drag_tick`
     ticker: Option<Task<()>>,
 }
@@ -67,6 +70,7 @@ impl Selection {
             drag: None,
             asking: false,
             tiles: Rc::default(),
+            ended: None,
             ticker: None,
         }
     }
@@ -157,6 +161,7 @@ impl FrameApp {
         self.selection.anchor = None;
         self.selection.asking = false;
         self.selection.drag = None;
+        self.selection.ended = None;
         self.selection.ticker = None;
         cx.notify();
     }
@@ -177,7 +182,7 @@ impl FrameApp {
     /// (cmd on a mac) picks it or lets it go, and while anything's picked a
     /// plain click does the same instead of opening
     pub fn click_clip(&mut self, clip: &Clip, modifiers: Modifiers, cx: &mut Context<Self>) {
-        let drag = self.selection.drag.as_ref();
+        let drag = self.selection.drag.as_ref().or(self.selection.ended.as_ref());
         if drag.is_some_and(|d| d.moved) {
             return;
         }
@@ -209,6 +214,7 @@ impl FrameApp {
     /// ctrl or shift), or on nothing, it may be the start of a drag. a plain
     /// press on a clip when nothing's picked is the click that opens it
     pub fn press(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.selection.ended = None;
         let base = self.selection.picked.clone();
         let drag = match self.tile_under(ev.position) {
             Some(key) if self.selecting() || ev.modifiers.secondary() || ev.modifiers.shift => Drag {
@@ -280,10 +286,15 @@ impl FrameApp {
         cx.notify();
     }
 
+    /// the mouse coming up, anywhere. seen before the click it makes, so a
+    /// press on a tile's button can't leave the ticker running
     pub fn release(&mut self, cx: &mut Context<Self>) {
         self.selection.ticker = None;
-        if self.selection.drag.take().is_some_and(|d| d.moved) {
-            cx.notify();
+        if let Some(drag) = self.selection.drag.take() {
+            if drag.moved {
+                cx.notify();
+            }
+            self.selection.ended = Some(drag);
         }
     }
 
