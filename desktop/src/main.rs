@@ -155,7 +155,7 @@ fn main() {
     let state_dir = core.state_dir.clone();
     let is_demo = demo.is_some();
 
-    gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(assets::Assets).on_reopen(open_main).run(move |cx: &mut App| {
         // windows shows no notification at all from an app without an identity.
         // the installer's shortcuts carry the same id
         cx.set_app_identity("coah80.framecorder", "framecorder");
