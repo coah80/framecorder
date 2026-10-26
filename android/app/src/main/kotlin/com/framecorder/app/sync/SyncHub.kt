@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import com.framecorder.app.BuildConfig
 import com.framecorder.core.Clip
 import com.framecorder.core.Core
@@ -289,10 +290,21 @@ fun CoreException.reason(): String = when (this) {
 private fun stateDir(context: Context): File {
     val dir = File(context.filesDir, "sync")
     val old = context.dataDir
-    if (!File(dir, "hosts.json").exists() && File(old, "hosts.json").exists()) {
+    // each file on its own: a move that got as far as hosts.json last time
+    // still brings index.json over now, instead of leaving the frame paired
+    // with an empty history
+    for (name in listOf("hosts.json", "index.json")) {
+        val from = File(old, name)
+        val to = File(dir, name)
+        if (to.exists() || !from.exists()) continue
         dir.mkdirs()
-        for (name in listOf("hosts.json", "index.json")) {
-            File(old, name).takeIf { it.exists() }?.renameTo(File(dir, name))
+        if (from.renameTo(to)) continue
+        // a rename can fail across storage boundaries; a copy still gets it there
+        if (runCatching { from.copyTo(to, overwrite = true) }.isSuccess) {
+            from.delete()
+        } else {
+            to.delete()
+            Log.w("framecorder", "couldn't move the old $name into ${dir.path}")
         }
     }
     return dir
