@@ -1,18 +1,25 @@
 package com.framecorder.app.ui.settings
 
 import android.Manifest
-import android.content.pm.PackageManager
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -31,39 +38,46 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.framecorder.app.APP_DOWNLOAD
+import com.framecorder.app.AppUpdate
 import com.framecorder.app.BuildConfig
 import com.framecorder.app.Prefs
 import com.framecorder.app.sync.SyncHub
 import com.framecorder.app.sync.SyncService
-import com.framecorder.app.ui.common.FcIcons
-import com.framecorder.app.ui.common.GroupLabel
-import com.framecorder.app.ui.common.SegmentRow
 import com.framecorder.app.ui.common.AddTile
 import com.framecorder.app.ui.common.Chevron
+import com.framecorder.app.ui.common.FcIcons
 import com.framecorder.app.ui.common.FrameAvatar
-import com.framecorder.app.ui.common.dotted
+import com.framecorder.app.ui.common.GroupLabel
+import com.framecorder.app.ui.common.SegmentRow
+import com.framecorder.app.ui.common.VIDEO_PERMISSION
+import com.framecorder.app.ui.common.VIDEO_PERMISSION_WHY
 import com.framecorder.app.ui.common.ago
+import com.framecorder.app.ui.common.canNotify
+import com.framecorder.app.ui.common.canSeeVideos
+import com.framecorder.app.ui.common.dotted
 import com.framecorder.app.ui.common.lastSync
 import com.framecorder.app.ui.common.stateText
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.lazy.itemsIndexed
 
 @Composable
-fun SettingsScreen(hub: SyncHub, prefs: Prefs, onFrame: (String) -> Unit, onPair: () -> Unit) {
+fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (String) -> Unit, onPair: () -> Unit) {
     val context = LocalContext.current
     val frames by hub.frames.collectAsStateWithLifecycle()
     val clips by hub.clips.collectAsStateWithLifecycle()
     val wallpaper by prefs.wallpaper.collectAsStateWithLifecycle()
     val background by prefs.background.collectAsStateWithLifecycle()
-    var notifications by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
-        )
-    }
+    val clipNotes by prefs.clipNotes.collectAsStateWithLifecycle()
+    val newer by appUpdate.newer.collectAsStateWithLifecycle()
+    var notifications by remember { mutableStateOf(context.canNotify()) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = it }
+    var videos by remember { mutableStateOf(context.canSeeVideos()) }
+    val askVideos = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        videos = context.canSeeVideos()
+        // "don't ask again" means android won't show its dialog; its settings page still can
+        if (!granted && !videos && !shouldExplain(context)) openAppSettings(context)
+    }
     var howOpen by rememberSaveable { mutableStateOf(false) }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -87,6 +101,10 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, onFrame: (String) -> Unit, onPair
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 140.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
+            item(key = "app update") {
+                AppUpdateCard(newer, onGet = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(APP_DOWNLOAD))) })
+            }
+
             item { GroupLabel("frames") }
             val count = frames.size + 1
             itemsIndexed(frames, key = { _, f -> f.fingerprint }) { i, f ->
@@ -110,7 +128,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, onFrame: (String) -> Unit, onPair
             item { GroupLabel("syncing") }
             item {
                 SegmentRow(
-                    0, 2, "keep syncing in the background",
+                    0, 3, "keep syncing in the background",
                     subtitle = if (background) "android shows a quiet notification while this is on" else "clips sync while the app is open",
                     onClick = { toggleBackground(context, prefs, !background, frames.isNotEmpty()) },
                     trailing = { Toggle(background) { toggleBackground(context, prefs, it, frames.isNotEmpty()) } },
@@ -118,17 +136,33 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, onFrame: (String) -> Unit, onPair
             }
             item {
                 SegmentRow(
-                    1, 2, "notifications",
-                    subtitle = if (notifications) "one per clip that lands, with share" else "off, so new clips arrive quietly",
-                    onClick = if (!notifications && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    1, 3, "clip notifications",
+                    subtitle = when {
+                        !notifications -> "off in android, so new clips arrive quietly"
+                        clipNotes -> "one per clip that lands, with share"
+                        else -> "off, so new clips arrive quietly"
+                    },
+                    onClick = if (!notifications) {
                         { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
                     } else {
-                        null
+                        { prefs.setClipNotes(!clipNotes) }
                     },
                     trailing = if (!notifications) {
                         { Text("turn on", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge) }
                     } else {
+                        { Toggle(clipNotes, prefs::setClipNotes) }
+                    },
+                )
+            }
+            item {
+                SegmentRow(
+                    2, 3, "see videos saved before",
+                    subtitle = if (videos) "on, $VIDEO_PERMISSION_WHY" else VIDEO_PERMISSION_WHY,
+                    onClick = if (videos) null else ({ askVideos.launch(VIDEO_PERMISSION) }),
+                    trailing = if (videos) {
                         null
+                    } else {
+                        { Text("turn on", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge) }
                     },
                 )
             }
@@ -201,7 +235,16 @@ private fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit) {
     )
 }
 
-private fun toggleBackground(context: android.content.Context, prefs: Prefs, on: Boolean, paired: Boolean) {
+private fun toggleBackground(context: Context, prefs: Prefs, on: Boolean, paired: Boolean) {
     prefs.setBackground(on)
     if (on && paired) SyncService.start(context) else SyncService.stop(context)
+}
+
+/** Whether android would still show its own dialog for the videos permission. */
+private fun shouldExplain(context: Context): Boolean =
+    (context as? Activity)?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, VIDEO_PERMISSION) } ?: true
+
+private fun openAppSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    runCatching { context.startActivity(intent) }
 }

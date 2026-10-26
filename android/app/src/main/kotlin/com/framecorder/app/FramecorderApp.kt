@@ -20,6 +20,8 @@ class FramecorderApp : Application() {
         private set
     lateinit var notifier: Notifier
         private set
+    lateinit var appUpdate: AppUpdate
+        private set
 
     /** Lives as long as the process. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -27,8 +29,9 @@ class FramecorderApp : Application() {
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
-        notifier = Notifier(this)
+        notifier = Notifier(this, prefs)
         hub = SyncHub(this)
+        appUpdate = AppUpdate(prefs, scope)
         val started = MutableStateFlow(0)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) { started.value++ }
