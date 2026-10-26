@@ -100,7 +100,7 @@ On top of that the unit runs with `Nice=10` and `IOSchedulingClass=idle`.
 ## Protocol
 
 HTTPS only, with the self-signed certificate from `cert.pem` (clients pin its
-SHA-256). Everything except `/hello` and `/pair` needs
+SHA-256). Everything except `GET /hello` and `POST /pair` needs
 `Authorization: Bearer <token>`. Default port 38619 (`port` in settings.json;
 if it's taken another one is picked and written to info.json).
 
@@ -108,15 +108,16 @@ if it's taken another one is picked and written to info.json).
 | --- | --- |
 | `GET /hello` | `{"name","version":1,"fingerprint"}` |
 | `POST /pair` `{"code","device_name"}` | `{"token","device_id"}`. 403 with a reason for a wrong/expired/missing code, 429 + `Retry-After` after 5 wrong codes in a minute (then even the right code waits) |
+| `DELETE /pair` | 204. Forgets the device identified by its bearer token |
 | `GET /clips` | `[{"id","kind":"clip"\|"recording","name","size","duration_s"\|null,"created"}]`, newest first. `id` is `c-<stem>` / `r-<stem>` (hex after `~` for odd names), URL-safe and stable |
 | `GET\|HEAD /clips/{id}/file` | the MP4. `Range: bytes=` (single range, open-ended and suffix too) gets a 206 with `Content-Range`; unsatisfiable gets 416. `ETag` + `If-Range` supported. `Content-Type: video/mp4` |
-| `GET /events` | Server-Sent Events: `event: new` + clip JSON when a file finishes, `event: removed` + `{"id"}`, `: keepalive` every 25 s. One stream per device; a new one replaces the old |
+| `GET /events` | Server-Sent Events: `event: new` + clip JSON when a file finishes, `event: removed` + `{"id"}`, `event: settings` with the recording settings on connection and whenever they change, `: keepalive` every 25 s. One stream per device; a new one replaces the old |
 | `DELETE /clips/{id}` | 204 only if `delete_after_sync` is true in settings.json, else 403. The app calls this after a verified download, so the setting means what it says |
-| `GET /recording` | the recording settings from the dashboard tab's `ui.conf`: `{"shape":"wide"\|"square"\|"tall"\|"both","quality":"standard"\|"high"\|"max","fps":"auto"\|"60"\|"30","game_audio","mic","clips","clip":15\|30\|60\|120}`. Defaults when the tab hasn't saved any |
+| `GET /recording` | the recording settings from the dashboard tab's `ui.conf`: `{"shape":"wide"\|"square"\|"tall"\|"both","quality":"standard"\|"high"\|"max","fps":"auto"\|"60"\|"30","eye":"left"\|"right","panels":bool,"game_audio","mic","clips","clip":15\|30\|60\|120}`. Defaults when the tab hasn't saved any. `panels` is false when the tab reports the panel helper is locked; missing tab status defaults to true |
 | `GET /frame` | how the headset's doing: `{"battery":{"percent","charging"}\|null,"storage":{"free","total","videos"}\|null}`, bytes. The battery is the headset's own from `/sys/class/power_supply` (`FRAMECORDER_POWER_SUPPLY` points elsewhere, for trying it off a headset). `/events` sends it as `event: frame` when the stream opens and when it changes, looked at every 25 s |
 | `GET /remote` | what the dashboard tab is up to: `{"available","ready","recording","running","elapsed_ms","clips":secs\|null,"clip_ready"}`. `available` is false when the tab isn't running. `/events` sends the same as `event: remote` when the stream opens and whenever it changes |
 | `POST /remote` `{"do":"record"\|"stop"\|"clip"}` | passes it to the tab (`command.json` in, `status.json` back) and answers once the tab has: the new status, 409 with the tab's reason, 503 when it isn't running, 504 if it didn't answer within 4 s |
-| `PATCH /recording` | any of those keys; writes `ui.conf` (other lines kept) and returns them all, 400 for a value the tab wouldn't take. The tab picks the change up within a second and uses it from the next recording |
+| `PATCH /recording` | any of those keys except `panels`; changes only the keys sent and writes `ui.conf` (other lines kept) and returns them all, 400 for a value the tab wouldn't take. The tab picks the change up within a second and uses it from the next recording |
 
 A file counts as finished when it's renamed (or written and closed) to
 `*.mp4` in `~/Videos/framecorder/` or `.../clips/`. `*.part`, `*.perf.csv`,
@@ -128,11 +129,19 @@ A file counts as finished when it's renamed (or written and closed) to
   `name` is `name` from settings.json, else the hostname, else "Steam Frame".
 - `pairing.json`, written by the tab: `{"code":"123456","expires":<unix s>}`.
   Read on every `/pair`. Deleted after one successful pairing.
-- `devices.json`, ours: `[{"id","name","token_sha256","paired_at","last_seen"}]`.
+- `devices.json`, ours: `[{"id","name","token_sha256","paired_at","last_seen","app":string|null}]`.
+  Authenticated requests update `last_seen` and record `X-Framecorder-App`, such as
+  `desktop/0.2.0` or `android/0.2.0`. An absent header records null for older apps.
   Only token hashes are stored. Watched with inotify: if the tab removes an
   entry, that device is locked out right away and its event stream closes
   within 25 s. Our own writes re-read the file first, so a revoke can't get
   undone by a `last_seen` update.
+- `clients.json`, ours: `{"devices":[{"id","name","app","connected","transfer"}],"update":{"state","error"}}`.
+  Connected means an open event stream. A transfer is null or
+  `{"name","done","total"}`, in bytes, including a resumed offset. Progress
+  writes happen at most once a second across all transfers; start, finish,
+  connect and disconnect write immediately. The file stays untouched while
+  nothing changes.
 - `settings.json`, optional: `delete_after_sync` (bool), `port`, `name`,
   `game_rate_mb`.
 - `cert.pem` / `key.pem` (0600): made with rcgen on first run, reused after.

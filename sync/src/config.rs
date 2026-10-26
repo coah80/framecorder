@@ -111,18 +111,35 @@ pub struct Info<'a> {
 /// Writes to a temp file next to `path` and renames it over, so readers
 /// never see half a file.
 pub fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let (tmp, mut file) = loop {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!("{}.{}.tmp", std::process::id(), id));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = file.write_all(data);
+    drop(file);
+    let result = result.and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub fn write_private(path: &Path, data: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let tmp = path.with_extension("tmp");
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-    f.write_all(data)?;
-    std::fs::rename(&tmp, path)
+    write_atomic(path, data)
 }
 
 pub fn device_name(settings: &Settings) -> String {
@@ -198,4 +215,33 @@ pub fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn concurrent_atomic_writes_never_share_or_leave_a_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let barrier = Barrier::new(16);
+        std::thread::scope(|scope| {
+            for n in 0..16 {
+                let (path, barrier) = (&path, &barrier);
+                scope.spawn(move || {
+                    let data = vec![n; 128 * 1024];
+                    barrier.wait();
+                    write_atomic(path, &data).unwrap();
+                    let read = std::fs::read(path).unwrap();
+                    assert_eq!(read.len(), data.len());
+                    assert!(read.iter().all(|b| *b == read[0]));
+                });
+            }
+        });
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(write_atomic(&dir.path().join("missing/state.json"), b"x").is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }

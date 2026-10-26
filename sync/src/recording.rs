@@ -3,14 +3,18 @@
 //! from the next recording on.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde_json::{json, Map, Value};
 
 use crate::config::write_atomic;
 
+static CHANGES: Mutex<()> = Mutex::new(());
+
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 7] = [
+const KEYS: [(&str, &str); 8] = [
     ("shape", "wide"),
+    ("eye", "left"),
     ("quality", "high"),
     ("fps", "auto"),
     ("game_audio", "true"),
@@ -21,6 +25,7 @@ const KEYS: [(&str, &str); 7] = [
 
 fn allowed(key: &str, value: &str) -> bool {
     match key {
+        "eye" => matches!(value, "left" | "right"),
         "shape" => matches!(value, "wide" | "square" | "tall" | "both"),
         "quality" => matches!(value, "standard" | "high" | "max"),
         "fps" => matches!(value, "auto" | "60" | "30"),
@@ -36,7 +41,7 @@ fn lookup<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         .filter_map(|l| l.split_once('='))
         .filter(|(k, _)| k.trim() == key)
         .map(|(_, v)| v.trim())
-        .last()
+        .next_back()
 }
 
 fn to_json(key: &str, value: &str) -> Value {
@@ -62,11 +67,10 @@ pub fn read(path: &Path) -> Value {
     Value::Object(out)
 }
 
-/// Sets any of them and writes the file, keeping the lines it doesn't know
-/// (the eye, whether the setup's done). Returns them all, or what was wrong.
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
+    let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of shape, quality, fps, game_audio, mic, clips, clip".into());
+        return Err("expected an object with some of eye, shape, quality, fps, game_audio, mic, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -84,8 +88,15 @@ pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
 
     let existing = std::fs::read_to_string(path).ok();
     let text = existing.as_deref().unwrap_or("");
-    let changing = |line: &str| line.split_once('=').is_some_and(|(k, _)| updates.iter().any(|(u, _)| u == k.trim()));
-    let mut lines: Vec<String> = text.lines().filter(|l| !changing(l)).map(String::from).collect();
+    let changing = |line: &str| {
+        line.split_once('=')
+            .is_some_and(|(k, _)| updates.iter().any(|(u, _)| u == k.trim()))
+    };
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|l| !changing(l))
+        .map(String::from)
+        .collect();
     // a new length replaces "clip=off", which also meant clips were off
     if lookup(text, "clip") == Some("off") && lookup(text, "clips").is_none() && !updates.iter().any(|(k, _)| k == "clips") {
         lines.push("clips=false".into());
@@ -103,6 +114,17 @@ pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     Ok(read(path))
 }
 
+pub fn status(paths: &crate::config::Paths) -> Value {
+    let mut settings = read(&paths.recording());
+    settings["panels"] = std::fs::read(paths.status())
+        .ok()
+        .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
+        .and_then(|status| status["panels"].as_bool())
+        .unwrap_or(true)
+        .into();
+    settings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,7 +133,10 @@ mod tests {
     fn defaults_without_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let s = read(&dir.path().join("ui.conf"));
-        assert_eq!(s, json!({"shape": "wide", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "clips": true, "clip": 30}));
+        assert_eq!(
+            s,
+            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "clips": true, "clip": 30})
+        );
     }
 
     #[test]
@@ -133,7 +158,7 @@ mod tests {
         let path = dir.path().join("ui.conf");
         assert!(change(&path, &json!({"clip": 45})).is_err());
         assert!(change(&path, &json!({"shape": "round"})).is_err());
-        assert!(change(&path, &json!({"eye": "left"})).is_err());
+        assert!(change(&path, &json!({"eye": "middle"})).is_err());
         assert!(change(&path, &json!({})).is_err());
         assert!(!path.exists());
     }
