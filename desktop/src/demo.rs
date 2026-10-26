@@ -30,6 +30,8 @@ pub const SCREENS: &[&str] = &[
     "frame-closed",
     "frame-unreachable",
     "frame-syncing",
+    "frame-eye",
+    "frame-locked",
     "check",
 ];
 
@@ -90,6 +92,20 @@ fn remote() -> Remote {
     Remote { available: true, ready: true, recording: false, running: false, elapsed_ms: 0, clips: Some(30), clip_ready: true }
 }
 
+fn recording() -> Recording {
+    Recording {
+        shape: "wide".into(),
+        quality: "high".into(),
+        fps: "auto".into(),
+        game_audio: true,
+        mic: true,
+        clips: true,
+        clip: 30,
+        eye: Some("left".into()),
+        panels: Some(true),
+    }
+}
+
 fn live(remote: Option<Remote>) -> Live {
     Live {
         remote_at: remote.as_ref().map(|_| Instant::now()),
@@ -98,17 +114,7 @@ fn live(remote: Option<Remote>) -> Live {
             battery: Some(Battery { percent: 72, charging: true }),
             storage: Some(Storage { free: 48_000_000_000, total: 128_000_000_000, videos: 12_400_000_000 }),
         }),
-        recording: Some(Recording {
-            shape: "wide".into(),
-            quality: "high".into(),
-            fps: "auto".into(),
-            game_audio: true,
-            mic: true,
-            clips: true,
-            clip: 30,
-            eye: Some("left".into()),
-            panels: Some(true),
-        }),
+        recording: Some(recording()),
         asked: true,
         ..Default::default()
     }
@@ -205,6 +211,16 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
                 total: 48_000_000,
                 queued: 0,
             });
+        }
+        // set to the right eye, with the panels unlocked
+        "frame-eye" => {
+            let rec = Recording { eye: Some("right".into()), ..recording() };
+            app.live.insert("demo".into(), Live { recording: Some(rec), ..live(Some(remote())) });
+        }
+        // a frame whose panels aren't unlocked: a square was picked, but it records steamvr's view
+        "frame-locked" => {
+            let rec = Recording { shape: "square".into(), panels: Some(false), ..recording() };
+            app.live.insert("demo".into(), Live { recording: Some(rec), ..live(Some(remote())) });
         }
         "check" => {
             app.statuses = vec![status(State::Unreachable, false)];
