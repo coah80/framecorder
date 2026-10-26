@@ -47,7 +47,8 @@ usage:
   framecorder-desktop --demo <screen>  made up frames and clips, nothing syncs.
                                        screens: clips, list, clips-selecting, list-selecting, syncing,
                                        unreachable, pair, settings, frame, frame-recording, frame-paused,
-                                       frame-old, frame-closed, frame-unreachable, frame-syncing, check";
+                                       frame-old, frame-closed, frame-unreachable, frame-syncing, frame-eye,
+                                       frame-locked, check";
 
 /// the one app, and its window when it has one. the window can close and
 /// come back from the tray, the app stays
