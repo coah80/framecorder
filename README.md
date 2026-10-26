@@ -84,11 +84,13 @@ or build it yourself. on the headset, with developer mode on and ssh working:
 
 ```sh
 curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-git clone <this repo> framecorder && cd framecorder
+git clone --branch dev https://github.com/coah80/framecorder framecorder && cd framecorder
 ./install.sh
 ```
 
-it builds, installs `framecorder` and `framecorder-ui` to `~/.local/bin`, gives the recorder `cap_sys_admin` (it needs that to read another process's framebuffers, nothing else gets it), and sets up a user service that starts the dashboard tab together with steamvr.
+it builds the headset package and runs the same `framecorder-setup` as a release install, asking for your password once to unlock the panels through the helper. that installs the recorder, tab, sync service and updater.
+
+the tab starts now only if steamvr is already running, otherwise it starts with steamvr next time. when setup finishes, open the steamvr dashboard and look for the framecorder tab.
 
 the tab only ever attaches to a steamvr that's already running. connecting as an overlay app is allowed to launch steamvr's server itself, and a server started from outside steamvr's own launcher leaves the headset stuck on passthrough, so it checks first and waits.
 
