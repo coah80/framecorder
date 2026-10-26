@@ -46,7 +46,7 @@ pub struct State {
     pub devices: Arc<Devices>,
     pub pairing: Pairing,
     pub throttle: Arc<Throttle>,
-    pub updates: crate::update::Updates,
+    pub updates: Arc<crate::update::Updates>,
     pub remote: Remote,
     pub connections: AtomicUsize,
 }
@@ -172,10 +172,7 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             Ok(true)
         }
         ("GET", ["update"]) => {
-            match state.updates.status() {
-                Ok(status) => write_json(w, 200, &status.to_string(), keep)?,
-                Err(e) => write_json(w, 502, &serde_json::json!({ "error": e }).to_string(), keep)?,
-            }
+            write_json(w, 200, &state.updates.status().to_string(), keep)?;
             Ok(true)
         }
         ("POST", ["update"]) => {
@@ -469,7 +466,7 @@ mod tests {
             devices: devices.clone(),
             pairing: Pairing::new(&paths.pairing()),
             throttle: Throttle::new(0.0),
-            updates: crate::update::Updates::default(),
+            updates: Arc::new(crate::update::Updates::new(&paths, devices)),
 
             remote: Remote::default(),
             connections: AtomicUsize::new(0),

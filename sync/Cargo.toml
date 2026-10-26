@@ -6,6 +6,7 @@ description = "Serves framecorder's clips to paired devices over Wi-Fi"
 license = "MIT"
 
 [dependencies]
+dbus = { version = "0.9", features = ["vendored"] }
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 httparse = "1"
 inotify = { version = "0.11", default-features = false }
