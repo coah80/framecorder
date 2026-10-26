@@ -51,8 +51,6 @@ pub struct State {
     pub connections: AtomicUsize,
 }
 
-type Tls = StreamOwned<ServerConnection, TcpStream>;
-
 pub fn serve(listener: TcpListener, state: Arc<State>) {
     for stream in listener.incoming() {
         let stream = match stream {
@@ -119,7 +117,7 @@ fn connection(stream: TcpStream, state: &State) -> io::Result<()> {
 }
 
 /// Returns whether the connection can take another request.
-fn handle(req: &Request, w: &mut Tls, state: &State) -> io::Result<bool> {
+fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> {
     let path = req.path.split('?').next().unwrap_or("");
     let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
     let keep = req.keep_alive;
@@ -151,13 +149,24 @@ fn handle(req: &Request, w: &mut Tls, state: &State) -> io::Result<bool> {
         return Ok(true);
     };
 
+    state.devices.touch(&device, req.header("X-Framecorder-App"));
     match (req.method.as_str(), parts.as_slice()) {
+        ("DELETE", ["pair"]) => {
+            match state.devices.remove(&device) {
+                Ok(()) => {
+                    write_head(w, 204, &[("Content-Length", "0".into())], keep)?;
+                    w.flush()?;
+                }
+                Err(e) => write_error(w, 500, &format!("couldn't forget this device: {e}"), keep)?,
+            }
+            Ok(true)
+        }
         ("GET", ["clips"]) => {
             let list: Vec<String> = state.library.list().iter().map(clip_json).collect();
             write_json(w, 200, &format!("[{}]", list.join(",")), keep)?;
             Ok(true)
         }
-        ("GET" | "HEAD", ["clips", id, "file"]) => send_file(req, w, state, id),
+        ("GET" | "HEAD", ["clips", id, "file"]) => send_file(req, w, state, id, &device),
         ("DELETE", ["clips", id]) => {
             delete(w, state, id, keep)?;
             Ok(true)
@@ -182,13 +191,14 @@ fn handle(req: &Request, w: &mut Tls, state: &State) -> io::Result<bool> {
             Ok(false)
         }
         ("GET", ["recording"]) => {
-            write_json(w, 200, &recording::read(&state.paths.recording()).to_string(), keep)?;
+            write_json(w, 200, &recording::status(&state.paths).to_string(), keep)?;
             Ok(true)
         }
         ("PATCH", ["recording"]) => {
             let changes = serde_json::from_slice(&req.body).unwrap_or(serde_json::Value::Null);
             match recording::change(&state.paths.recording(), &changes) {
-                Ok(now) => {
+                Ok(_) => {
+                    let now = recording::status(&state.paths);
                     log::info!("device {device} changed the recording settings: {changes}");
                     write_json(w, 200, &now.to_string(), keep)?;
                 }
@@ -238,7 +248,7 @@ struct PairBody {
     device_name: String,
 }
 
-fn pair(req: &Request, w: &mut Tls, state: &State) -> io::Result<()> {
+fn pair(req: &Request, w: &mut impl Write, state: &State) -> io::Result<()> {
     let keep = req.keep_alive;
     let Ok(body) = serde_json::from_slice::<PairBody>(&req.body) else {
         return write_error(w, 400, "expected {\"code\", \"device_name\"}", keep);
@@ -281,7 +291,13 @@ fn etag(size: u64, meta: &std::fs::Metadata) -> String {
     format!("\"{size:x}-{mtime:x}\"")
 }
 
-fn send_file(req: &Request, w: &mut Tls, state: &State, id: &str) -> io::Result<bool> {
+fn send_file(
+    req: &Request,
+    w: &mut impl Write,
+    state: &State,
+    id: &str,
+    device: &str,
+) -> io::Result<bool> {
     let keep = req.keep_alive;
     let Some(clip) = state.library.get(id) else {
         write_error(w, 404, "no such clip", keep)?;
@@ -333,6 +349,7 @@ fn send_file(req: &Request, w: &mut Tls, state: &State, id: &str) -> io::Result<
     }
 
     let _transfer = state.throttle.start();
+    let mut progress = state.devices.transfer(device, &clip.name, start, size);
     let fd = file.as_raw_fd();
     unsafe { libc::posix_fadvise(fd, start as i64, len as i64, libc::POSIX_FADV_SEQUENTIAL) };
     let mut buf = vec![0u8; CHUNK];
@@ -348,6 +365,7 @@ fn send_file(req: &Request, w: &mut Tls, state: &State, id: &str) -> io::Result<
         state.throttle.pace(n);
         w.write_all(&buf[..n])?;
         pos += n as u64;
+        progress.progress(pos);
         if pos - dropped_to >= DROP_CACHE_EVERY || pos == end {
             unsafe { libc::posix_fadvise(fd, dropped_to as i64, (pos - dropped_to) as i64, libc::POSIX_FADV_DONTNEED) };
             dropped_to = pos;
@@ -357,7 +375,7 @@ fn send_file(req: &Request, w: &mut Tls, state: &State, id: &str) -> io::Result<
     Ok(true)
 }
 
-fn delete(w: &mut Tls, state: &State, id: &str, keep: bool) -> io::Result<()> {
+fn delete(w: &mut impl Write, state: &State, id: &str, keep: bool) -> io::Result<()> {
     if !Settings::load(&state.paths).delete_after_sync {
         return write_error(w, 403, "deleting after sync is turned off on the frame", keep);
     }
@@ -376,7 +394,9 @@ fn delete(w: &mut Tls, state: &State, id: &str, keep: bool) -> io::Result<()> {
     w.flush()
 }
 
-fn events(w: &mut Tls, state: &State, device: &str, token: &str) -> io::Result<()> {
+fn events(w: &mut impl Write, state: &State, device: &str, token: &str) -> io::Result<()> {
+    let rx = state.hub.subscribe(device);
+    let _connected = state.devices.connected(device);
     write_head(
         w,
         200,
@@ -389,8 +409,14 @@ fn events(w: &mut Tls, state: &State, device: &str, token: &str) -> io::Result<(
     let mut about = frame::about(&state.paths, &state.library);
     w.write_all(format!("event: frame\ndata: {about}\n\n").as_bytes())?;
     w.flush()?;
-    let rx = state.hub.subscribe(device);
-    state.devices.touch(device);
+    w.write_all(
+        format!(
+            "event: settings\ndata: {}\n\n",
+            recording::status(&state.paths)
+        )
+        .as_bytes(),
+    )?;
+    w.flush()?;
     log::info!("device {device} is listening");
     let mut looked = Instant::now();
     loop {
@@ -415,4 +441,237 @@ fn events(w: &mut Tls, state: &State, device: &str, token: &str) -> io::Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+    use std::path::Path;
+    use std::sync::Barrier;
+
+    fn setup() -> (tempfile::TempDir, State) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::new(&dir.path().join("videos"), &dir.path().join("sync"));
+        crate::watch::ensure_dirs(&paths).unwrap();
+        std::fs::write(paths.devices(), json!([
+            {"id": "a", "name": "phone", "token_sha256": crate::config::sha256_hex(b"foo"), "paired_at": 0, "last_seen": 0},
+            {"id": "b", "name": "desktop", "token_sha256": crate::config::sha256_hex(b"bar"), "paired_at": 0, "last_seen": 0}
+        ]).to_string()).unwrap();
+        let identity = crate::config::identity(&paths.state).unwrap();
+        let devices = Arc::new(Devices::load(&paths.devices()));
+        let state = State {
+            name: "test".into(),
+            fingerprint: identity.fingerprint.clone(),
+            tls: crate::config::tls_config(&identity).unwrap(),
+            library: Arc::new(Library::new(&paths)),
+            hub: Arc::new(Hub::default()),
+            devices: devices.clone(),
+            pairing: Pairing::new(&paths.pairing()),
+            throttle: Throttle::new(0.0),
+            updates: crate::update::Updates::default(),
+
+            remote: Remote::default(),
+            connections: AtomicUsize::new(0),
+            paths,
+        };
+        (dir, state)
+    }
+
+    fn request(method: &str, path: &str, body: Value, app: Option<&str>) -> Request {
+        let mut headers = vec![("Authorization".into(), "Bearer foo".into())];
+        if let Some(app) = app {
+            headers.push(("X-Framecorder-App".into(), app.into()));
+        }
+        Request {
+            method: method.into(),
+            path: path.into(),
+            headers,
+            body: body.to_string().into_bytes(),
+            keep_alive: true,
+        }
+    }
+
+    fn response(state: &State, req: &Request) -> (u16, Value) {
+        let mut bytes = Vec::new();
+        handle(req, &mut bytes, state).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap();
+        (
+            head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+            serde_json::from_str(body).unwrap_or(Value::Null),
+        )
+    }
+
+    fn clients(state: &State) -> Value {
+        serde_json::from_slice(&std::fs::read(state.paths.state.join("clients.json")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn requests_record_app_identity_and_unpair_revokes_only_the_caller() {
+        let (_dir, state) = setup();
+        let req = request("GET", "/clips", Value::Null, Some("android/0.2.0"));
+        assert_eq!(response(&state, &req).0, 200);
+        let devices: Value =
+            serde_json::from_slice(&std::fs::read(state.paths.devices()).unwrap()).unwrap();
+        assert_eq!(devices[0]["app"], "android/0.2.0");
+        assert!(devices[0]["last_seen"].as_i64().unwrap() > 0);
+        assert_eq!(clients(&state)["devices"][0]["app"], "android/0.2.0");
+        assert_eq!(
+            response(&state, &request("GET", "/clips", Value::Null, None)).0,
+            200
+        );
+        assert!(clients(&state)["devices"][0]["app"].is_null());
+        assert_eq!(
+            response(&state, &request("DELETE", "/pair", Value::Null, None)).0,
+            204
+        );
+        assert!(state.devices.check("foo").is_none());
+        assert!(state.devices.check("bar").is_some());
+        assert_eq!(clients(&state)["devices"].as_array().unwrap().len(), 1);
+        assert_eq!(response(&state, &req).0, 401);
+        assert_eq!(Devices::load(&state.paths.devices()).count(), 1);
+    }
+
+    #[test]
+    fn recording_reports_eye_panels_and_keeps_concurrent_partial_changes() {
+        let (_dir, state) = setup();
+        assert_eq!(
+            response(&state, &request("GET", "/recording", Value::Null, None)).1["panels"],
+            true
+        );
+        std::fs::write(state.paths.status(), r#"{"panels":false}"#).unwrap();
+        let settings = response(&state, &request("GET", "/recording", Value::Null, None)).1;
+        assert_eq!(settings["eye"], "left");
+        assert_eq!(settings["panels"], false);
+        for _ in 0..32 {
+            crate::recording::change(
+                &state.paths.recording(),
+                &json!({"mic": true, "eye": "left"}),
+            )
+            .unwrap();
+            let barrier = Barrier::new(2);
+            std::thread::scope(|scope| {
+                for patch in [json!({"mic": false}), json!({"eye": "right"})] {
+                    let (state, barrier) = (&state, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        assert_eq!(
+                            response(state, &request("PATCH", "/recording", patch, None)).0,
+                            200
+                        );
+                    });
+                }
+            });
+            let settings = response(&state, &request("GET", "/recording", Value::Null, None)).1;
+            assert_eq!(settings["mic"], false);
+            assert_eq!(settings["eye"], "right");
+            assert_eq!(settings["panels"], false);
+        }
+    }
+
+    struct StreamProbe<'a> {
+        state: &'a State,
+        bytes: Vec<u8>,
+    }
+
+    impl Write for StreamProbe<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            assert_eq!(clients(self.state)["devices"][0]["connected"], true);
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            if self
+                .bytes
+                .windows(b"event: settings".len())
+                .any(|b| b == b"event: settings")
+            {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "client left"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn event_stream_publishes_settings_and_clears_connected_when_the_client_leaves() {
+        let (_dir, state) = setup();
+        let mut probe = StreamProbe {
+            state: &state,
+            bytes: Vec::new(),
+        };
+        let err = handle(
+            &request("GET", "/events", Value::Null, None),
+            &mut probe,
+            &state,
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        let body = String::from_utf8(probe.bytes).unwrap();
+        let settings = body
+            .split("event: settings\ndata: ")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(settings).unwrap(),
+            recording::status(&state.paths)
+        );
+        assert_eq!(clients(&state)["devices"][0]["connected"], false);
+    }
+
+    struct FileProbe<'a> {
+        path: &'a Path,
+        header: bool,
+        fail: bool,
+        expected_start: u64,
+        expected_total: u64,
+    }
+
+    impl Write for FileProbe<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.header {
+                self.header = false;
+            } else {
+                let clients: Value =
+                    serde_json::from_slice(&std::fs::read(self.path).unwrap()).unwrap();
+                let transfer = &clients["devices"][0]["transfer"];
+                assert_eq!(transfer["name"], "x.mp4");
+                assert_eq!(transfer["done"], self.expected_start);
+                assert_eq!(transfer["total"], self.expected_total);
+                if self.fail {
+                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "client left"));
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn downloads_publish_resumed_offsets_and_clear_transfers_on_finish_or_error() {
+        let (_dir, state) = setup();
+        let path = state.paths.videos.join("x.mp4");
+        crate::library::tests::fake_mp4(&path, 1);
+        let size = std::fs::metadata(&path).unwrap().len();
+        state.library.add(&path).unwrap();
+        for fail in [false, true] {
+            let mut req = request("GET", "/clips/r-x/file", Value::Null, None);
+            req.headers.push(("Range".into(), "bytes=10-".into()));
+            let clients_path = state.paths.state.join("clients.json");
+            let mut probe = FileProbe {
+                path: &clients_path,
+                header: true,
+                fail,
+                expected_start: 10,
+                expected_total: size,
+            };
+            assert_eq!(handle(&req, &mut probe, &state).is_err(), fail);
+            assert!(clients(&state)["devices"][0]["transfer"].is_null());
+        }
+    }
 }

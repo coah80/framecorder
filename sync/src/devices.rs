@@ -1,7 +1,7 @@
 //! Paired devices and pairing itself. We only ever keep hashes of the
 //! tokens we hand out, so devices.json leaking doesn't let anyone in.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -22,12 +22,95 @@ pub struct Device {
     pub name: String,
     pub token_sha256: String,
     pub paired_at: i64,
+    #[serde(default)]
     pub last_seen: i64,
+    #[serde(default)]
+    pub app: Option<String>,
 }
 
 pub struct Devices {
     path: PathBuf,
     list: Mutex<Vec<Device>>,
+    clients: Mutex<Clients>,
+}
+
+#[derive(Default)]
+struct Activity {
+    streams: usize,
+    transfers: BTreeMap<u64, serde_json::Value>,
+}
+
+struct Clients {
+    devices: BTreeMap<String, Activity>,
+    update: serde_json::Value,
+    next: u64,
+    published: Option<Vec<u8>>,
+    progress_written: Instant,
+}
+
+impl Default for Clients {
+    fn default() -> Self {
+        Self {
+            devices: BTreeMap::new(),
+            update: serde_json::json!({"state": "idle", "error": null}),
+            next: 0,
+            published: None,
+            progress_written: Instant::now(),
+        }
+    }
+}
+
+pub struct Connection<'a> {
+    devices: &'a Devices,
+    device: String,
+}
+
+impl Drop for Connection<'_> {
+    fn drop(&mut self) {
+        self.devices.change_clients(|clients| {
+            if let Some(activity) = clients.devices.get_mut(&self.device) {
+                activity.streams = activity.streams.saturating_sub(1);
+            }
+        });
+    }
+}
+
+pub struct Transfer<'a> {
+    devices: &'a Devices,
+    device: String,
+    id: u64,
+    last: Instant,
+}
+
+impl Transfer<'_> {
+    pub fn progress(&mut self, done: u64) {
+        if self.last.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.last = Instant::now();
+        let list = self.devices.list.lock().unwrap();
+        let mut clients = self.devices.clients.lock().unwrap();
+        if let Some(transfer) = clients
+            .devices
+            .get_mut(&self.device)
+            .and_then(|a| a.transfers.get_mut(&self.id))
+        {
+            transfer["done"] = done.into();
+        }
+        if clients.progress_written.elapsed() >= Duration::from_secs(1) {
+            self.devices.publish_clients(&list, &mut clients);
+        }
+    }
+}
+
+impl Drop for Transfer<'_> {
+    fn drop(&mut self) {
+        self.devices.change_clients(|clients| {
+            if let Some(activity) = clients.devices.get_mut(&self.device) {
+                activity.transfers.remove(&self.id);
+            }
+        });
+    }
 }
 
 fn read_list(path: &Path) -> Option<Vec<Device>> {
@@ -44,16 +127,23 @@ fn read_list(path: &Path) -> Option<Vec<Device>> {
 impl Devices {
     pub fn load(path: &Path) -> Self {
         let list = read_list(path).unwrap_or_default();
-        Self { path: path.to_path_buf(), list: Mutex::new(list) }
+        let devices = Self {
+            path: path.to_path_buf(),
+            list: Mutex::new(list),
+            clients: Mutex::new(Clients::default()),
+        };
+        devices.refresh_clients();
+        devices
     }
 
     /// Picks up changes made by the tab, like a revoked device.
     pub fn reload(&self) {
-        let list = read_list(&self.path).unwrap_or_default();
         let mut cur = self.list.lock().unwrap();
+        let list = read_list(&self.path).unwrap_or_default();
         if *cur != list {
             log::info!("devices.json changed, {} paired", list.len());
             *cur = list;
+            self.publish_clients(&cur, &mut self.clients.lock().unwrap());
         }
     }
 
@@ -75,34 +165,112 @@ impl Devices {
         self.list.lock().unwrap().iter().find(|d| d.id == id).map(|d| d.name.clone())
     }
 
-    pub fn touch(&self, id: &str) {
+    pub fn touch(&self, id: &str, app: Option<&str>) {
         let now = now_unix();
-        self.update(|list| {
+        if let Err(e) = self.update(|list| {
             if let Some(d) = list.iter_mut().find(|d| d.id == id) {
                 d.last_seen = now;
+                d.app = app.map(str::to_owned);
             }
+        }) {
+            log::error!("couldn't update device activity: {e}");
+        }
+    }
+
+    pub fn remove(&self, id: &str) -> std::io::Result<()> {
+        self.update(|list| list.retain(|device| device.id != id))
+    }
+
+    pub fn connected(&self, device: &str) -> Connection<'_> {
+        self.change_clients(|clients| {
+            clients.devices.entry(device.into()).or_default().streams += 1
         });
+        Connection {
+            devices: self,
+            device: device.into(),
+        }
+    }
+
+    pub fn transfer(&self, device: &str, name: &str, done: u64, total: u64) -> Transfer<'_> {
+        let mut id = 0;
+        self.change_clients(|clients| {
+            clients.next += 1;
+            id = clients.next;
+            clients
+                .devices
+                .entry(device.into())
+                .or_default()
+                .transfers
+                .insert(
+                    id,
+                    serde_json::json!({"name": name, "done": done, "total": total}),
+                );
+        });
+        Transfer {
+            devices: self,
+            device: device.into(),
+            id,
+            last: Instant::now(),
+        }
+    }
+
+    pub fn refresh_clients(&self) {
+        self.change_clients(|_| {});
+    }
+
+    fn change_clients(&self, change: impl FnOnce(&mut Clients)) {
+        let list = self.list.lock().unwrap();
+        let mut clients = self.clients.lock().unwrap();
+        change(&mut clients);
+        self.publish_clients(&list, &mut clients);
+    }
+
+    fn publish_clients(&self, list: &[Device], clients: &mut Clients) {
+        clients
+            .devices
+            .retain(|id, _| list.iter().any(|d| d.id == *id));
+        let devices: Vec<_> = list
+            .iter()
+            .map(|d| {
+                let activity = clients.devices.get(&d.id);
+                serde_json::json!({"id": d.id, "name": d.name, "app": d.app,
+                "connected": activity.is_some_and(|a| a.streams > 0),
+                "transfer": activity.and_then(|a| a.transfers.last_key_value().map(|(_, t)| t))})
+            })
+            .collect();
+        let data = serde_json::json!({"devices": devices, "update": clients.update})
+            .to_string()
+            .into_bytes();
+        if clients.published.as_ref() == Some(&data) {
+            return;
+        }
+        match crate::config::write_atomic(&self.path.with_file_name("clients.json"), &data) {
+            Ok(()) => {
+                clients.published = Some(data);
+                clients.progress_written = Instant::now();
+            }
+            Err(e) => log::error!("couldn't save clients.json: {e}"),
+        }
     }
 
     fn add(&self, device: Device) {
-        self.update(move |list| list.push(device));
+        if let Err(e) = self.update(move |list| list.push(device)) {
+            log::error!("couldn't save devices: {e}");
+        }
     }
 
     /// Changes the list on top of what's on disk right now, so we don't undo
     /// a revoke the tab made since our last reload.
-    fn update(&self, change: impl FnOnce(&mut Vec<Device>)) {
+    fn update(&self, change: impl FnOnce(&mut Vec<Device>)) -> std::io::Result<()> {
         let mut cur = self.list.lock().unwrap();
         let mut list = read_list(&self.path).unwrap_or_else(|| cur.clone());
         change(&mut list);
-        match serde_json::to_vec_pretty(&list) {
-            Ok(data) => {
-                if let Err(e) = write_private(&self.path, &data) {
-                    log::error!("couldn't save {}: {e}", self.path.display());
-                }
-            }
-            Err(e) => log::error!("couldn't encode devices: {e}"),
+        if *cur != list || !self.path.exists() {
+            write_private(&self.path, &serde_json::to_vec_pretty(&list)?)?;
+            *cur = list;
+            self.publish_clients(&cur, &mut self.clients.lock().unwrap());
         }
-        *cur = list;
+        Ok(())
     }
 }
 
@@ -177,6 +345,7 @@ impl Pairing {
             token_sha256: sha256_hex(token.as_bytes()),
             paired_at: unix,
             last_seen: unix,
+            app: None,
         });
         // one code, one device
         if let Err(e) = std::fs::remove_file(&self.path) {
@@ -328,11 +497,53 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&kept).unwrap()).unwrap();
 
         // a write of ours before the reload must not bring it back
-        devices.touch(&b.device_id);
+        devices.touch(&b.device_id, None);
         assert!(devices.check(&a.token).is_none());
         devices.reload();
         assert!(devices.check(&a.token).is_none());
         assert!(devices.check(&b.token).is_some());
+    }
+
+    #[test]
+    fn clients_track_overlapping_streams_and_throttle_transfer_progress() {
+        use serde_json::Value;
+        use std::os::unix::fs::MetadataExt;
+        let (dir, devices, pairing) = setup();
+        write_code(dir.path(), "111111", 2000);
+        let pair = pairing
+            .pair_at("111111", "phone", &devices, 1000, Instant::now())
+            .unwrap();
+        let path = dir.path().join("clients.json");
+        let read = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
+        let first = devices.connected(&pair.device_id);
+        let second = devices.connected(&pair.device_id);
+        drop(first);
+        assert_eq!(read()["devices"][0]["connected"], true);
+        drop(second);
+        assert_eq!(read()["devices"][0]["connected"], false);
+        let mut transfer = devices.transfer(&pair.device_id, "x.mp4", 0, 100);
+        let before = std::fs::metadata(&path).unwrap().ino();
+        transfer.progress(10);
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(read()["devices"][0]["transfer"]["done"], 0);
+        transfer.last -= Duration::from_secs(1);
+        devices.clients.lock().unwrap().progress_written -= Duration::from_secs(1);
+        transfer.progress(20);
+        assert_eq!(read()["devices"][0]["transfer"]["done"], 20);
+        let other = devices.transfer(&pair.device_id, "y.mp4", 0, 200);
+        let mut other = other;
+        other.last -= Duration::from_secs(1);
+        let before = std::fs::metadata(&path).unwrap().ino();
+        other.progress(50);
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(read()["devices"][0]["transfer"]["done"], 0);
+        drop(other);
+        let before = std::fs::metadata(&path).unwrap().ino();
+        transfer.progress(30);
+        devices.refresh_clients();
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        drop(transfer);
+        assert!(read()["devices"][0]["transfer"].is_null());
     }
 
     #[test]

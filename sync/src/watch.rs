@@ -23,6 +23,8 @@ pub struct Watcher {
     videos: Option<WatchDescriptor>,
     clips: Option<WatchDescriptor>,
     state: Option<WatchDescriptor>,
+    config: Option<WatchDescriptor>,
+    settings: serde_json::Value,
 }
 
 fn files_mask() -> WatchMask {
@@ -42,11 +44,24 @@ impl Watcher {
             videos: None,
             clips: None,
             state: None,
+            config: None,
+            settings: crate::recording::status(paths),
         };
         if let Some(parent) = paths.videos.parent() {
             w.parent = w.inotify.watches().add(parent, WatchMask::CREATE | WatchMask::MOVED_TO | WatchMask::ONLYDIR).ok();
         }
-        w.state = Some(w.inotify.watches().add(&paths.state, files_mask() | WatchMask::ONLYDIR)?);
+        w.state = Some(
+            w.inotify
+                .watches()
+                .add(&paths.state, files_mask() | WatchMask::ONLYDIR)?,
+        );
+        if let Some(parent) = paths.recording().parent() {
+            w.config = Some(
+                w.inotify
+                    .watches()
+                    .add(parent, files_mask() | WatchMask::ONLYDIR)?,
+            );
+        }
         w.watch_videos();
         // scan after the watches are up so nothing slips between the two
         w.library.rescan();
@@ -85,6 +100,8 @@ impl Watcher {
         if mask.contains(EventMask::Q_OVERFLOW) {
             log::warn!("missed some file events, rescanning");
             self.publish(self.library.rescan());
+            self.devices.reload();
+            self.settings_changed(false);
             return;
         }
         let is = |w: &Option<WatchDescriptor>| w.as_ref() == Some(wd);
@@ -106,15 +123,30 @@ impl Watcher {
             return;
         }
 
-        let Some(name) = name.and_then(OsStr::to_str) else { return };
+        let Some(name) = name.and_then(OsStr::to_str) else {
+            return;
+        };
+
+        if is(&self.config) && name == "ui.conf" {
+            self.settings_changed(true);
+        }
 
         if is(&self.state) {
             if name == "devices.json" {
                 self.devices.reload();
             }
             // the tab writes it whole and renames it into place
-            if name == "status.json" && mask.contains(EventMask::MOVED_TO) {
-                self.hub.broadcast("remote", &crate::remote::status(&self.paths).to_string());
+            if name == "status.json"
+                && mask.intersects(
+                    EventMask::MOVED_TO
+                        | EventMask::CLOSE_WRITE
+                        | EventMask::DELETE
+                        | EventMask::MOVED_FROM,
+                )
+            {
+                self.hub
+                    .broadcast("remote", &crate::remote::status(&self.paths).to_string());
+                self.settings_changed(false);
             }
             return;
         }
@@ -148,6 +180,14 @@ impl Watcher {
                 log::info!("removed: {name}");
                 self.hub.send(&Change::Removed(id));
             }
+        }
+    }
+
+    fn settings_changed(&mut self, force: bool) {
+        let settings = crate::recording::status(&self.paths);
+        if force || settings != self.settings {
+            self.hub.broadcast("settings", &settings.to_string());
+            self.settings = settings;
         }
     }
 
@@ -202,6 +242,75 @@ mod tests {
         std::fs::remove_file(paths.clips.join("x.mp4")).unwrap();
         let msg = rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(&*msg, "event: removed\ndata: {\"id\":\"c-x\"}\n\n");
+    }
+
+    #[test]
+    fn settings_events_follow_atomic_changes_direct_writes_and_removal() {
+        use serde_json::{json, Value};
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::new(&dir.path().join("v"), &dir.path().join("state"));
+        ensure_dirs(&paths).unwrap();
+        let hub = Arc::new(Hub::default());
+        let mut watcher = Watcher::new(
+            &paths,
+            Arc::new(Library::new(&paths)),
+            hub.clone(),
+            Arc::new(Devices::load(&paths.devices())),
+        )
+        .unwrap();
+        let rx = hub.subscribe("test");
+        for (change, expected) in [
+            (0, json!({"eye": "right", "panels": true})),
+            (1, json!({"eye": "left", "panels": true})),
+            (2, json!({"eye": "left", "panels": false})),
+            (3, json!({"eye": "left", "panels": true})),
+            (4, json!({"eye": "left", "panels": true})),
+        ] {
+            match change {
+                0 => crate::config::write_atomic(&paths.recording(), b"eye=right\n").unwrap(),
+                1 => std::fs::write(paths.recording(), "eye=left\n").unwrap(),
+                2 => crate::config::write_atomic(&paths.status(), br#"{"panels":false}"#).unwrap(),
+                3 => std::fs::remove_file(paths.recording()).unwrap(),
+                _ => std::fs::write(paths.recording(), "onboarded=true\n").unwrap(),
+            }
+            if change == 3 {
+                std::fs::remove_file(paths.status()).unwrap();
+            }
+            loop {
+                if let Some(msg) = rx
+                    .try_iter()
+                    .find(|msg| msg.starts_with("event: settings\n"))
+                {
+                    let data = msg.strip_prefix("event: settings\ndata: ").unwrap().trim();
+                    let settings: Value = serde_json::from_str(data).unwrap();
+                    assert_eq!(settings["eye"], expected["eye"]);
+                    assert_eq!(settings["panels"], expected["panels"]);
+                    assert_eq!(settings, crate::recording::status(&paths));
+                    break;
+                }
+                let mut fd = libc::pollfd {
+                    fd: watcher.inotify.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                assert_eq!(
+                    unsafe { libc::poll(&mut fd, 1, 1000) },
+                    1,
+                    "no settings event"
+                );
+                let mut buf = [0; 4096];
+                let events: Vec<_> = watcher
+                    .inotify
+                    .read_events(&mut buf)
+                    .unwrap()
+                    .map(|e| (e.wd, e.mask, e.name.map(OsStr::to_os_string)))
+                    .collect();
+                for (wd, mask, name) in events {
+                    watcher.handle(&wd, mask, name.as_deref());
+                }
+            }
+        }
     }
 
     #[test]
