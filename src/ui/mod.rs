@@ -260,30 +260,7 @@ pub fn run() -> Result<()> {
     let mut fonts = Fonts::load()?;
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
-    let mut app = App {
-        settings,
-        remote: Remote::new(),
-        settings_at: Settings::changed_at(),
-        settings_checked: Instant::now(),
-        recorder: None,
-        recording: None,
-        note: None,
-        hover: None,
-        hits: Vec::new(),
-        dirty: true,
-        shown_second: u64::MAX,
-        tab_hidden_at: None,
-        retry_at: None,
-        toast: None,
-        toast_until: None,
-        buzz: false,
-        // The first time round the setup comes before anything else.
-        screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Welcome) },
-        sync: Sync::look(),
-        clipped_at: None,
-        unlocked: crate::setup::panels_unlocked(),
-        relocked: crate::setup::relocked(),
-    };
+    let mut app = App::new(settings, crate::setup::panels_unlocked(), crate::setup::relocked());
     log::info!("dashboard tab ready");
 
     while !QUIT.load(Ordering::Relaxed) {
@@ -399,6 +376,33 @@ fn replaced() -> bool {
 }
 
 impl App {
+    fn new(settings: Settings, unlocked: bool, relocked: bool) -> Self {
+        Self {
+            settings,
+            remote: Remote::new(),
+            settings_at: Settings::changed_at(),
+            settings_checked: Instant::now(),
+            recorder: None,
+            recording: None,
+            note: None,
+            hover: None,
+            hits: Vec::new(),
+            dirty: true,
+            shown_second: u64::MAX,
+            tab_hidden_at: None,
+            retry_at: None,
+            toast: None,
+            toast_until: None,
+            buzz: false,
+            // The first time round the setup comes before anything else.
+            screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Welcome) },
+            sync: Sync::look(),
+            clipped_at: None,
+            unlocked,
+            relocked,
+        }
+    }
+
     /// Returns false when SteamVR wants us gone.
     fn handle(&mut self, event: Event) -> bool {
         match event {
@@ -487,7 +491,12 @@ impl App {
         if at == self.settings_at {
             return;
         }
-        self.settings_at = at;
+        self.reload_settings();
+    }
+
+    fn reload_settings(&mut self) {
+        self.settings_checked = Instant::now();
+        self.settings_at = Settings::changed_at();
         let theirs = Settings { onboarded: self.settings.onboarded, ..Settings::load() };
         if theirs != self.settings {
             log::info!("the recording settings changed from a phone");
@@ -715,6 +724,19 @@ impl App {
         self.remote.publish(&status);
     }
 
+    fn prepare_recording(&mut self) -> std::result::Result<(), &'static str> {
+        self.reload_settings();
+        if let Some(r) = &mut self.recorder {
+            if r.replay != self.settings.clipping() || r.args != self.settings.recorder_args(self.unlocked) {
+                r.quit();
+            }
+            if r.quitting() {
+                return Err("applying your settings, try Record again in a moment");
+            }
+        }
+        Ok(())
+    }
+
     /// "ok", or why not, in words for the phone.
     fn from_phone(&mut self, command: remote::Command, from: &str) -> String {
         if !self.settings.onboarded {
@@ -723,6 +745,9 @@ impl App {
         match command {
             remote::Command::Record => {
                 if self.recording.is_none() {
+                    if let Err(why) = self.prepare_recording() {
+                        return why.into();
+                    }
                     self.toggle_recording();
                     if self.recording.is_none() {
                         return self.note.as_ref().map_or("couldn't start recording".into(), |(n, _)| n.to_lowercase());
