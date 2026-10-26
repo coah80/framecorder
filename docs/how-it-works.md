@@ -115,7 +115,7 @@ one session thread (`src/mux.rs`) takes the video and audio packets and sends th
 
 - **recordings** go to a writer thread (`src/writer.rs`, ffmpeg's muxer) as `name.mp4.part`, which gets renamed to `name.mp4` once it's finished. a slow disk can't hold up capture, and the sync service never picks up half a file. mp4s get finished on any clean stop: ctrl+c, ssh dropping, the tab quitting. use `.mkv` if you want recordings that survive the headset dying
 - **pausing.** the tab pauses the recording whenever the framecorder tab itself is on screen, so the controls never end up in your video. paused time is cut out of the timeline, so the video just continues from where it paused
-- **clips** come from a replay buffer (`src/replay.rs`): the last N seconds of already-encoded packets, kept in ram. nothing gets re-encoded. saving a clip finds the last keyframe far enough back, rebases the timestamps to zero and writes those packets out, on its own thread. that's about 2% of a core plus bitrate × length of ram (~190 mb for 30 s at high). starting a recording turns the buffer off and frees that ram, since the recording has it all anyway
+- **clips** come from a replay buffer (`src/replay.rs`): the last N seconds of already-encoded packets, kept in temporary segments on disk. ram holds their locations and recent writes waiting to reach disk; if disk storage is unavailable or fails, the buffer falls back to ram. the segment files are unlinked as soon as they're opened, so they disappear when the buffer and any clips being saved let go of them, even after a crash. nothing gets re-encoded. saving a clip finds the last keyframe far enough back, rebases the timestamps to zero and writes those packets out, on its own thread. starting a recording turns the buffer off, since the recording has it all anyway
 
 ## 9. the other source: steamvr's headset view
 
@@ -133,7 +133,7 @@ measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920×1080 hevc:
 |---|---|
 | gpu | ~0.6 ms per recorded frame at 500 mhz, less at gameplay clocks |
 | cpu | ~5-7% of one core (out of 8) with game audio + mic |
-| ram | ~10 mb of its own, plus the replay buffer if clips are on |
+| ram | ~10 mb of its own, plus replay packet locations and pending disk writes when clips are on; packet bytes fall back to ram if disk storage fails |
 | encoding | the hardware encoder, no cpu or gpu time |
 | the dashboard tab | under 1% of a core, sleeps when the menu's closed |
 

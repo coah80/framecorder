@@ -45,12 +45,16 @@ game audio is on by default, and the tab records the mic too (toggle it off in t
 
 ## clips
 
-clips are on by default (the switch is under the record button, the length is in settings, clips: 15 s, 30 s, 1 min, 2 min). framecorder keeps that much of the last few seconds in memory the whole time. then any of these saves it to `~/Videos/framecorder/clips`:
+clips are on by default (the switch is under the record button, the length is in settings, clips: 15 s, 30 s, 1 min, 2 min).
+
+framecorder keeps that much of the last few seconds in temporary segments on disk, with their locations in ram. it falls back to ram if it can't write the segments. then any of these saves it to `~/Videos/framecorder/clips`:
 
 - hold the left thumbstick down (rebind it in steamvr's controller settings under "framecorder")
 - the clip button in the tab
 
-it's always on, no recording needed. a little note floats up in front of you and the controller buzzes when it's saved. the buffer is just the already encoded video: about 2% of a core, plus bitrate × length of ram (~190 MB for 30 s at high). starting a recording turns the buffer off and frees that ram, since the recording has it all anyway, and it comes back on when you stop.
+it's always on, no recording needed. a little note floats up in front of you and the controller buzzes when it's saved. the buffer is just the already encoded video, nothing gets re-encoded.
+
+old segments are freed as the buffer moves on, once no clip being saved still needs them. starting a recording turns the buffer off, since the recording has it all anyway, and it comes back on when you stop.
 
 on the command line: `framecorder --replay 30 --control`, then type `clip` (or `record <file>`, `stop-record`, `pause`, `resume`, `quit`).
 
