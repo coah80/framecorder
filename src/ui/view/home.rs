@@ -3,6 +3,7 @@
 //! what's paired under it.
 
 use super::widgets::{card, label, toggle};
+use super::{device_line, free_space, presence_color, LOW_SPACE};
 use super::*;
 
 const RIGHT_W: f32 = 420.0;
@@ -10,7 +11,7 @@ const GAP: f32 = 22.0;
 const LEFT_W: f32 = WIDTH as f32 - 2.0 * PAD - RIGHT_W - GAP;
 const RIGHT_X: f32 = PAD + LEFT_W + GAP;
 const ROW_H: f32 = 66.0;
-/// Rows the list fits before it says "and N more".
+/// Rows the list fits; with more than that, the last row says "and N more".
 const SHOWN: usize = 4;
 
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
@@ -112,15 +113,34 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
         c.text(f, Face::Body, 16.0, x, r.y + 108.0, line, SUBTEXT0, 1.0);
         return;
     }
-    for (i, d) in list.iter().take(SHOWN).enumerate() {
+    let shown = if list.len() > SHOWN { SHOWN - 1 } else { SHOWN };
+    for (i, d) in list.iter().take(shown).enumerate() {
         let row = Rect::new(x, r.y + 56.0 + i as f32 * 52.0, r.w - 48.0, 44.0);
+        let baseline = row.y + row.h / 2.0 + 6.0;
         c.fill_rrect(row, 12.0, BASE, 0.6);
-        c.fill_circle(row.x + 18.5, row.y + row.h / 2.0, 4.5, GREEN, 1.0);
-        c.text(f, Face::BodyMedium, 17.0, row.x + 33.0, row.y + row.h / 2.0 + 6.0, &d.name, TEXT, 1.0);
+        c.fill_circle(row.x + 18.5, row.y + row.h / 2.0, 4.5, presence_color(d), 1.0);
+        // What the device is up to sits on the right, the name gets the rest.
+        let mut name_w = row.w - 33.0 - 14.0;
+        if let Some((line, color)) = device_line(f, d, row.w * 0.55) {
+            let w = f.measure(Face::Body, 14.0, &line);
+            c.text(f, Face::Body, 14.0, row.x + row.w - 14.0 - w, baseline, &line, color, 1.0);
+            name_w -= w + 12.0;
+        }
+        let name = f.fit(Face::BodyMedium, 17.0, &d.name, name_w);
+        c.text(f, Face::BodyMedium, 17.0, row.x + 33.0, baseline, &name, TEXT, 1.0);
+        if let Some(t) = &d.transfer {
+            let track = Rect::new(row.x + 33.0, row.y + row.h - 5.0, row.w - 47.0, 2.0);
+            c.fill_rect(track, MAUVE, 0.2);
+            c.fill_rect(Rect::new(track.x, track.y, track.w * t.percent() as f32 / 100.0, track.h), MAUVE, 0.9);
+        }
     }
-    if list.len() > SHOWN {
-        let more = format!("and {} more", list.len() - SHOWN);
-        c.text(f, Face::Body, 15.0, x + 12.0, r.y + 56.0 + SHOWN as f32 * 52.0 + 16.0, &more, OVERLAY1, 1.0);
+    if list.len() > shown {
+        // The section has them all, a page at a time.
+        let more = format!("and {} more", list.len() - shown);
+        let row = Rect::new(x, r.y + 56.0 + shown as f32 * 52.0, r.w - 48.0, 44.0);
+        let hovered = m.hover == Some(action);
+        c.text(f, Face::Body, 15.0, row.x + 12.0, row.y + row.h / 2.0 + 5.5, &more, if hovered { MAUVE } else { OVERLAY1 }, 1.0);
+        hits.push(Hit { rect: row, action });
     }
 }
 
@@ -146,6 +166,7 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         hits.push(Hit { rect: button, action: Action::Record });
     }
 
+    let s = m.settings;
     let text = match m.status {
         Status::Idle => "Start recording",
         Status::Stopping => "Saving…",
@@ -158,9 +179,13 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         _ => ("00:00:00".to_string(), 0.35),
     };
     c.text_centered(f, Face::Data, 64.0, cx, cy + 250.0, &time, TEXT, time_alpha);
+    if let Some(free) = m.free {
+        let room = free_space(free, s.quality.mbps());
+        let color = if free < LOW_SPACE { YELLOW } else { OVERLAY2 };
+        c.text_centered(f, Face::Body, 15.0, cx, cy + 284.0, &room, color, 1.0);
+    }
 
     // Clips: the switch, a button to clip right now, and what's going on.
-    let s = m.settings;
     let inset = 36.0;
     let row_y = r.y + r.h - 116.0;
     let w = (r.w - 2.0 * inset - 14.0) / 2.0;
