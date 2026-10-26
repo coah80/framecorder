@@ -102,7 +102,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .look { margin: var(--gap) 0 0; display: grid; grid-template-columns: 1fr 22%; gap: 32px; align-items: end; }
 .look img { width: 100%; border-radius: 20px; border: 1px solid var(--surface0); }
 
-.get, .give { margin-top: var(--gap); display: grid; gap: 24px; justify-items: start; }
+/* one column that can shrink, or the long install command widens the whole section past a phone screen */
+.get, .give { margin-top: var(--gap); display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; justify-items: start; }
 .get h2, .give h2 { font-size: clamp(36px, 5vw, 64px); }
 .get p, .give p { color: var(--subtext0); max-width: 52ch; text-wrap: pretty; }
 .get p code { font: 500 .95em var(--data); color: var(--text); }
@@ -110,16 +111,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .get a:not(.btn) { color: var(--mauve); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 .apps { display: flex; flex-wrap: wrap; gap: 12px; }
-button.btn { border: 0; cursor: pointer; }
-/* linux is two choices: picking it hides the others and shows these. the
-   linux button and appimage share a name, so the browser morphs one into the other */
-.apps .pick, .apps.linux > :not(.pick) { display: none; }
-.apps.linux .pick { display: inline-flex; }
-#linux, #appimage { view-transition-name: linux; }
-.apps .soon { gap: 8px; opacity: .5; cursor: default; pointer-events: none; }
-.apps .soon small { font: 500 13px var(--data); }
-.apps .back { color: var(--overlay2); box-shadow: inset 0 0 0 1.5px var(--surface1); }
-::view-transition-group(linux) { animation-duration: .45s; animation-timing-function: var(--out); }
+/* a line for people coming from the old desktop app, quieter than the pitch above the buttons */
+.get p.note { font-size: 16px; color: var(--overlay2); margin-top: -8px; }
 
 /* three steps, in the order you do them */
 .path { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; counter-reset: step; font-size: 20px; color: var(--subtext1); }
