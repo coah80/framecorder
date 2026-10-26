@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use framecorder_app_lib::core::api::{About, Remote};
+use framecorder_app_lib::core::api::{About, Recording, Remote};
 use framecorder_app_lib::core::engine::{DirSink, Engine, Listener, Progress, Status};
 use framecorder_app_lib::core::store::Entry;
 use framecorder_app_lib::headless::default_state_dir;
@@ -18,6 +18,7 @@ pub enum Msg {
     Removed,
     /// what a frame's tab is up to, by fingerprint. None once we've lost touch
     Remote(String, Option<Remote>),
+    Recording(String, Recording),
     /// a frame's battery and storage, by fingerprint. None once we've lost touch
     About(String, Option<About>),
 }
@@ -48,6 +49,10 @@ impl Listener for Bridge {
 
     fn remote(&self, host: &str, remote: Option<&Remote>) {
         let _ = self.0.try_send(Msg::Remote(host.to_string(), remote.cloned()));
+    }
+
+    fn recording(&self, host: &str, recording: &Recording) {
+        let _ = self.0.try_send(Msg::Recording(host.to_string(), recording.clone()));
     }
 
     fn about(&self, host: &str, about: Option<&About>) {
@@ -95,6 +100,7 @@ pub fn start(rt: tokio::runtime::Handle, demo: bool) -> Result<(Core, async_chan
         Arc::new(DirSink { root: download_dir.clone() }),
         Arc::new(Bridge(tx)),
         &framecorder_app_lib::core::device_name(),
+        format!("desktop/{}", env!("CARGO_PKG_VERSION")),
     );
     if !demo {
         engine.start_all();

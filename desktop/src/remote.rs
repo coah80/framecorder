@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use framecorder_app_lib::core::api::{About, Recording, Remote};
+use framecorder_app_lib::core::api::{About, Recording, RecordingPatch, Remote};
 use framecorder_app_lib::core::engine::{State, Status};
 use gpui::{Context, SystemNotification};
 
@@ -111,6 +111,13 @@ impl FrameApp {
         cx.notify();
     }
 
+    pub fn on_recording(&mut self, fingerprint: &str, settings: Recording, cx: &mut Context<Self>) {
+        let l = self.live_mut(fingerprint);
+        l.recording = Some(settings);
+        l.asked = true;
+        cx.notify();
+    }
+
     pub fn on_about(&mut self, fingerprint: &str, about: Option<About>, cx: &mut Context<Self>) {
         self.live_mut(fingerprint).about = about;
         cx.notify();
@@ -191,13 +198,15 @@ impl FrameApp {
     /// changes a frame's recording settings, showing the change right away
     /// and taking it back if the frame says no
     pub fn change_settings(&mut self, fingerprint: &str, settings: Recording, cx: &mut Context<Self>) {
-        let old = self.live_mut(fingerprint).recording.replace(settings.clone());
+        let Some(old) = self.live_mut(fingerprint).recording.clone() else { return };
+        let patch = recording_patch(&old, &settings);
+        self.live_mut(fingerprint).recording = Some(settings);
         cx.notify();
         if self.demo {
             return;
         }
         let (engine, fp) = (self.core.engine.clone(), fingerprint.to_string());
-        let job = self.core.rt.spawn(async move { engine.set_recording(&fp, &settings).await });
+        let job = self.core.rt.spawn(async move { engine.set_recording(&fp, &patch).await });
         let fp = fingerprint.to_string();
         cx.spawn(async move |this, cx| {
             let res = job.await.unwrap_or_else(|e| Err(e.to_string()));
@@ -205,7 +214,7 @@ impl FrameApp {
                 match res {
                     Ok(now) => app.live_mut(&fp).recording = Some(now),
                     Err(e) => {
-                        app.live_mut(&fp).recording = old;
+                        app.live_mut(&fp).recording = Some(old);
                         app.toast(format!("couldn't change that: {e}"), cx);
                     }
                 }
@@ -295,9 +304,35 @@ impl FrameApp {
     }
 }
 
+// The current controls pass a snapshot. Only the fields they changed go on the wire.
+fn recording_patch(old: &Recording, new: &Recording) -> RecordingPatch {
+    RecordingPatch {
+        shape: (old.shape != new.shape).then(|| new.shape.clone()),
+        quality: (old.quality != new.quality).then(|| new.quality.clone()),
+        fps: (old.fps != new.fps).then(|| new.fps.clone()),
+        game_audio: (old.game_audio != new.game_audio).then_some(new.game_audio),
+        mic: (old.mic != new.mic).then_some(new.mic),
+        clips: (old.clips != new.clips).then_some(new.clips),
+        clip: (old.clip != new.clip).then_some(new.clip),
+        eye: new.eye.clone().filter(|_| old.eye != new.eye),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_one_setting_sends_only_that_field() {
+        let old: Recording = serde_json::from_str(
+            r#"{"shape":"wide","quality":"high","fps":"60","game_audio":true,"mic":false,"clips":true,"clip":30}"#,
+        )
+        .unwrap();
+        let new = Recording { mic: true, ..old.clone() };
+        assert_eq!(serde_json::to_value(recording_patch(&old, &new)).unwrap(), serde_json::json!({"mic":true}));
+        let new = Recording { shape: "square".into(), ..old.clone() };
+        assert_eq!(serde_json::to_value(recording_patch(&old, &new)).unwrap(), serde_json::json!({"shape":"square"}));
+    }
 
     fn status(state: State) -> Status {
         Status { fingerprint: "a".into(), name: "f".into(), addr: "1:2".into(), state, message: None, update: None }
