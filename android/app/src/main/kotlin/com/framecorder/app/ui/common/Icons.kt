@@ -52,6 +52,8 @@ object FcIcons {
     val Storage = stroke("storage", "M8 3h9a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6z", "M9.5 7v3M12.5 7v3M15.5 7v3")
     val Bolt = icon("charging", fills = listOf("M13.5 2.5L5.5 13.5h5.5l-1 8 8-11h-5.5z"))
     val MicOff = stroke("mic off", "M15 10V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.6 2.5M5 11a7 7 0 0 0 11.5 5.4M19 11a7 7 0 0 1-.4 2.3M12 18v3M3 3l18 18")
+    val Bell = stroke("notifications", "M6 17h12l-1.6-2.2V11a4.4 4.4 0 0 0-8.8 0v3.8z", "M10 20a2 2 0 0 0 4 0")
+    val Phone = stroke("phone", rrect(7f, 2.5f, 10f, 19f, 2.5f), "M11 18.5h2")
     val Unlink = stroke("unpair", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7M3 3l18 18")
 }
 
