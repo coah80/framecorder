@@ -93,8 +93,10 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
     the type (Montserrat, Poppins, Space Grotesk, all OFL).
 
 State (paired Frames, tokens, what's been synced) lives in the app's files
-dir under `sync/`. It isn't carried over from the Tauri app, so pair once
-after updating.
+dir under `sync/`. On the first start after updating from the old Tauri app,
+the app moves the old pairings and sync index there, so it remembers your
+Frame and what it already downloaded. Pair again only if that migration
+failed and your Frame is missing.
 
 ## Build
 
