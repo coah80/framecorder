@@ -62,6 +62,8 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 
 `framecorder-sync` runs on the headset and hands finished clips and recordings to the framecorder app (windows, macos, linux, android) over wi-fi, as soon as they're saved. pair from the tab: settings, sync, "pair a device" shows a qr code and a code to type. it only syncs while the frame is on, on the same wi-fi, with framecorder running. transfers go full speed, sending a file doesn't touch the gpu or the encoder. if you stream pc vr over the same wi-fi and it stutters during a sync, set `game_rate_mb` in `~/.config/framecorder/sync/settings.json` (8 is a good start). the desktop app's in `desktop/`, the android app in `android/`, the service in `sync/`, each with its own readme.
 
+on the old 0.1.x desktop app? it can't update itself, so download the new app once from [the site](https://framecorder.coah80.com/) and open or install it. your pairings and settings carry over, and the new app closes the old one for you.
+
 ## install
 
 on the frame, in desktop mode, open konsole and run:

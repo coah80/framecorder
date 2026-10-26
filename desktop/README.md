@@ -34,7 +34,7 @@ cargo run -- --demo clips      # `--help` lists the screens, demo.rs makes them
 
 ## coming from the old tauri app
 
-this app replaced the tauri one, which can't update itself. so it picks up where that one left off:
+the old 0.1.x tauri app can't update itself. download the new app once from [the site](https://framecorder.coah80.com/) and open or install it. your pairings and settings carry over, and the new app closes the old one for you:
 
 - same state folder (`~/.config/com.framecorder.app` on linux) and the same `prefs.json`, so pairings and settings carry over
 - "start with the computer" goes by the old app's name, so if it was on, it gets pointed here on start
