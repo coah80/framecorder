@@ -32,7 +32,7 @@ the long version, lens math and all, is in [docs/how-it-works.md](docs/how-it-wo
 
 ## views and shapes
 
-- 16:9 (default), 1:1 and 9:16: one eye un-warped from what the panels show, level, centered on straight ahead and as wide as it goes without black edges (about 77° square, 64° x 96° tall). read with a sharp catmull-rom filter so it holds up next to steam's recorder. `--fov` overrides the width
+- 16:9 (default), 1:1 and 9:16: one eye un-warped from what the panels show, level, centered vertically where the lens shows the most (about 16° above straight ahead, like steamvr's own view) and as wide as it goes without black edges (about 77° square, 64° x 96° tall). read with a sharp catmull-rom filter so it holds up next to steam's recorder. `--fov` overrides the width
 - both eyes (`--view raw`): both panels exactly as scanned out, distortion included
 
 `--source headset` records SteamVR's headset view instead, the picture Steam's own recorder saves (16:9 left eye only on the frame). steamvr only renders it while someone's recording it, so it costs the game about 0.45 ms of gpu per frame and a few reprojected frames. the panel source costs the game nothing measurable, so it's the default.
