@@ -13,7 +13,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
-use super::api::{About, ApiError, Client, Recording, Remote, RemoteClip, UpdateStatus};
+use super::api::{About, ApiError, Client, Recording, RecordingPatch, Remote, RemoteClip, UpdateStatus};
 use super::discover;
 use super::space;
 use super::store::{Entry, Host, Hosts, Index};
@@ -90,6 +90,7 @@ pub trait Listener: Send + Sync {
     fn removed(&self, _host: &str, _id: &str) {}
     /// What the Frame's tab is up to; `None` once we've lost touch.
     fn remote(&self, _host: &str, _remote: Option<&Remote>) {}
+    fn recording(&self, _host: &str, _recording: &Recording) {}
     /// The headset's battery and storage; `None` once we've lost touch.
     fn about(&self, _host: &str, _about: Option<&About>) {}
 }
@@ -108,6 +109,12 @@ struct Running {
     nudge: Arc<Notify>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Forgot {
+    Both,
+    LocalOnly,
+}
+
 pub struct Engine {
     rt: Handle,
     hosts: Mutex<Hosts>,
@@ -115,6 +122,7 @@ pub struct Engine {
     sink: Arc<dyn Sink>,
     listener: Arc<dyn Listener>,
     device_name: String,
+    app: String,
     running: Mutex<HashMap<String, Running>>,
     statuses: Mutex<HashMap<String, Status>>,
     updates: Mutex<HashMap<String, UpdateStatus>>,
@@ -128,10 +136,7 @@ pub struct Engine {
 }
 
 pub fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 impl Engine {
@@ -141,6 +146,7 @@ impl Engine {
         sink: Arc<dyn Sink>,
         listener: Arc<dyn Listener>,
         device_name: &str,
+        app: String,
     ) -> Arc<Self> {
         Arc::new(Self {
             rt,
@@ -149,6 +155,7 @@ impl Engine {
             sink,
             listener,
             device_name: device_name.to_string(),
+            app,
             running: Mutex::new(HashMap::new()),
             statuses: Mutex::new(HashMap::new()),
             updates: Mutex::new(HashMap::new()),
@@ -164,6 +171,10 @@ impl Engine {
     pub fn set_finder(&self, finder: Option<Arc<dyn Finder>>, mdns: bool) {
         *self.finder.lock().unwrap() = finder;
         self.mdns.store(mdns, Ordering::SeqCst);
+    }
+
+    pub fn app(&self) -> &str {
+        &self.app
     }
 
     pub fn mdns(&self) -> bool {
@@ -237,12 +248,23 @@ impl Engine {
         }
     }
 
-    pub fn unpair(&self, fingerprint: &str) -> Result<(), String> {
+    pub async fn unpair(&self, fingerprint: &str) -> Result<Forgot, String> {
+        let host = self.host(fingerprint);
         if let Some(r) = self.running.lock().unwrap().remove(fingerprint) {
             r.task.abort();
         }
+        let remote = async {
+            let host = host.as_ref().ok_or_else(|| ApiError::Other("that frame isn't paired".into()))?;
+            Client::pinned(&host.addr, fingerprint, &self.app)?.with_token(&host.token).unpair().await
+        };
+        let forgot = match tokio::time::timeout(Duration::from_secs(3), remote).await {
+            Ok(Ok(())) => Forgot::Both,
+            _ => Forgot::LocalOnly,
+        };
         self.statuses.lock().unwrap().remove(fingerprint);
-        self.hosts.lock().unwrap().remove(fingerprint).map_err(|e| e.to_string())
+        self.updates.lock().unwrap().remove(fingerprint);
+        self.hosts.lock().unwrap().remove(fingerprint).map_err(|e| e.to_string())?;
+        Ok(forgot)
     }
 
     /// Pairs with the Frame at `addr`. With a fingerprint (QR code, mDNS)
@@ -250,24 +272,18 @@ impl Engine {
     /// look for it by fingerprint. Without one we learn it now and pin it
     /// from then on. `replaces` is a paired Frame this one is (it got a new
     /// certificate): its clips carry over and its old pairing goes.
-    pub async fn pair(
-        self: &Arc<Self>,
-        addr: &str,
-        fingerprint: Option<&str>,
-        code: &str,
-        replaces: Option<&str>,
-    ) -> Result<Host, String> {
+    pub async fn pair(self: &Arc<Self>, addr: &str, fingerprint: Option<&str>, code: &str, replaces: Option<&str>) -> Result<Host, String> {
         let (client, addr) = match fingerprint {
-            Some(fp) => match reach(&[addr.to_string()], fp, None).await {
+            Some(fp) => match reach(&[addr.to_string()], fp, None, &self.app).await {
                 Ok(v) => v,
                 Err(e @ ApiError::Unreachable(_)) => match self.locate(fp, true).await {
-                    Some(addrs) => reach(&addrs, fp, None).await.map_err(|e| e.to_string())?,
+                    Some(addrs) => reach(&addrs, fp, None, &self.app).await.map_err(|e| e.to_string())?,
                     None => return Err(e.to_string()),
                 },
                 Err(e) => return Err(e.to_string()),
             },
             None => {
-                let client = Client::capture(addr).map_err(|e| e.to_string())?;
+                let client = Client::capture(addr, &self.app).map_err(|e| e.to_string())?;
                 client.hello().await.map_err(|e| e.to_string())?;
                 (client, addr.to_string())
             }
@@ -294,7 +310,7 @@ impl Engine {
                 Ok(n) => log::info!("{n} clips carried over from its old pairing"),
                 Err(e) => log::warn!("couldn't carry its clips over: {e}"),
             }
-            if let Err(e) = self.unpair(old) {
+            if let Err(e) = self.unpair(old).await {
                 log::warn!("couldn't drop its old pairing: {e}");
             }
         }
@@ -314,7 +330,7 @@ impl Engine {
         client.recording().await.map_err(|e| e.to_string())
     }
 
-    pub async fn set_recording(&self, fingerprint: &str, settings: &Recording) -> Result<Recording, String> {
+    pub async fn set_recording(&self, fingerprint: &str, settings: &RecordingPatch) -> Result<Recording, String> {
         let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
         let client = self.connect(&host).await.map_err(|e| e.to_string())?;
         client.set_recording(settings).await.map_err(|e| e.to_string())
@@ -406,7 +422,7 @@ impl Engine {
         // between sweeps, mDNS alone (where it runs) still gets a look
         let window = if due { FIND_WINDOW } else { Duration::from_secs(3) };
         let found = if due {
-            discover::find(fingerprint, window, self.mdns()).await
+            discover::find(fingerprint, window, self.mdns(), &self.app).await
         } else {
             let mut hit = None;
             let _ = discover::browse(window, |f| {
@@ -425,13 +441,13 @@ impl Engine {
     /// Finds the Frame, at its last address or wherever it is now.
     async fn connect(&self, host: &Host) -> Result<Client, ApiError> {
         let token = Some(host.token.as_str());
-        let err = match reach(std::slice::from_ref(&host.addr), &host.fingerprint, token).await {
+        let err = match reach(std::slice::from_ref(&host.addr), &host.fingerprint, token, &self.app).await {
             Ok((client, _)) => return Ok(client),
             Err(e @ ApiError::Unreachable(_)) | Err(e @ ApiError::WrongFingerprint) => e,
             Err(e) => return Err(e),
         };
         let Some(addrs) = self.locate(&host.fingerprint, false).await else { return Err(err) };
-        let (client, addr) = reach(&addrs, &host.fingerprint, token).await?;
+        let (client, addr) = reach(&addrs, &host.fingerprint, token, &self.app).await?;
         if addr != host.addr {
             log::info!("{} moved to {addr}", host.name);
             if let Err(e) = self.hosts.lock().unwrap().set_addr(&host.fingerprint, &addr) {
@@ -494,6 +510,10 @@ impl Engine {
                         Ok(r) => self.listener.remote(&host.fingerprint, Some(&r)),
                         Err(e) => log::warn!("odd event from the frame: {e}"),
                     },
+                    "settings" => match serde_json::from_str::<Recording>(&ev.data) {
+                        Ok(r) => self.listener.recording(&host.fingerprint, &r),
+                        Err(e) => log::warn!("odd event from the frame: {e}"),
+                    },
                     "frame" => match serde_json::from_str::<About>(&ev.data) {
                         Ok(a) => self.listener.about(&host.fingerprint, Some(&a)),
                         Err(e) => log::warn!("odd event from the frame: {e}"),
@@ -521,7 +541,11 @@ impl Engine {
                 Ok(Some(update)) => {
                     let watching = update.updating;
                     self.set_update(host, update);
-                    if watching { UPDATE_WATCH } else { UPDATE_CHECK }
+                    if watching {
+                        UPDATE_WATCH
+                    } else {
+                        UPDATE_CHECK
+                    }
                 }
                 Ok(None) => return std::future::pending().await,
                 Err(e) => {
@@ -575,7 +599,8 @@ impl Engine {
                 Err(ApiError::Refused(404, _)) => log::info!("{} is gone, skipping", clip.name),
                 Err(e @ ApiError::Full { .. }) => {
                     log::info!("no room for {} ({e})", clip.name);
-                    let smaller = |old: &ApiError| matches!((old, &e), (ApiError::Full { need: a, .. }, ApiError::Full { need: b, .. }) if b < a);
+                    let smaller =
+                        |old: &ApiError| matches!((old, &e), (ApiError::Full { need: a, .. }, ApiError::Full { need: b, .. }) if b < a);
                     if full.as_ref().is_none_or(smaller) {
                         full = Some(e);
                     }
@@ -625,11 +650,7 @@ impl Engine {
             location,
             synced_at: now_unix(),
         };
-        self.index
-            .lock()
-            .unwrap()
-            .insert(entry.clone())
-            .map_err(|e| ApiError::Other(format!("couldn't save the index: {e}")))?;
+        self.index.lock().unwrap().insert(entry.clone()).map_err(|e| ApiError::Other(format!("couldn't save the index: {e}")))?;
         log::info!("synced {} -> {}", entry.name, entry.location);
         self.listener.synced(&entry);
         match client.delete(&clip.id).await {
@@ -643,13 +664,13 @@ impl Engine {
 
 /// Says hello at every address at once and keeps the first that answers
 /// with the right certificate.
-async fn reach(addrs: &[String], fingerprint: &str, token: Option<&str>) -> Result<(Client, String), ApiError> {
+async fn reach(addrs: &[String], fingerprint: &str, token: Option<&str>, app: &str) -> Result<(Client, String), ApiError> {
     if addrs.is_empty() {
         return Err(ApiError::Unreachable("no address to try".into()));
     }
     let tries = addrs.iter().map(|addr| {
         Box::pin(async move {
-            let client = Client::pinned(addr, fingerprint)?;
+            let client = Client::pinned(addr, fingerprint, app)?;
             let client = match token {
                 Some(t) => client.with_token(t),
                 None => client,

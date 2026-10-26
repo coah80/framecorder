@@ -108,8 +108,8 @@ fn targets_of(nets: impl Iterator<Item = (Ipv4Addr, Ipv4Addr)>) -> Vec<Ipv4Addr>
 
 /// Asks whatever answers at `addr` who it is. Only a framecorder-sync whose
 /// certificate matches the fingerprint it claims counts.
-pub async fn identify(addr: &str) -> Option<Found> {
-    let client = Client::capture(addr).ok()?;
+pub async fn identify(addr: &str, app: &str) -> Option<Found> {
+    let client = Client::capture(addr, app).ok()?;
     let hello = tokio::time::timeout(HELLO, client.hello()).await.ok()?.ok()?;
     let seen = client.seen_fingerprint()?;
     if normalize_fingerprint(&hello.fingerprint)? != seen {
@@ -120,7 +120,7 @@ pub async fn identify(addr: &str) -> Option<Found> {
 
 /// Knocks on port 38619 of every nearby address for up to `window`, and
 /// says hello to whatever opens. Works where multicast doesn't.
-pub async fn sweep(window: Duration, mut on_found: impl FnMut(Found) -> bool) {
+pub async fn sweep(window: Duration, app: &str, mut on_found: impl FnMut(Found) -> bool) {
     let targets = sweep_targets();
     if targets.is_empty() {
         return;
@@ -132,7 +132,7 @@ pub async fn sweep(window: Duration, mut on_found: impl FnMut(Found) -> bool) {
         })
         .buffer_unordered(PARALLEL)
         .filter_map(|a| async move { a })
-        .map(|addr| async move { identify(&addr.to_string()).await })
+        .map(|addr| async move { identify(&addr.to_string(), app).await })
         .buffer_unordered(8)
         .filter_map(|f| async move { f });
     let run = async {
@@ -148,9 +148,10 @@ pub async fn sweep(window: Duration, mut on_found: impl FnMut(Found) -> bool) {
 
 /// mDNS (unless `mdns` is off) and the sweep at once. Each Frame is reported
 /// when it first shows up, and again if it turns up at more addresses.
-pub async fn look(window: Duration, mdns: bool, mut on_found: impl FnMut(Found) -> bool) {
+pub async fn look(window: Duration, mdns: bool, app: &str, mut on_found: impl FnMut(Found) -> bool) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Found>();
     let by_name = tx.clone();
+    let app = app.to_string();
     let producers = async move {
         let browsing = async move {
             if mdns {
@@ -159,7 +160,7 @@ pub async fn look(window: Duration, mdns: bool, mut on_found: impl FnMut(Found) 
                 }
             }
         };
-        let sweeping = sweep(window, move |f| tx.send(f).is_ok());
+        let sweeping = sweep(window, &app, move |f| tx.send(f).is_ok());
         tokio::join!(browsing, sweeping);
     };
     tokio::spawn(producers);
@@ -189,9 +190,9 @@ pub async fn look(window: Duration, mdns: bool, mut on_found: impl FnMut(Found) 
 }
 
 /// Looks for one particular Frame, e.g. after its address changed.
-pub async fn find(fingerprint: &str, window: Duration, mdns: bool) -> Option<Found> {
+pub async fn find(fingerprint: &str, window: Duration, mdns: bool, app: &str) -> Option<Found> {
     let mut hit = None;
-    look(window, mdns, |f| {
+    look(window, mdns, app, |f| {
         if f.fingerprint == fingerprint {
             hit = Some(f);
             false

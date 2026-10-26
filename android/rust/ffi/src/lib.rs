@@ -238,17 +238,65 @@ pub struct RecordingSettings {
     pub clips: bool,
     /// 15, 30, 60 or 120
     pub clip_secs: u32,
+    pub eye: Option<String>,
+    pub panels: Option<bool>,
 }
 
 impl From<api::Recording> for RecordingSettings {
     fn from(r: api::Recording) -> Self {
-        Self { shape: r.shape, quality: r.quality, fps: r.fps, game_audio: r.game_audio, mic: r.mic, clips: r.clips, clip_secs: r.clip }
+        Self {
+            shape: r.shape,
+            quality: r.quality,
+            fps: r.fps,
+            game_audio: r.game_audio,
+            mic: r.mic,
+            clips: r.clips,
+            clip_secs: r.clip,
+            eye: r.eye,
+            panels: r.panels,
+        }
     }
 }
 
-impl From<RecordingSettings> for api::Recording {
-    fn from(r: RecordingSettings) -> Self {
-        Self { shape: r.shape, quality: r.quality, fps: r.fps, game_audio: r.game_audio, mic: r.mic, clips: r.clips, clip: r.clip_secs }
+#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+pub struct RecordingPatch {
+    pub shape: Option<String>,
+    pub quality: Option<String>,
+    pub fps: Option<String>,
+    pub game_audio: Option<bool>,
+    pub mic: Option<bool>,
+    pub clips: Option<bool>,
+    pub clip_secs: Option<u32>,
+    pub eye: Option<String>,
+}
+
+impl From<RecordingPatch> for api::RecordingPatch {
+    fn from(r: RecordingPatch) -> Self {
+        Self {
+            shape: r.shape,
+            quality: r.quality,
+            fps: r.fps,
+            game_audio: r.game_audio,
+            mic: r.mic,
+            clips: r.clips,
+            clip: r.clip_secs,
+            eye: r.eye,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum Forgot {
+    Both,
+    LocalOnly,
+}
+
+impl From<engine::Forgot> for Forgot {
+    fn from(value: engine::Forgot) -> Self {
+        match value {
+            engine::Forgot::Both => Self::Both,
+            engine::Forgot::LocalOnly => Self::LocalOnly,
+        }
     }
 }
 
@@ -283,6 +331,7 @@ pub trait Events: Send + Sync {
     fn remote(&self, host: String, state: Option<RemoteState>);
     /// The headset's battery and storage; null once we've lost touch with it.
     fn about(&self, host: String, info: Option<FrameInfo>);
+    fn recording(&self, host: String, settings: RecordingSettings);
 }
 
 /// Finding a Frame the platform's way (Android's NSD), so mDNS works
@@ -352,6 +401,10 @@ impl engine::Listener for Relay {
         self.0.remote(host.into(), remote.map(RemoteState::from));
     }
 
+    fn recording(&self, host: &str, settings: &api::Recording) {
+        self.0.recording(host.into(), settings.clone().into());
+    }
+
     fn about(&self, host: &str, about: Option<&api::About>) {
         self.0.about(host.into(), about.map(FrameInfo::from));
     }
@@ -367,9 +420,7 @@ impl engine::Finder for FinderRelay {
 
 fn init_logging() {
     #[cfg(target_os = "android")]
-    android_logger::init_once(
-        android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("framecorder"),
-    );
+    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("framecorder"));
 }
 
 /// `host` or `host:port`, with the Frame's default port when none is given.
@@ -417,6 +468,7 @@ impl Core {
         state_dir: String,
         staging_dir: String,
         device_name: String,
+        app: String,
         gallery: Arc<dyn Gallery>,
         events: Arc<dyn Events>,
         finder: Option<Arc<dyn Finder>>,
@@ -431,7 +483,7 @@ impl Core {
         std::fs::create_dir_all(&state_dir).map_err(|e| CoreError::Failed { reason: format!("can't use {state_dir}: {e}") })?;
         std::fs::create_dir_all(&staging_dir).map_err(|e| CoreError::Failed { reason: format!("can't use {staging_dir}: {e}") })?;
         let sink = Arc::new(GallerySink { gallery, staging: PathBuf::from(staging_dir) });
-        let engine = Engine::new(rt.handle().clone(), Path::new(&state_dir), sink, Arc::new(Relay(events)), &device_name);
+        let engine = Engine::new(rt.handle().clone(), Path::new(&state_dir), sink, Arc::new(Relay(events)), &device_name, app);
         match finder {
             Some(f) => engine.set_finder(Some(Arc::new(FinderRelay(f))), false),
             None => engine.set_finder(None, true),
@@ -458,8 +510,9 @@ impl Core {
         self.engine.retry_now();
     }
 
-    pub fn unpair(&self, fingerprint: String) -> Result<(), CoreError> {
-        Ok(self.engine.unpair(&fingerprint)?)
+    pub async fn unpair(&self, fingerprint: String) -> Result<Forgot, CoreError> {
+        let engine = self.engine.clone();
+        Ok(self.on_rt(async move { engine.unpair(&fingerprint).await }).await??.into())
     }
 
     /// Pairs with the Frame at `addr` (`ip` or `ip:port`) using the code it
@@ -491,9 +544,7 @@ impl Core {
     pub async fn pair_link(&self, link: String, replaces: Option<String>) -> Result<FrameStatus, CoreError> {
         let l = pairlink::parse(&link)?;
         let engine = self.engine.clone();
-        let host = self
-            .on_rt(async move { engine.pair(&l.addr, Some(&l.fingerprint), &l.code, replaces.as_deref()).await })
-            .await??;
+        let host = self.on_rt(async move { engine.pair(&l.addr, Some(&l.fingerprint), &l.code, replaces.as_deref()).await }).await??;
         self.status_of(&host.fingerprint)
     }
 
@@ -501,9 +552,10 @@ impl Core {
     /// mDNS doesn't get through.
     pub async fn sweep(&self, seconds: u32) -> Vec<FoundFrame> {
         let window = Duration::from_secs(seconds.clamp(1, 30) as u64);
+        let app = self.engine.app().to_string();
         self.on_rt(async move {
             let mut found = Vec::new();
-            discover::sweep(window, |f| {
+            discover::sweep(window, &app, |f| {
                 found.push(FoundFrame::from(f));
                 true
             })
@@ -519,7 +571,8 @@ impl Core {
     pub async fn identify(&self, addr: String) -> Result<FoundFrame, CoreError> {
         let addr = with_port(&addr)?;
         let shown = addr.clone();
-        self.on_rt(async move { discover::identify(&addr).await })
+        let app = self.engine.app().to_string();
+        self.on_rt(async move { discover::identify(&addr, &app).await })
             .await?
             .map(FoundFrame::from)
             .ok_or_else(|| CoreError::Failed { reason: format!("nothing that looks like a frame answered at {shown}") })
@@ -541,9 +594,9 @@ impl Core {
     }
 
     /// Saves them on the Frame, for its next recording. Returns what it kept.
-    pub async fn set_recording(&self, fingerprint: String, settings: RecordingSettings) -> Result<RecordingSettings, CoreError> {
+    pub async fn set_recording(&self, fingerprint: String, settings: RecordingPatch) -> Result<RecordingSettings, CoreError> {
         let engine = self.engine.clone();
-        let settings = api::Recording::from(settings);
+        let settings = api::RecordingPatch::from(settings);
         Ok(self.on_rt(async move { engine.set_recording(&fingerprint, &settings).await }).await??.into())
     }
 
@@ -560,8 +613,9 @@ impl Core {
     /// address with the certificate we paired with? Says why not.
     pub async fn check(&self, fingerprint: String) -> Result<(), CoreError> {
         let host = self.engine.host(&fingerprint).ok_or("that frame isn't paired")?;
+        let app = self.engine.app().to_string();
         self.on_rt(async move {
-            let client = Client::pinned(&host.addr, &host.fingerprint).map_err(|e| e.to_string())?.with_token(&host.token);
+            let client = Client::pinned(&host.addr, &host.fingerprint, &app).map_err(|e| e.to_string())?.with_token(&host.token);
             client.hello().await.map(|_| ()).map_err(|e| e.to_string())
         })
         .await??;

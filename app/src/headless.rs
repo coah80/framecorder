@@ -33,10 +33,9 @@ impl Listener for LogListener {
         match s.state {
             State::Connected => println!("connected to {} at {}", s.name, s.addr),
             State::Connecting => {}
-            State::Unreachable => println!(
-                "can't reach {}: make sure it's on, on the same wi-fi, and framecorder is running ({msg})",
-                s.name
-            ),
+            State::Unreachable => {
+                println!("can't reach {}: make sure it's on, on the same wi-fi, and framecorder is running ({msg})", s.name)
+            }
             State::Full => println!("out of space for clips from {}: {msg}", s.name),
             State::Unpaired | State::WrongFingerprint => println!("{}: {msg}", s.name),
         }
@@ -106,7 +105,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     if discover {
         println!("looking for frames for {discover_secs}s...");
-        discover::look(Duration::from_secs(discover_secs), true, |f| {
+        discover::look(Duration::from_secs(discover_secs), true, &format!("desktop/{}", env!("CARGO_PKG_VERSION")), |f| {
             println!("{}  {}  fp={}", f.name, f.addrs.join(","), f.fingerprint);
             true
         })
@@ -123,6 +122,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         Arc::new(DirSink { root: dir.clone() }),
         Arc::new(LogListener { last: Mutex::new((String::new(), 0)) }),
         &crate::core::device_name(),
+        format!("desktop/{}", env!("CARGO_PKG_VERSION")),
     );
 
     if let Some(link) = link {
