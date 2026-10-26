@@ -43,7 +43,7 @@ impl Listener for LogListener {
 
     fn progress(&self, p: &Progress) {
         // a line per 10%, not per chunk
-        let pct = if p.total > 0 { p.done * 100 / p.total } else { 100 };
+        let pct = p.done.saturating_mul(100).checked_div(p.total).unwrap_or(100);
         let mut last = self.last.lock().unwrap();
         if last.0 != p.id || pct / 10 != last.1 / 10 || p.done == p.total {
             println!("  {} {pct}% ({} / {} bytes)", p.name, p.done, p.total);
