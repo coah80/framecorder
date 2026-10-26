@@ -166,7 +166,9 @@ fn main() {
     let state_dir = core.state_dir.clone();
     let is_demo = demo.is_some();
 
-    gpui_platform::application().with_assets(assets::Assets).on_reopen(open_main).run(move |cx: &mut App| {
+    let application = gpui_platform::application().with_assets(assets::Assets);
+    application.on_reopen(open_main);
+    application.run(move |cx: &mut App| {
         // windows shows no notification at all from an app without an identity.
         // the installer's shortcuts carry the same id
         cx.set_app_identity("coah80.framecorder", "framecorder");
@@ -320,7 +322,9 @@ impl Render for OldAppError {
 }
 
 fn show_oldapp_error() {
-    gpui_platform::application().with_assets(assets::Assets).on_reopen(|cx| cx.activate(true)).run(|cx| {
+    let application = gpui_platform::application().with_assets(assets::Assets);
+    application.on_reopen(|cx| cx.activate(true));
+    application.run(|cx| {
         assets::load_fonts(cx);
         let result = cx.open_window(
             WindowOptions {
