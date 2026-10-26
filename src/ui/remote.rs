@@ -2,7 +2,7 @@
 //! phone asked for to command.json; the tab does it and writes status.json,
 //! which also tells phones what's going on, recording or not.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -22,6 +22,7 @@ pub enum Command {
 pub struct Status {
     /// The setup's done, so the recorder may run.
     pub ready: bool,
+    pub panels: bool,
     pub recording: bool,
     /// Recording and not paused (it pauses while the tab's on screen).
     pub running: bool,
@@ -100,16 +101,20 @@ impl Remote {
 
     /// Writes status.json when something phones care about changed.
     pub fn publish(&mut self, status: &Status) {
+        let Some(file) = path("status.json").filter(|f| f.parent().is_some_and(|d| d.is_dir())) else { return };
+        self.publish_to(&file, status);
+    }
+
+    fn publish_to(&mut self, file: &Path, status: &Status) {
         // the recorded time moves on its own; phones work it out from `at`
         let key = Status { recorded_ms: 0, ..status.clone() };
         if self.published.as_ref().is_some_and(|(s, done)| *s == key && *done == self.done) {
             return;
         }
-        // nothing to tell before framecorder-sync has been set up
-        let Some(file) = path("status.json").filter(|f| f.parent().is_some_and(|d| d.is_dir())) else { return };
         let body = json!({
             "pid": std::process::id(),
             "ready": status.ready,
+            "panels": status.panels,
             "recording": status.recording,
             "running": status.running,
             "recorded_ms": status.recorded_ms,
@@ -124,5 +129,26 @@ impl Remote {
             Ok(()) => self.published = Some((key, self.done)),
             Err(e) => log::warn!("couldn't write {}: {e}", file.display()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publishes_panel_access_when_it_changes() {
+        let dir = std::env::temp_dir().join(format!("framecorder-remote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("status.json");
+        let mut remote = Remote::new();
+        for panels in [true, false] {
+            remote.publish_to(&file, &Status { ready: true, panels, ..Status::default() });
+            let body: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            assert_eq!(body["panels"], panels);
+            assert_eq!(body["ready"], true);
+            assert_eq!(body["recording"], false);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
