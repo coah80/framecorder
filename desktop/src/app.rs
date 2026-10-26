@@ -1014,6 +1014,12 @@ impl FrameApp {
     }
 }
 
+/// the window's too narrow for the pages' side by side layouts (the smallest
+/// it goes is 720), so they stack instead. the default 920 isn't narrow
+pub fn narrow(window: &Window) -> bool {
+    window.viewport_size().width < px(860.)
+}
+
 impl Render for FrameApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if self.page == Page::Pair {
@@ -1025,7 +1031,7 @@ impl Render for FrameApp {
                 .child(sidebar::render(self, cx))
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
-                    Page::Frame => frame::render(self, cx).into_any_element(),
+                    Page::Frame => frame::render(self, window, cx).into_any_element(),
                     Page::Check => check::render(self, cx).into_any_element(),
                     _ => clips::render(self, window, cx).into_any_element(),
                 })
