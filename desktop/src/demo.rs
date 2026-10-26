@@ -106,6 +106,8 @@ fn live(remote: Option<Remote>) -> Live {
             mic: true,
             clips: true,
             clip: 30,
+            eye: Some("left".into()),
+            panels: Some(true),
         }),
         asked: true,
         ..Default::default()

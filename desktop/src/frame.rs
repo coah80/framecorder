@@ -31,6 +31,8 @@ fn defaults() -> Recording {
         mic: true,
         clips: true,
         clip: 30,
+        eye: None,
+        panels: None,
     }
 }
 
