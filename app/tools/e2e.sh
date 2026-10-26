@@ -14,8 +14,8 @@ trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 cargo build -q --release --manifest-path "$ROOT/sync/Cargo.toml"
 cargo build -q --no-default-features --manifest-path "$ROOT/app/Cargo.toml"
-SYNC="$ROOT/sync/target/release/framecorder-sync"
-APP="$ROOT/app/target/debug/framecorder-app"
+SYNC="${CARGO_TARGET_DIR:-$ROOT/sync/target}/release/framecorder-sync"
+APP="${CARGO_TARGET_DIR:-$ROOT/app/target}/debug/framecorder-app"
 
 # a stand-in for SteamVR, so the "game running" throttle can be switched on
 cat > "$WORK/fakevr.c" <<'C'
@@ -30,12 +30,13 @@ void VR_ShutdownInternal(void) {}
 void *VR_GetGenericInterface(const char *n, int *err) { if (!strcmp(n, "FnTable:IVRApplications_008")) { table[25] = (void *)scene; *err = 0; return table; } *err = 105; return 0; }
 C
 gcc -shared -fPIC -o "$WORK/libopenvr_api.so" "$WORK/fakevr.c"
-echo 0 > "$WORK/scene"
+echo 3 > "$WORK/scene"
 
 H="$WORK/frame"
 V="$H/Videos/framecorder"
 S="$H/.config/framecorder/sync"
-mkdir -p "$V/clips"
+mkdir -p "$V/clips" "$S"
+printf '{"game_rate_mb":8}\n' > "$S/settings.json"
 head -c 20000000 /dev/urandom > "$V/clips/2026-09-26_14-00-00.mp4"
 
 HOME="$H" FAKE_SCENE="$WORK/scene" FRAMECORDER_OPENVR_LIB="$WORK/libopenvr_api.so" \
@@ -63,19 +64,26 @@ DL="$WORK/dl"
 "$APP" --headless-sync "$DL" --state "$WORK/state" \
     --pair "framecorder://pair?host=127.0.0.1&port=$PORT&fp=$FP&code=111111&name=Frame" > "$WORK/app.log" 2>&1 &
 APP_PID=$!
-for _ in $(seq 100); do [ -f "$DL/clips/2026-09-26_14-00-00.mp4" ] && break; sleep 0.1; done
-cmp -s "$DL/clips/2026-09-26_14-00-00.mp4" "$V/clips/2026-09-26_14-00-00.mp4" || fail "existing clip"
+EXISTING=""
+for _ in $(seq 100); do
+    EXISTING=$(find "$DL" -type f -name '2026-09-26_14-00-00.mp4' -print -quit 2>/dev/null || true)
+    [ -n "$EXISTING" ] && break
+    sleep 0.1
+done
+[ -n "$EXISTING" ] || fail "existing clip didn't download"
+HOST_DL=$(dirname "$(dirname "$EXISTING")")
+cmp -s "$EXISTING" "$V/clips/2026-09-26_14-00-00.mp4" || fail "existing clip"
 pass "paired, existing clip downloaded"
 
 # a writer finishing a clip: .part, then rename
 head -c 5000000 /dev/urandom > "$V/clips/x.mp4.part"
 sleep 0.5
-[ -e "$DL/clips/x.mp4" ] && fail ".part got synced"
+[ -e "$HOST_DL/clips/x.mp4" ] && fail ".part got synced"
 START=$(date +%s%N)
 mv "$V/clips/x.mp4.part" "$V/clips/x.mp4"
-for _ in $(seq 200); do [ -f "$DL/clips/x.mp4" ] && break; sleep 0.01; done
+for _ in $(seq 200); do [ -f "$HOST_DL/clips/x.mp4" ] && break; sleep 0.01; done
 TOOK=$(( ($(date +%s%N) - START) / 1000000 ))
-cmp -s "$DL/clips/x.mp4" "$V/clips/x.mp4" || fail "new clip"
+cmp -s "$HOST_DL/clips/x.mp4" "$V/clips/x.mp4" || fail "new clip"
 [ "$TOOK" -lt 1000 ] || fail "new clip took ${TOOK}ms"
 pass "rename to .mp4 synced in ${TOOK}ms"
 
@@ -83,15 +91,21 @@ pass "rename to .mp4 synced in ${TOOK}ms"
 echo 3 > "$WORK/scene"
 head -c 60000000 /dev/urandom > "$V/big.mp4.part"
 mv "$V/big.mp4.part" "$V/big.mp4"
-sleep 3
+for _ in $(seq 300); do
+    PART_FILE=$(find "$HOST_DL" -maxdepth 1 -name 'big.mp4.*.part' -size +0c -print -quit)
+    [ -n "$PART_FILE" ] && break
+    [ -f "$HOST_DL/big.mp4" ] && fail "download finished before it could be interrupted"
+    sleep 0.02
+done
+[ -n "$PART_FILE" ] || fail "no partial download appeared"
 kill -9 "$APP_PID"; wait "$APP_PID" 2>/dev/null || true
-PART=$(stat -c %s "$DL"/big.mp4.*.part)
+PART=$(stat -c %s "$HOST_DL"/big.mp4.*.part)
 [ "$PART" -gt 0 ] && [ "$PART" -lt 60000000 ] || fail "expected a partial download, got $PART bytes"
 echo 0 > "$WORK/scene"
 "$APP" --headless-sync "$DL" --state "$WORK/state" > "$WORK/app2.log" 2>&1 &
-for _ in $(seq 300); do [ -f "$DL/big.mp4" ] && break; sleep 0.1; done
+for _ in $(seq 300); do [ -f "$HOST_DL/big.mp4" ] && break; sleep 0.1; done
 grep -q "resuming big.mp4 at $PART" "$WORK/app2.log" || fail "didn't resume: $(cat "$WORK/app2.log")"
-cmp -s "$DL/big.mp4" "$V/big.mp4" || fail "resumed file differs"
+cmp -s "$HOST_DL/big.mp4" "$V/big.mp4" || fail "resumed file differs"
 pass "killed download resumed from byte $PART"
 
 echo "all good"
