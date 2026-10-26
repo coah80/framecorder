@@ -73,9 +73,14 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
   one saw.
 - While syncing, a notification with a segment per file (Android 16's
   progress style).
-- A notification per clip that lands, with its picture, share and open; wallpaper
-  colors on Android 12+; a vector adaptive icon with a themed (monochrome)
-  layer.
+- A notification per clip that lands, with its picture, share and open (a
+  switch in settings turns these off; the syncing one is Android's own);
+  wallpaper colors on Android 12+; a vector adaptive icon with a themed
+  (monochrome) layer.
+- The first start asks to see your videos, so a reinstall finds what the
+  old install saved instead of downloading it all again; settings has a row
+  to turn that on later. Once a day it also asks GitHub for a newer app and,
+  if there is one, settings shows a quiet card that opens the download.
 
 ## Layout
 
