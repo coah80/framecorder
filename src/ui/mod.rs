@@ -181,6 +181,8 @@ struct App {
     relocked: bool,
     /// Bytes free for recordings, measured while the home screen's up.
     free: Option<u64>,
+    /// Whether the tab starts with SteamVR, looked up when settings open.
+    autostart: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -206,6 +208,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
+        "general" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
         "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
@@ -235,7 +238,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let hover = (state == "idle").then_some(Action::Record);
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
     let free = Some(if state == "low-space" { 1_400_000_000 } else { 128_400_000_000 });
-    let model = Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked", free };
+    let model = Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked", free, autostart: state != "general-off" };
     view::draw(&mut canvas, &mut fonts, &model);
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
@@ -459,6 +462,7 @@ impl App {
             unlocked,
             relocked,
             free: storage::free_for_recordings(),
+            autostart: true,
         }
     }
 
@@ -493,6 +497,15 @@ impl App {
         let s = &mut self.settings;
         match action {
             Action::TurnOff => return self.turn_off(),
+            Action::Autostart => {
+                let want = !self.autostart;
+                if crate::setup::set_autostart(want) {
+                    self.autostart = want;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -850,6 +863,9 @@ impl App {
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
         }
+        if screen == Screen::Settings(Section::General) {
+            self.autostart = crate::setup::autostart();
+        }
         if screen == Screen::Home {
             self.free = storage::free_for_recordings();
         }
@@ -953,6 +969,7 @@ impl App {
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: self.relocked,
             free: self.free,
+            autostart: self.autostart,
         }
     }
 }

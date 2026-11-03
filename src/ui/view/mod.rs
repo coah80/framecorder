@@ -55,6 +55,7 @@ pub enum Section {
     Audio,
     Clips,
     Sync,
+    General,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +94,8 @@ pub enum Action {
     FinishSetup,
     /// Stops all of framecorder until SteamVR starts again.
     TurnOff,
+    /// Whether the tab starts with SteamVR.
+    Autostart,
 }
 
 pub enum Status {
@@ -129,6 +132,8 @@ pub struct Model<'a> {
     pub relocked: bool,
     /// Bytes free where recordings go, when that could be measured.
     pub free: Option<u64>,
+    /// Whether the tab starts with SteamVR.
+    pub autostart: bool,
 }
 
 impl Model<'_> {

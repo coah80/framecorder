@@ -74,6 +74,17 @@ pub fn relocked() -> bool {
     home().is_ok_and(|h| h.join(RELOCK).exists())
 }
 
+/// Whether the tab starts with SteamVR.
+pub fn autostart() -> bool {
+    quiet("systemctl", &["--user", "is-enabled", "--quiet", "framecorder-ui.service"])
+}
+
+/// Makes the tab start with SteamVR, or not. It doesn't start or stop the tab
+/// that's running.
+pub fn set_autostart(on: bool) -> bool {
+    quiet("systemctl", &["--user", if on { "enable" } else { "disable" }, "framecorder-ui.service"])
+}
+
 /// Where the recorder gets installed.
 pub fn recorder() -> Result<PathBuf> {
     Ok(home()?.join(".local/bin/framecorder"))
@@ -190,6 +201,8 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         let _ = std::fs::remove_file(home.join(SOURCE));
     }
     let was_unlocked = panels_unlocked();
+    // An update leaves the tab's start with SteamVR as the user set it.
+    let fresh = !home.join(".config/systemd/user/framecorder-ui.service").exists();
     let updated = install(&release, &home)?;
     desktop_entry(&home)?;
     // Run by hand, right after the installer asked for the password (sudo
@@ -214,7 +227,9 @@ pub fn run(restart_ui: bool) -> Result<Report> {
     if updated.iter().any(|u| u == "framecorder-sync") {
         quiet("systemctl", &["--user", "try-restart", "framecorder-sync.service"]);
     }
-    output("systemctl", &["--user", "enable", "framecorder-ui.service"])?;
+    if fresh {
+        output("systemctl", &["--user", "enable", "framecorder-ui.service"])?;
+    }
     // It starts with SteamVR from now on. Starting it while SteamVR is off
     // would start SteamVR too (it's bound to it), so only when it's on.
     if restart_ui && quiet("systemctl", &["--user", "is-active", "--quiet", "steamvr.service"]) {
