@@ -208,7 +208,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
-        "general" => Screen::Settings(Section::General),
+        "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
         "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
