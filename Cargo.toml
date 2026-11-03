@@ -12,7 +12,8 @@ clap = { version = "4", features = ["derive"] }
 drm = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 fontdue = "0.9"
-ffmpeg-sys-next = { version = "7.1", default-features = false, features = ["avcodec", "avformat"] }
+# built from source and linked statically, so it runs on any SteamOS channel whatever FFmpeg the system has
+ffmpeg-sys-next = { version = "7.1", default-features = false, features = ["avcodec", "avformat", "build", "static"] }
 libc = "0.2"
 log = "0.4"
 pipewire = "0.10"
