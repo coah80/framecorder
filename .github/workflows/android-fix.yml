@@ -1,0 +1,57 @@
+# Builds a release APK (minified with R8, like the official one) for arm64
+# phones and signs it with a throwaway key, so it can be installed for testing.
+name: android-fix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/mlkit-r8-keep]
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: android sdk packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-37.0" "build-tools;37.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: tauri cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: build release apk
+        run: cargo tauri android build --apk --target aarch64
+
+      - name: sign with a throwaway key
+        run: |
+          apk=$(find gen/android/app/build/outputs/apk -name '*release*unsigned*.apk' -o -name '*release*.apk' | head -1)
+          echo "built: $apk"
+          keytool -genkeypair -keystore test.jks -storepass android -keypass android \
+            -alias test -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=framecorder test"
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -f -p 4 "$apk" aligned.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" sign --ks test.jks --ks-pass pass:android \
+            --out framecorder-android-mlkitfix.apk aligned.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify framecorder-android-mlkitfix.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: framecorder-android-mlkitfix
+          path: app/framecorder-android-mlkitfix.apk
