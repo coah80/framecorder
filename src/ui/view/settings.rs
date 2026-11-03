@@ -138,7 +138,7 @@ fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec
     let meaning = if m.autostart {
         "framecorder starts when SteamVR does"
     } else {
-        "Off · open framecorder from the app bar when you want it"
+        "Off · open framecorder from the dashboard when you want it"
     };
     toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", meaning, Action::Autostart, m.autostart, false);
 }
