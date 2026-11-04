@@ -5,8 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/framecorder/report
-ExecStart=%h/framecorder/report/target/release/framecorder-report
+ExecStart=%h/.local/bin/framecorder-report
 EnvironmentFile=%h/.config/framecorder-report/env
 Restart=on-failure
 RestartSec=5
