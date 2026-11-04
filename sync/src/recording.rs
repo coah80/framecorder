@@ -25,7 +25,7 @@ const KEYS: [(&str, &str); 8] = [
 
 fn allowed(key: &str, value: &str) -> bool {
     match key {
-        "eye" => matches!(value, "left" | "right"),
+        "eye" => matches!(value, "left" | "right" | "both"),
         "shape" => matches!(value, "wide" | "square" | "tall" | "both"),
         "quality" => matches!(value, "standard" | "high" | "max"),
         "fps" => matches!(value, "auto" | "60" | "30"),
@@ -137,6 +137,17 @@ mod tests {
             s,
             json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "clips": true, "clip": 30})
         );
+    }
+
+    #[test]
+    fn blended_eye_persists_and_can_be_changed_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ui.conf");
+        for eye in ["both", "right", "left"] {
+            let changed = change(&path, &json!({"eye": eye})).unwrap();
+            assert_eq!(changed["eye"], eye);
+            assert_eq!(read(&path)["eye"], eye);
+        }
     }
 
     #[test]

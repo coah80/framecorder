@@ -47,7 +47,7 @@ const SCANOUT_WAIT: Duration = Duration::from_millis(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum View {
-    /// One eye with the lens distortion removed, like a normal flat video.
+    /// A flat picture with lens distortion removed, from one eye or blended eyes.
     Eye,
     /// Both panels exactly as scanned out, distortion included.
     Raw,
@@ -92,6 +92,7 @@ impl Aspect {
 enum Eye {
     Left,
     Right,
+    Both,
 }
 
 #[derive(Parser, Debug)]
@@ -117,7 +118,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = Source::Panel)]
     source: Source,
 
-    /// Which eye to record in `eye` view.
+    /// Which eye to record in `eye` view. Both blends a flat view from the panels.
     #[arg(long, value_enum, default_value_t = Eye::Left)]
     eye: Eye,
 
@@ -292,7 +293,11 @@ fn run(args: Args) -> Result<()> {
         (false, View::Raw) => lut::raw(width, height, kms.mode_size.0, kms.mode_size.1),
         (false, View::Eye) => {
             let vr = openvr::OpenVr::connect().context("asking SteamVR for the lens distortion (try --view raw)")?;
-            lut::undistorted(&vr, args.eye as usize, args.fov, width, height)?
+            if args.eye == Eye::Both {
+                lut::blended(&vr, args.fov, width, height)?
+            } else {
+                lut::undistorted(&vr, args.eye as usize, args.fov, width, height)?
+            }
         }
     };
     let extensions = vr.as_ref().map(headset_view::vulkan_extensions).transpose()?;

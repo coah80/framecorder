@@ -282,6 +282,7 @@ impl Gpu {
                 flags: (lut.per_channel as u32)
                     | (((filter == Filter::Supersample) as u32) << 1)
                     | ((lut.rotated_eyes as u32) << 2)
+                    | ((lut.blended as u32) << 4)
                     | (((filter == Filter::Sharp) as u32) << 3),
             },
             layout,

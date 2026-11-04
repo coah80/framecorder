@@ -595,6 +595,18 @@ mod tests {
     }
 
     #[test]
+    fn recording_eye_accepts_blended_and_future_values() {
+        for eye in ["left", "right", "both", "future"] {
+            let value = serde_json::json!({"shape":"wide", "quality":"high", "fps":"auto",
+                "game_audio":true, "mic":true, "clips":true, "clip":30, "eye":eye});
+            let recording: Recording = serde_json::from_value(value).unwrap();
+            assert_eq!(recording.eye.as_deref(), Some(eye));
+            let patch = RecordingPatch { eye: recording.eye, ..RecordingPatch::default() };
+            assert_eq!(serde_json::to_value(patch).unwrap(), serde_json::json!({"eye":eye}));
+        }
+    }
+
+    #[test]
     fn parses_sse_across_chunks() {
         let mut p = SseParser::default();
         assert!(p.feed(b"retry: 3000\n\n: keepalive\n\nevent: ne").is_empty());
