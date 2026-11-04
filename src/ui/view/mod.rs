@@ -119,6 +119,8 @@ pub struct Model<'a> {
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.
     pub clip_cooling: bool,
+    #[allow(dead_code)]
+    pub live_viewers: usize,
     /// Whether the recorder may read the panels, or records SteamVR's view.
     pub unlocked: bool,
     pub status: Status,

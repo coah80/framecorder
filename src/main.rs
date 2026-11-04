@@ -244,6 +244,7 @@ fn run(args: Args) -> Result<()> {
     let output = match (&args.output, args.replay) {
         (Some(p), _) => Some(p.clone()),
         (None, Some(_)) => None,
+        (None, None) if args.control => None,
         (None, None) => Some(default_output("")?),
     };
     if let Some(p) = &output {
@@ -464,7 +465,7 @@ fn capture_loop(
             break;
         }
         while let Ok(cmd) = commands.try_recv() {
-            if matches!(cmd, mux::Msg::Record(_)) {
+            if matches!(cmd, mux::Msg::Record(_) | mux::Msg::Live(Some(_)) | mux::Msg::Keyframe) {
                 enc.force_keyframe();
             }
             send(tx, cmd)?;
@@ -694,6 +695,8 @@ fn spawn_control(ctl: mpsc::Sender<mux::Msg>, default_secs: u32) -> Result<()> {
                 }
                 Ok(control::Command::Quit) => break,
                 Ok(control::Command::Record(path)) => create_parent(&path).map(|_| mux::Msg::Record(path)),
+                Ok(control::Command::Live(path)) => Ok(mux::Msg::Live(path)),
+                Ok(control::Command::Keyframe) => Ok(mux::Msg::Keyframe),
                 Ok(control::Command::StopRecord) => Ok(mux::Msg::StopRecord),
                 Ok(control::Command::Clip { secs, path }) => path
                     .map_or_else(|| default_output("clips"), Ok)

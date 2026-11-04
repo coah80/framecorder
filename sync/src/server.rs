@@ -48,6 +48,7 @@ pub struct State {
     pub throttle: Arc<Throttle>,
     pub updates: Arc<crate::update::Updates>,
     pub remote: Remote,
+    pub live: Arc<crate::live::Live>,
     pub connections: AtomicUsize,
 }
 
@@ -105,6 +106,9 @@ fn connection(stream: TcpStream, state: &State) -> io::Result<()> {
                 break;
             }
         };
+        if req.path.split('?').next() == Some("/live") {
+            reader.get_mut().sock.set_write_timeout(Some(Duration::from_secs(2)))?;
+        }
         let keep = handle(&req, reader.get_mut(), state)? && req.keep_alive;
         if !keep {
             break;
@@ -187,6 +191,53 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             events(w, state, &device, req.bearer().unwrap_or(""))?;
             Ok(false)
         }
+        ("GET", ["live"]) => {
+            if !remote::status(&state.paths)["ready"].as_bool().unwrap_or(false) {
+                write_error(w, 503, "open SteamVR and finish setting up framecorder on the headset", false)?;
+                return Ok(false);
+            }
+            let viewer = match state.live.join(&state.paths) {
+                Ok(v) => v,
+                Err(_) => {
+                    write_error(w, 503, "couldn't open live video on the headset", false)?;
+                    return Ok(false);
+                }
+            };
+            let live = state.live.clone();
+            std::thread::Builder::new().name("live".into()).spawn(move || live.pump())?;
+            if let Err((_, why)) = state.remote.send(&state.paths, "live", "a paired app") {
+                write_error(w, 503, &why, false)?;
+                return Ok(false);
+            }
+            let first = match viewer.next(Duration::from_secs(4))? {
+                Some(data) => data,
+                None => {
+                    write_error(w, 503, "live video hasn't started. close the framecorder tab and try again", false)?;
+                    return Ok(false);
+                }
+            };
+            write_head(w, 200, &[("Content-Type", "video/mp2t".into()), ("Cache-Control", "no-store".into())], false)?;
+            w.write_all(&first)?;
+            w.flush()?;
+            loop {
+                if state.devices.check(req.bearer().unwrap_or("")).is_none() {
+                    break;
+                }
+                match viewer.next(Duration::from_secs(1))? {
+                    Some(data) => w.write_all(&data)?,
+                    None => {
+                        if !remote::status(&state.paths)["live_capture"].as_bool().unwrap_or(false) {
+                            break;
+                        }
+                        let mut null = [0xff; 188];
+                        null[..4].copy_from_slice(&[0x47, 0x1f, 0xff, 0x10]);
+                        w.write_all(&null)?;
+                    }
+                }
+                w.flush()?;
+            }
+            Ok(false)
+        }
         ("GET", ["recording"]) => {
             write_json(w, 200, &recording::status(&state.paths).to_string(), keep)?;
             Ok(true)
@@ -227,7 +278,7 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             }
             Ok(true)
         }
-        (_, ["hello" | "pair" | "clips" | "events" | "update" | "recording" | "remote" | "frame", ..]) => {
+        (_, ["hello" | "pair" | "clips" | "events" | "update" | "recording" | "remote" | "frame" | "live", ..]) => {
             write_error(w, 405, "method not allowed", keep)?;
             Ok(true)
         }
@@ -469,6 +520,7 @@ mod tests {
             updates: Arc::new(crate::update::Updates::new(&paths, devices)),
 
             remote: Remote::default(),
+            live: Arc::new(crate::live::Live::default()),
             connections: AtomicUsize::new(0),
             paths,
         };
@@ -502,6 +554,21 @@ mod tests {
 
     fn clients(state: &State) -> Value {
         serde_json::from_slice(&std::fs::read(state.paths.state.join("clients.json")).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn live_requires_pairing_and_an_available_tab() {
+        let (_dir, state) = setup();
+        let mut req = request("GET", "/live", Value::Null, None);
+        req.headers.clear();
+        assert_eq!(response(&state, &req).0, 401);
+        let req = request("GET", "/live", Value::Null, None);
+        let (code, body) = response(&state, &req);
+        assert_eq!(code, 503);
+        assert!(body["error"].as_str().unwrap().contains("SteamVR"));
+        assert!(!state.paths.state.join("live.sock").exists());
+        assert_eq!(response(&state, &request("GET", "/remote", Value::Null, None)).1["live_viewers"], 0);
+        assert_eq!(response(&state, &request("POST", "/live", Value::Null, None)).0, 405);
     }
 
     #[test]
