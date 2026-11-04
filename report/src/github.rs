@@ -7,12 +7,10 @@ use ring::{
     rand::SystemRandom,
     signature::{RsaKeyPair, RSA_PKCS1_SHA256},
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -27,29 +25,30 @@ pub fn now() -> u64 {
 #[derive(Clone)]
 pub struct Config {
     pub port: u16,
-    pub public_url: String,
     pub repo: String,
     pub state: PathBuf,
     pub api: String,
-    pub app_name: String,
 }
 
 impl Config {
     pub fn load() -> Result<Self> {
         let env = |key, default: &str| std::env::var(key).unwrap_or_else(|_| default.to_owned());
+        let state = match std::env::var_os("STATE_DIR") {
+            Some(path) => PathBuf::from(path),
+            None => PathBuf::from(
+                std::env::var_os("HOME").context("Set HOME or STATE_DIR to find the bot files.")?,
+            )
+            .join(".local/state/framecorder-report"),
+        };
         let c = Self {
             port: env("PORT", "4791")
                 .parse()
                 .context("PORT must be a port number")?,
-            public_url: env("PUBLIC_URL", "https://framecorder-report.coah80.com")
-                .trim_end_matches('/')
-                .to_owned(),
             repo: env("REPO", "coah80/framecorder"),
-            state: PathBuf::from(env("STATE_DIR", "state")),
+            state,
             api: env("GITHUB_API", "https://api.github.com")
                 .trim_end_matches('/')
                 .to_owned(),
-            app_name: env("APP_NAME", "framecorder-bot"),
         };
         if c.repo.split('/').count() != 2
             || !c
@@ -59,8 +58,8 @@ impl Config {
         {
             bail!("REPO must be owner/repository");
         }
-        for value in [&c.public_url, &c.api] {
-            let u = url::Url::parse(value).context("invalid service URL")?;
+        {
+            let u = url::Url::parse(&c.api).context("invalid service URL")?;
             if !["https", "http"].contains(&u.scheme())
                 || u.host_str().is_none()
                 || !u.username().is_empty()
@@ -73,44 +72,83 @@ impl Config {
                 );
             }
         }
-        fs::create_dir_all(&c.state).context("creating the bot state folder")?;
-        fs::set_permissions(&c.state, fs::Permissions::from_mode(0o700))?;
         Ok(c)
     }
 }
 
-pub fn save(path: &Path, value: &impl Serialize) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)
-        .context("saving bot setup")?;
-    f.set_permissions(fs::Permissions::from_mode(0o600))?;
-    f.write_all(&serde_json::to_vec(value)?)?;
-    f.sync_all()?;
-    fs::rename(tmp, path).context("finishing bot setup")
+struct Credentials {
+    id: u64,
+    slug: String,
+    key: RsaKeyPair,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Credentials {
-    pub id: u64,
-    pub slug: String,
-    pub pem: String,
+impl Credentials {
+    fn load(state: &Path) -> Result<Self> {
+        let env = fs::read_to_string(state.join("app.env")).context(
+            "Cannot read STATE_DIR/app.env. Add APP_ID and APP_SLUG for the GitHub App.",
+        )?;
+        let mut values = std::collections::HashMap::new();
+        for line in env
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        {
+            let (name, value) = line
+                .split_once('=')
+                .context("app.env must contain NAME=value lines.")?;
+            if values
+                .insert(name.trim(), value.trim().trim_matches(['\'', '"']))
+                .is_some()
+            {
+                bail!("app.env has a repeated setting. Keep one APP_ID and one APP_SLUG.");
+            }
+        }
+        let id = values
+            .get("APP_ID")
+            .context("Add APP_ID to app.env.")?
+            .parse::<u64>()
+            .context("APP_ID must be a number.")?;
+        let slug = values
+            .get("APP_SLUG")
+            .context("Add APP_SLUG to app.env.")?
+            .to_string();
+        if id == 0
+            || slug.is_empty()
+            || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            bail!("Set a valid APP_ID and APP_SLUG in app.env.");
+        }
+        let path = state.join("github-app.pem");
+        let metadata = fs::metadata(&path).context("Cannot read STATE_DIR/github-app.pem. Add the GitHub App's PKCS#1 RSA key with mode 0600.")?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o777 != 0o600 {
+            bail!(
+                "github-app.pem must be a regular file with mode 0600. Run chmod 600 on that file."
+            );
+        }
+        let pem = fs::read_to_string(path)
+            .context("Cannot read github-app.pem. Check its owner and permissions.")?;
+        let data: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+        let der = STANDARD
+            .decode(data)
+            .context("Cannot read github-app.pem. Supply a PKCS#1 RSA PEM key.")?;
+        let key = RsaKeyPair::from_der(&der).map_err(|_| anyhow!("github-app.pem is not a valid PKCS#1 RSA key. Replace it with the GitHub App's key."))?;
+        Ok(Self { id, slug, key })
+    }
 }
 
 pub struct GitHub {
     pub config: Config,
+    credentials: Credentials,
     agent: ureq::Agent,
     token: Option<(String, u64)>,
     label_ready: bool,
 }
 
 impl GitHub {
-    pub fn new(config: Config) -> Self {
-        Self {
+    pub fn new(config: Config) -> Result<Self> {
+        let credentials = Credentials::load(&config.state)?;
+        Ok(Self {
+            credentials,
             config,
             agent: ureq::AgentBuilder::new()
                 .timeout(Duration::from_secs(20))
@@ -118,7 +156,7 @@ impl GitHub {
                 .build(),
             token: None,
             label_ready: false,
-        }
+        })
     }
 
     fn request(
@@ -146,29 +184,9 @@ impl GitHub {
             .context("reading GitHub's answer")
     }
 
-    pub fn convert(&self, code: &str) -> Result<Credentials> {
-        if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric()) {
-            bail!("invalid setup code");
-        }
-        let v = self.request(
-            "POST",
-            &format!("/app-manifests/{code}/conversions"),
-            None,
-            Some(json!({})),
-        )?;
-        let c: Credentials =
-            serde_json::from_value(v).context("reading the new bot's credentials")?;
-        if c.slug.is_empty()
-            || !c
-                .slug
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
-            bail!("invalid bot name");
-        }
-        jwt(&c)?;
-        save(&self.config.state.join("app.json"), &c)?;
-        Ok(c)
+    pub fn health(&mut self) -> Result<String> {
+        self.token()?;
+        Ok(self.credentials.slug.clone())
     }
 
     fn token(&mut self) -> Result<String> {
@@ -177,10 +195,7 @@ impl GitHub {
                 return Ok(token.clone());
             }
         }
-        let c: Credentials = serde_json::from_slice(
-            &fs::read(self.config.state.join("app.json")).context("the bot has not been set up")?,
-        )?;
-        let jwt = jwt(&c)?;
+        let jwt = jwt(&self.credentials)?;
         let install = self.request(
             "GET",
             &format!("/repos/{}/installation", self.config.repo),
@@ -256,24 +271,19 @@ impl GitHub {
 
 use std::io::Read;
 fn jwt(c: &Credentials) -> Result<String> {
-    let data: String = c.pem.lines().filter(|l| !l.starts_with("-----")).collect();
-    let der = STANDARD
-        .decode(data)
-        .context("reading the bot's private key")?;
-    let key = RsaKeyPair::from_der(&der)
-        .map_err(|_| anyhow!("the bot's private key is not a PKCS#1 RSA key"))?;
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
     let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(
         &json!({"iat":now().saturating_sub(60), "exp":now()+540,"iss":c.id}),
     )?);
     let payload = format!("{header}.{claims}");
-    let mut signature = vec![0; key.public().modulus_len()];
-    key.sign(
-        &RSA_PKCS1_SHA256,
-        &SystemRandom::new(),
-        payload.as_bytes(),
-        &mut signature,
-    )
-    .map_err(|_| anyhow!("could not sign the bot request"))?;
+    let mut signature = vec![0; c.key.public().modulus_len()];
+    c.key
+        .sign(
+            &RSA_PKCS1_SHA256,
+            &SystemRandom::new(),
+            payload.as_bytes(),
+            &mut signature,
+        )
+        .map_err(|_| anyhow!("could not sign the bot request"))?;
     Ok(format!("{payload}.{}", URL_SAFE_NO_PAD.encode(signature)))
 }
