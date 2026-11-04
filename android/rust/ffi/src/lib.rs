@@ -458,6 +458,41 @@ fn with_port(addr: &str) -> Result<String, CoreError> {
     Ok(if has_port { addr.to_string() } else { pairlink::join_addr(addr, discover::PORT) })
 }
 
+#[derive(Clone, uniffi::Enum)]
+pub enum LivePhase {
+    Connecting,
+    Live,
+    Stopped,
+    Error,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct LiveStatus {
+    pub phase: LivePhase,
+    pub url: String,
+    pub bytes_per_second: u64,
+    pub viewers: u32,
+    pub error: Option<String>,
+}
+
+impl From<framecorder_app_lib::core::live::LiveStatus> for LiveStatus {
+    fn from(s: framecorder_app_lib::core::live::LiveStatus) -> Self {
+        use framecorder_app_lib::core::live::LivePhase as Phase;
+        Self {
+            phase: match s.phase {
+                Phase::Connecting => LivePhase::Connecting,
+                Phase::Live => LivePhase::Live,
+                Phase::Stopped => LivePhase::Stopped,
+                Phase::Error => LivePhase::Error,
+            },
+            url: s.url,
+            bytes_per_second: s.bytes_per_second,
+            viewers: s.viewers,
+            error: s.error,
+        }
+    }
+}
+
 /// One running sync engine: owns its runtime and every paired Frame's loop.
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -522,6 +557,24 @@ impl Core {
         let engine = self.engine.clone();
         self.on_rt(async move { engine.stop().await }).await?;
         Ok(())
+    }
+
+    pub async fn start_live(&self, fingerprint: String) -> Result<LiveStatus, CoreError> {
+        let engine = self.engine.clone();
+        Ok(self
+            .on_rt(async move { engine.start_live(&fingerprint).await })
+            .await??
+            .into())
+    }
+
+    pub async fn stop_live(&self) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.stop_live().await }).await?;
+        Ok(())
+    }
+
+    pub fn live_status(&self) -> Option<LiveStatus> {
+        self.engine.live_status().map(Into::into)
     }
 
     pub fn statuses(&self) -> Vec<FrameStatus> {

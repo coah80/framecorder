@@ -14,6 +14,7 @@ pub const IDENTIFIER: &str = "com.framecorder.app";
 
 const USAGE: &str = "\
 usage:
+  framecorder-app live [--state <dir>] [--fp <paired fingerprint>]
   framecorder-app --headless-sync <dir> [options]
       --state <dir>        where pairings and the index live (default: the app's)
       --pair <link>        pair using the framecorder://pair?... link from the QR code
@@ -86,9 +87,11 @@ async fn run(args: Vec<String>) -> Result<(), String> {
     let mut it = args.into_iter().skip(1);
     let (mut dir, mut state, mut link, mut host, mut code, mut fp) = (None, None, None, None, None, None);
     let (mut exit_after, mut discover_secs, mut discover) = (None, 5u64, false);
+    let mut live = false;
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value\n{USAGE}"));
         match arg.as_str() {
+            "live" => live = true,
             "--headless-sync" => dir = Some(PathBuf::from(value()?)),
             "--state" => state = Some(PathBuf::from(value()?)),
             "--pair" => link = Some(value()?),
@@ -113,7 +116,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         return Ok(());
     }
 
-    let dir = dir.ok_or(USAGE)?;
+    let dir = if live { std::env::temp_dir() } else { dir.ok_or(USAGE)? };
     let state = state.unwrap_or_else(default_state_dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't use {}: {e}", dir.display()))?;
     let engine = Engine::new(
@@ -125,6 +128,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         format!("desktop/{}", env!("CARGO_PKG_VERSION")),
     );
 
+    let live_fingerprint = fp.clone();
     if let Some(link) = link {
         let l = pairlink::parse(&link)?;
         let h = engine.pair(&l.addr, Some(&l.fingerprint), &l.code, None).await?;
@@ -144,6 +148,22 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     if engine.hosts().is_empty() {
         return Err("not paired with any frame yet, use --pair or --host/--code".into());
+    }
+    if live {
+        let hosts = engine.hosts();
+        let host = match live_fingerprint {
+            Some(fp) => engine.host(&fp).ok_or("that frame isn't paired")?,
+            None if hosts.len() == 1 => hosts[0].clone(),
+            None => return Err("choose a paired frame with --fp".into()),
+        };
+        let status = engine.start_live(&host.fingerprint).await?;
+        println!("OBS URL: {}", status.url);
+        println!("In OBS, add a Media Source, turn Local File off, and paste that URL.");
+        let result = tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| format!("can't wait for ctrl+c: {e}"));
+        engine.stop_live().await;
+        return result;
     }
     println!("syncing into {} (state in {})", dir.display(), state.display());
     println!("note: this only works while the frame is on, on the same wi-fi, and framecorder is running on it");
