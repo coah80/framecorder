@@ -89,14 +89,14 @@ The most common defect here is a change that works on the path you tested and is
 ```sh
 curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 git clone https://github.com/coah80/framecorder && cd framecorder && git switch dev
-cargo build --release
+packaging/ffmpeg.sh && cargo build --release
 ```
 
-**Off the headset.** The headset crate needs FFmpeg 7.1, PipeWire, libdrm and glslc. The dev container has them:
+**Off the headset.** The headset crate needs PipeWire, libdrm and glslc, and links its own FFmpeg (`packaging/ffmpeg.sh` builds it into `target/ffmpeg`, `--for-tests` adds the x264 and mp4 reader the tests use). The dev container has the rest:
 
 ```sh
 docker build -t framecorder-dev tools/dev
-docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-cargo:/root/.cargo/registry framecorder-dev cargo test
+docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-cargo:/root/.cargo/registry framecorder-dev sh -c 'packaging/ffmpeg.sh --for-tests && cargo test'
 ```
 
 The sync service (`sync/`) and the sync client (`app/`) build anywhere. The desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails need `ffmpeg` on the PATH; without it the grid shows plain tiles.
@@ -114,7 +114,7 @@ installer/build.sh dist     # arm64 binary, zstd'd, with its sha256
 
   | touched | run |
   |---|---|
-  | recorder, tab, setup, helper | `cargo test --release --lib` (headset or dev container) |
+  | recorder, tab, setup, helper | `cargo test --release --lib` (headset or dev container, after `packaging/ffmpeg.sh`) |
   | sync service | `cd sync && cargo test` |
   | sync client (`app/`) | `cd app && cargo test`, and `app/tools/e2e.sh` for real daemon-to-client sync |
   | desktop app | `cd desktop && cargo test` |
@@ -227,6 +227,7 @@ The traps below come from the Frame itself, and each one cost real time to find.
 - No polkit rule allows `setcap` without a password, and SteamOS has no password until the user sets one. The installer asks for it, and helps set one.
 - `/home` survives SteamOS updates. `/usr` is read-only, and `/var` belongs to one OS slot.
 - Starting a game can restart PipeWire. Anything holding a stream has to notice and reconnect (`src/audio.rs`).
+- SteamOS updates swap library majors under you: 0.5.7 replaced FFmpeg 7.1 with 8.0 and a recorder linked to the system's FFmpeg stopped starting. That's why the recorder links a pinned FFmpeg statically. Link anything else the OS ships only if its soname has stayed put for years (libc, libdrm, PipeWire, Vulkan).
 - Memory is tight and swap is compressed. Holding hundreds of MB lets the kernel swap out PipeWire's realtime thread, which gets it killed and silences the whole headset. Big buffers go to disk at the disk's pace.
 - The headset doesn't answer ping. Check port 22, and if it's gone, it's asleep: ask someone to wake it.
 

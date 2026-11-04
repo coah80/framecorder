@@ -1,0 +1,4 @@
+# the recorder links its own FFmpeg statically (packaging/ffmpeg.sh builds it
+# there first), never the one the OS happens to ship
+[env]
+FFMPEG_DIR = { value = "target/ffmpeg", relative = true }
