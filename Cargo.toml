@@ -12,7 +12,7 @@ clap = { version = "4", features = ["derive"] }
 drm = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 fontdue = "0.9"
-ffmpeg-sys-next = { version = "7.1", default-features = false, features = ["avcodec", "avformat"] }
+ffmpeg-sys-next = { version = "7.1", default-features = false, features = ["avcodec", "avformat", "static"] }
 libc = "0.2"
 log = "0.4"
 pipewire = "0.10"
