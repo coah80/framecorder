@@ -207,6 +207,9 @@ pub struct RemoteState {
     pub clip_secs: Option<u32>,
     /// A clip can be saved right now.
     pub clip_ready: bool,
+    /// How many apps are watching live; null on headsets too old for live
+    /// view and blended eyes.
+    pub live_viewers: Option<u32>,
 }
 
 impl From<&api::Remote> for RemoteState {
@@ -219,6 +222,7 @@ impl From<&api::Remote> for RemoteState {
             elapsed_ms: r.elapsed_ms,
             clip_secs: r.clips,
             clip_ready: r.clip_ready,
+            live_viewers: r.live_viewers,
         }
     }
 }

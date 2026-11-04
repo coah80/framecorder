@@ -339,7 +339,7 @@ mod tests {
     }
 
     fn remote(available: bool, ready: bool, recording: bool, running: bool, clips: Option<u32>, clip_ready: bool) -> Remote {
-        Remote { available, ready, recording, running, elapsed_ms: 0, clips, clip_ready }
+        Remote { available, ready, recording, running, elapsed_ms: 0, clips, clip_ready, live_viewers: None }
     }
 
     #[test]
