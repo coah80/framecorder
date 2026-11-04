@@ -347,7 +347,7 @@ private fun PublicNote(onSeeAll: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(FcIcons.Info, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(20.dp))
             Text(
-                "this opens a public issue on github.com/coah80/framecorder, posted by framecorder-bot. your steam name goes with it; your steam login, pairing keys and public address never do.",
+                "this opens a public issue on github.com/coah80/framecorder, posted by cobby-bot. your steam name goes with it; your steam login, pairing keys and public address never do.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
             )

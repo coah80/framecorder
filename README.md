@@ -142,7 +142,7 @@ kill -USR1 <pid> / kill -USR2 <pid>  # pause / resume
 
 ## report an issue
 
-every app has a "report an issue" button on its main screen: the tab's home screen, the desktop app, and the android app. type what went wrong, look over what's going with it, and send. it opens an issue on [github](https://github.com/coah80/framecorder/issues) for you, posted by framecorder-bot, and hands you the link.
+every app has a "report an issue" button on its main screen: the tab's home screen, the desktop app, and the android app. type what went wrong, look over what's going with it, and send. it opens an issue on [github](https://github.com/coah80/framecorder/issues) for you, posted by cobby-bot, and hands you the link.
 
 what goes with it, so nobody has to ask for it afterwards: the framecorder version and whether the panels are unlocked, the steamos and steamvr versions, your steam name, the headset's model, memory, free disk and battery, the recording settings, which apps are paired, any errors from the last two days, and the recent part of the logs (framecorder's own and steamvr's). the apps add their version, os and their own log. the issue is public, so the app shows you the summary first, and the full json if you want to read it. your home folder and user name, any ip outside your lan, mac addresses, serial numbers, pairing codes and keys are scrubbed out before anything's sent, and your videos are never opened.
 
