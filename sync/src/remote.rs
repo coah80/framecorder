@@ -14,7 +14,7 @@ use crate::config::{write_atomic, Paths};
 const ANSWER_WITHIN: Duration = Duration::from_secs(4);
 const LOOK_EVERY: Duration = Duration::from_millis(50);
 
-pub const COMMANDS: [&str; 3] = ["record", "stop", "clip"];
+pub const COMMANDS: [&str; 4] = ["record", "stop", "clip", "live"];
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
@@ -33,12 +33,14 @@ fn alive(status: &Value) -> bool {
 /// so whether it's recording (for how long) and whether a clip can be saved.
 pub fn status(paths: &Paths) -> Value {
     let Some(s) = read(&paths.status()).filter(alive) else {
-        return json!({ "available": false, "ready": false, "recording": false, "running": false, "elapsed_ms": 0, "clips": null, "clip_ready": false });
+        return json!({ "available": false, "ready": false, "recording": false, "running": false, "elapsed_ms": 0, "clips": null, "clip_ready": false, "live_viewers": 0 });
     };
     let running = s["running"].as_bool().unwrap_or(false);
     let since = if running { now_ms().saturating_sub(s["at"].as_u64().unwrap_or(0)) } else { 0 };
     json!({
         "available": true,
+        "live_capture": s["live_capture"].as_bool().unwrap_or(false),
+        "live_viewers": read(&paths.state.join("live.json")).filter(alive).and_then(|s| s["viewers"].as_u64()).unwrap_or(0),
         "ready": s["ready"].as_bool().unwrap_or(false),
         "recording": s["recording"].as_bool().unwrap_or(false),
         "running": running,

@@ -251,7 +251,7 @@ impl Writer {
         Ok(())
     }
 
-    fn write(&mut self, p: &Packet) -> Result<()> {
+    fn write(&mut self, p: &Packet, live: bool) -> Result<()> {
         unsafe {
             let pkt = self.packet;
             check(ff::av_new_packet(pkt, p.data.len() as i32), "allocating a packet")?;
@@ -275,7 +275,13 @@ impl Writer {
                 self.frames += 1;
             }
             self.bytes += p.data.len() as u64;
-            check(ff::av_interleaved_write_frame(self.fmt, pkt), "writing")?;
+            let ret = if live {
+                ff::av_write_frame(self.fmt, pkt)
+            } else {
+                ff::av_interleaved_write_frame(self.fmt, pkt)
+            };
+            ff::av_packet_unref(pkt);
+            check(ret, "writing")?;
         }
         self.flush_some();
         Ok(())
@@ -363,7 +369,7 @@ fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
     }
     let mut failure = None;
     for p in rx {
-        if let Err(e) = writer.write(&p) {
+        if let Err(e) = writer.write(&p, false) {
             failure = Some(e);
             break;
         }
@@ -378,5 +384,119 @@ fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
             Err(e)
         }
         None => saved,
+    }
+}
+
+pub struct Live {
+    writer: Writer,
+    socket: std::os::unix::net::UnixDatagram,
+    waiting: bool,
+    sequence: u64,
+    start: Option<i64>,
+    silence: Option<crate::aac::Track>,
+    silence_base: i64,
+}
+
+impl Live {
+    pub fn new(path: &Path, streams: &Streams) -> Result<Self> {
+        let socket = std::os::unix::net::UnixDatagram::unbound()?;
+        socket.connect(path).context("connecting the live stream")?;
+        socket.set_nonblocking(true)?;
+        let silence = if streams.audio.is_empty() { Some(crate::aac::Track::new(1, 128_000)?) } else { None };
+        let mut writer = Writer {
+            fmt: ptr::null_mut(),
+            packet: unsafe { ff::av_packet_alloc() },
+            part: PathBuf::new(),
+            path: PathBuf::new(),
+            fps: streams.fps,
+            frames: 0,
+            bytes: 0,
+            file: None,
+            flushed: 0,
+        };
+        unsafe {
+            check(
+                ff::avformat_alloc_output_context2(&mut writer.fmt, ptr::null(), c"mpegts".as_ptr(), ptr::null()),
+                "setting up live video",
+            )?;
+            writer.add_video(streams)?;
+            if let Some((title, params)) = streams.audio.first() {
+                writer.add_audio(title, params, true)?;
+            } else if let Some(track) = &silence {
+                writer.add_audio("Audio", &track.params()?, true)?;
+            }
+            (*writer.fmt).flags |= ff::AVFMT_FLAG_CUSTOM_IO;
+            (*writer.fmt).max_delay = 0;
+            ff::av_opt_set((*writer.fmt).priv_data, c"mpegts_flags".as_ptr(), c"+resend_headers+initial_discontinuity".as_ptr(), 0);
+            ff::av_opt_set_int((*writer.fmt).priv_data, c"pes_payload_size".as_ptr(), 0, 0);
+            check(ff::avio_open_dyn_buf(&mut (*writer.fmt).pb), "opening live output")?;
+            let result = check(ff::avformat_write_header(writer.fmt, ptr::null_mut()), "writing live headers");
+            Self::take(&mut writer);
+            result?;
+        }
+        Ok(Self { writer, socket, waiting: true, sequence: 0, start: None, silence, silence_base: 0 })
+    }
+
+    unsafe fn take(writer: &mut Writer) -> Vec<u8> {
+        let mut data = ptr::null_mut();
+        let len = ff::avio_close_dyn_buf((*writer.fmt).pb, &mut data);
+        (*writer.fmt).pb = ptr::null_mut();
+        let out = if len > 0 { std::slice::from_raw_parts(data, len as usize).to_vec() } else { Vec::new() };
+        ff::av_free(data.cast());
+        out
+    }
+
+    pub fn send(&mut self, p: &Packet) -> Result<()> {
+        if p.stream > 1 { return Ok(()); }
+        if p.data.len() > 4 * 1024 * 1024 {
+            self.waiting = true;
+            return Ok(());
+        }
+        if p.stream == 1 && self.start.is_some_and(|start| p.pts < start * RATE as i64 / self.writer.fps as i64) {
+            return Ok(());
+        }
+        let key = p.stream == 0 && p.key;
+        if self.waiting && !key {
+            return Ok(());
+        }
+        self.waiting = false;
+        if key && self.start.is_none() {
+            self.start = Some(p.pts);
+            self.silence_base = p.pts * RATE as i64 / self.writer.fps as i64;
+        }
+        let data = unsafe {
+            check(ff::avio_open_dyn_buf(&mut (*self.writer.fmt).pb), "opening live packet")?;
+            let result = self.writer.write(p, true);
+            let data = Self::take(&mut self.writer);
+            result?;
+            data
+        };
+        for (i, chunk) in data.chunks(188 * 300).enumerate() {
+            let mut message = Vec::with_capacity(chunk.len() + 9);
+            message.extend_from_slice(&self.sequence.to_le_bytes());
+            self.sequence = self.sequence.wrapping_add(1);
+            message.push(u8::from(key && i == 0));
+            message.extend_from_slice(chunk);
+            if self.socket.send(&message).is_err() {
+                self.waiting = true;
+                break;
+            }
+        }
+        if p.stream == 0 {
+            let target = (p.pts + 1) * RATE as i64 / self.writer.fps as i64;
+            let mut out = Vec::new();
+            if let Some(track) = &mut self.silence {
+                if target - self.silence_base - track.end() > RATE as i64 {
+                    *track = crate::aac::Track::new(1, 128_000)?;
+                    self.silence_base = p.pts * RATE as i64 / self.writer.fps as i64;
+                }
+                track.fill_to(target - self.silence_base, &mut out)?;
+            }
+            for mut audio in out {
+                audio.pts += self.silence_base;
+                self.send(&audio)?;
+            }
+        }
+        Ok(())
     }
 }
