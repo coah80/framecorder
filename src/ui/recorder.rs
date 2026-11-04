@@ -69,6 +69,7 @@ pub struct Recorder {
     pub args: Vec<String>,
     pub replay: Option<u32>,
     paused: bool,
+    live: bool,
     quitting: Option<Instant>,
 }
 
@@ -113,7 +114,7 @@ impl Recorder {
             }
         })?;
 
-        Ok(Self { stdin: child.stdin.take(), child, events, log, args, replay, paused: true, quitting: None })
+        Ok(Self { stdin: child.stdin.take(), child, events, log, args, replay, paused: true, live: false, quitting: None })
     }
 
     fn send(&mut self, line: &str) {
@@ -128,6 +129,20 @@ impl Recorder {
             self.paused = paused;
             self.send(if paused { "pause" } else { "resume" });
         }
+    }
+
+    pub fn set_live(&mut self, enabled: bool) {
+        if self.live == enabled {
+            return;
+        }
+        self.live = enabled;
+        if let Some(path) = super::remote::live_socket() {
+            self.send(&if enabled { format!("live {}", path.display()) } else { "live".into() });
+        }
+    }
+
+    pub fn keyframe(&mut self) {
+        self.send("keyframe");
     }
 
     pub fn paused(&self) -> bool {
@@ -270,6 +285,7 @@ mod tests {
             args: settings.recorder_args(false),
             replay: settings.clipping(),
             paused: false,
+            live: false,
             quitting: None,
         };
         (recorder, tx)
@@ -294,6 +310,26 @@ mod tests {
             observed.push((running, app.recording.is_none(), app.note.as_ref().unwrap().0.contains("00:00:07")));
         }
         assert_eq!(observed, [(false, true, true), (true, true, true)]);
+    }
+
+    #[test]
+    fn live_keeps_capture_until_the_last_viewer_leaves() {
+        let settings = Settings { onboarded: true, clips: false, ..Settings::default() };
+        let mut app = super::super::App::new(settings, false, false);
+        let (recorder, _events) = test_recorder(&settings);
+        app.recorder = Some(recorder);
+        app.live_viewers = 1;
+        app.check_recorder();
+        assert!(!app.recorder.as_ref().unwrap().quitting());
+        assert!(app.recording.is_none());
+        app.live_viewers = 0;
+        app.check_recorder();
+        let mut recorder = app.recorder.take().unwrap();
+        assert!(recorder.quitting());
+        recorder.stdin = None;
+        let output = recorder.child.wait_with_output().unwrap();
+        assert!(output.stdout.starts_with(b"live "));
+        assert!(output.stdout.ends_with(b"live\nquit\n"));
     }
 
     #[test]

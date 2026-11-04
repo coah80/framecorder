@@ -17,12 +17,13 @@ SHA256=e3963a50831c985933e1a625ed566ec4c7adb5c012c34fa9f84438e1d61bdacc
 URL=https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n$VERSION.tar.gz
 
 cd "$(dirname "$0")/.."
-PREFIX=$PWD/target/ffmpeg
+ROOT=$PWD
+PREFIX=$ROOT/target/ffmpeg
 FLAVOR=release
 EXTRA=""
 if [ "${1:-}" = --for-tests ]; then
     FLAVOR=tests
-    EXTRA="--enable-gpl --enable-libx264 --enable-encoder=libx264 --enable-demuxer=mov --enable-decoder=h264,hevc,aac"
+    EXTRA="--enable-gpl --enable-libx264 --enable-encoder=libx264 --enable-demuxer=mov,mpegts --enable-decoder=h264,hevc,aac"
 fi
 STAMP="$VERSION $FLAVOR $(cksum <packaging/ffmpeg.sh | cut -d" " -f1)"
 if [ "$(cat "$PREFIX/.built" 2>/dev/null)" = "$STAMP" ]; then
@@ -40,10 +41,13 @@ cd "$WORK/FFmpeg-n$VERSION"
 ./configure --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
     --disable-autodetect --disable-programs --disable-doc --disable-network \
     --disable-everything --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-postproc \
-    --enable-encoder=aac --enable-muxer=mp4,mov,matroska --enable-protocol=file --enable-parser=aac,h264,hevc \
+    --enable-encoder=aac --enable-muxer=mp4,mov,matroska,mpegts --enable-protocol=file --enable-parser=aac,h264,hevc \
     $EXTRA >/dev/null
 make -j"$(nproc)" >/dev/null
 rm -rf "$PREFIX"
 make install >/dev/null
 echo "$STAMP" >"$PREFIX/.built"
+# ffmpeg-sys-next copies these libraries into its own rlib when it builds and
+# never looks at them again, so forget it was built or binaries keep the old ones
+rm -rf "$ROOT"/target/*/.fingerprint/ffmpeg-sys-next-*
 echo "ffmpeg $VERSION is in $PREFIX"

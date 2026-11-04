@@ -7,6 +7,7 @@ mod events;
 mod frame;
 mod http;
 mod library;
+mod live;
 mod mdns;
 mod openvr;
 mod recording;
@@ -144,6 +145,7 @@ fn run(args: Args) -> std::io::Result<()> {
         throttle,
         updates,
         remote: remote::Remote::default(),
+        live: Arc::new(live::Live::default()),
         connections: AtomicUsize::new(0),
     });
     server::serve(listener, state);

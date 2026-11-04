@@ -379,3 +379,92 @@ fn memory_use() {
     session.join().unwrap().unwrap();
     println!("30 s replay buffer at 40 Mbit/s: {peak:.0} MB");
 }
+
+#[test]
+fn live_transport_demuxes_and_a_stalled_reader_cannot_stop_recording() {
+    use std::io::Write;
+    use std::os::unix::net::UnixDatagram;
+    use std::time::Duration;
+
+    for (stalled, silent) in [(false, false), (true, false), (false, true)] {
+        let dir = tempdir(if stalled { "live-stalled" } else { "live" });
+        let socket_path = dir.join("live.sock");
+        let socket = UnixDatagram::bind(&socket_path).unwrap();
+        let ts_path = dir.join("live.ts");
+        let output = ts_path.clone();
+        let read_socket = socket.try_clone().unwrap();
+        let reader = (!stalled).then(|| {
+            std::thread::spawn(move || {
+                let mut file = std::fs::File::create(output).unwrap();
+                let mut buf = [0; 65536];
+                let mut waiting = true;
+                let mut expected = None;
+                loop {
+                    let n = read_socket.recv(&mut buf).unwrap();
+                    if &buf[..n] == b"done" {
+                        break;
+                    }
+                    assert!(n > 9);
+                    let seq = u64::from_le_bytes(buf[..8].try_into().unwrap());
+                    if expected.is_some_and(|e| e != seq) {
+                        waiting = true;
+                    }
+                    expected = Some(seq + 1);
+                    if buf[8] == 1 {
+                        waiting = false;
+                    }
+                    if !waiting {
+                        file.write_all(&buf[9..n]).unwrap();
+                    }
+                }
+            })
+        });
+        let path = dir.join("recording.mp4");
+        let mut cfg = config(Some(path.clone()), Some(5));
+        if silent { cfg.audio_tracks.clear(); }
+        let live = socket_path.clone();
+        let (done, finished) = mpsc::channel();
+        let session = std::thread::spawn(move || {
+            let result = run_session(cfg, 6, vec![(0.0, Msg::Live(Some(live)))]);
+            done.send(result).unwrap();
+        });
+        let stats = finished.recv_timeout(Duration::from_secs(15)).expect("a live reader blocked the session").unwrap();
+        session.join().unwrap();
+        assert_eq!(stats.video_frames, (6 * FPS) as u64);
+        assert!(first_video_is_key(&path));
+        if let Some(reader) = reader {
+            let end = UnixDatagram::unbound().unwrap();
+            end.send_to(b"done", socket_path).unwrap();
+            reader.join().unwrap();
+            assert!(first_video_is_key(&ts_path));
+            unsafe {
+                let name = CString::new(ts_path.to_str().unwrap()).unwrap();
+                let mut fmt = ptr::null_mut();
+                assert!(ff::avformat_open_input(&mut fmt, name.as_ptr(), ptr::null(), ptr::null_mut()) >= 0);
+                assert!(ff::avformat_find_stream_info(fmt, ptr::null_mut()) >= 0);
+                assert_eq!((*fmt).nb_streams, 2);
+                assert_eq!((*(*(*(*fmt).streams)).codecpar).codec_id, ff::AVCodecID::AV_CODEC_ID_H264);
+                assert_eq!((*(*(*(*fmt).streams.add(1))).codecpar).codec_id, ff::AVCodecID::AV_CODEC_ID_AAC);
+                let mut packet = ff::av_packet_alloc();
+                let mut last = [None, None];
+                while ff::av_read_frame(fmt, packet) >= 0 {
+                    let p = &*packet;
+                    assert!(p.pts >= 0);
+                    let stream = p.stream_index as usize;
+                    assert!(last[stream].is_none_or(|pts| p.pts > pts));
+                    last[stream] = Some(p.pts);
+                    ff::av_packet_unref(packet);
+                }
+                assert!(last.iter().all(Option::is_some));
+                ff::av_packet_free(&mut packet);
+                ff::avformat_close_input(&mut fmt);
+            }
+            let d = probe(&ts_path);
+            assert_eq!(d.len(), 2, "{d:?}");
+            for duration in d {
+                assert!(duration.is_finite() && duration > 0.0 && duration < 7.0, "{duration}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
