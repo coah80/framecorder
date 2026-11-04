@@ -145,6 +145,7 @@ fun LibraryScreen(
     hub: SyncHub,
     onOpen: (String, List<String>) -> Unit,
     onFrame: (String?) -> Unit,
+    onReport: () -> Unit,
     takeLastSeen: () -> String?,
     /** Whether clips are selected, so the nav makes way for the share and delete bar. */
     onSelecting: (Boolean) -> Unit,
@@ -322,6 +323,7 @@ fun LibraryScreen(
                         onSearch = search,
                         onRetry = hub::retryNow,
                         onFrame = { onFrame(null) },
+                        onReport = onReport,
                         onClear = clear,
                     )
                 }
@@ -512,6 +514,7 @@ private fun Header(
     onSearch: () -> Unit,
     onRetry: () -> Unit,
     onFrame: () -> Unit,
+    onReport: () -> Unit,
     onClear: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -521,6 +524,8 @@ private fun Header(
                 SelectionTitle(selected, onClear, Modifier.offset(x = (-8).dp))
             } else {
                 Row(Modifier.fillMaxWidth().height(56.dp).offset(x = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    // right on the first screen, so nobody has to go looking for it
+                    IconButton(onClick = onReport) { Icon(FcIcons.Bug, contentDescription = "report an issue") }
                     if (searchable) {
                         IconButton(onClick = onSearch) {
                             Icon(if (searching) FcIcons.Close else FcIcons.Search, contentDescription = if (searching) "stop searching" else "search")

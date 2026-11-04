@@ -14,6 +14,9 @@ coreKtx = "1.19.1"
 coroutines = "1.11.0"
 jna = "5.17.0"
 codeScanner = "16.1.0"
+junit = "4.13.2"
+# android's own org.json, for unit tests on the computer
+json = "20250107"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -38,6 +41,8 @@ core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx"
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "codeScanner" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

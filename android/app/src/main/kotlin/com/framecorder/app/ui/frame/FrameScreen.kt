@@ -111,7 +111,7 @@ import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
 
 @Composable
-fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit, onPairAnother: () -> Unit) {
+fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit, onReport: () -> Unit, onPairAnother: () -> Unit) {
     val frames by hub.frames.collectAsStateWithLifecycle()
     if (frames.isEmpty()) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()) {
@@ -273,12 +273,13 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                     onDiagnose = { onDiagnose(frame.fingerprint) },
                 )
             }
-            item { NextRecording(recording, recordingNote, ::change) }
+            // a headset too old for the blend doesn't say how many are watching live either
+            item { NextRecording(recording, recordingNote, blend = remote?.state?.liveViewers != null, ::change) }
             item { OnThisPhone(clips.filter { it.host == frame.fingerprint }) }
             item { GroupLabel("this frame") }
             item {
                 SegmentRow(
-                    0, 3, "connection check",
+                    0, 4, "connection check",
                     subtitle = "see what's getting in the way",
                     onClick = { onDiagnose(frame.fingerprint) },
                     leading = { Icon(FcIcons.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -288,7 +289,17 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
             item {
                 Spacer(Modifier.height(2.dp))
                 SegmentRow(
-                    1, 3, "try again now",
+                    1, 4, "report an issue",
+                    subtitle = "opens a github issue with the frame's logs and details",
+                    onClick = onReport,
+                    leading = { Icon(FcIcons.Bug, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailing = { Chevron() },
+                )
+            }
+            item {
+                Spacer(Modifier.height(2.dp))
+                SegmentRow(
+                    2, 4, "try again now",
                     subtitle = "instead of waiting for the next look",
                     onClick = hub::retryNow,
                     leading = { Icon(FcIcons.Retry, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -297,7 +308,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
             item {
                 Spacer(Modifier.height(2.dp))
                 SegmentRow(
-                    2, 3, "unpair",
+                    3, 4, "unpair",
                     subtitle = "what's already here stays · id ${shortPrint(frame.fingerprint)}",
                     titleColor = MaterialTheme.colorScheme.error,
                     onClick = { unpairing = true },

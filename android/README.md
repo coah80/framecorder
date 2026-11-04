@@ -55,7 +55,22 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
   it, the connection check, try again, unpair and pair another. When the
   Frame says a newer framecorder is out, a card at the top offers to install
   it now, shows the wave while the headset does it (it drops off and comes
-  back on the new version), and goes away once it's done.
+  back on the new version), and goes away once it's done. A headset whose
+  framecorder can blend both eyes (it says how many are watching live) gets
+  "both eyes blended" next to left and right eye.
+- **Live tab**: what the headset shows, played on the phone a moment behind
+  (Media3 on the core's local `http://127.0.0.1:38620/live.ts`), with the
+  rate and how many players are on it, and the address with a copy button
+  for any other player on the phone. It only runs while the tab is open:
+  leaving it or the app stops it, so the headset never captures for
+  nobody. A headset too old for live view gets a note to update instead.
+- **Report an issue**, from the bug button on the library, the frame tab
+  and settings: type what went wrong, see what goes with it (this app and
+  phone, the Frame's diagnostics or why they couldn't be read, how many
+  recent errors, which logs) and the full JSON, then send. The core posts
+  it to the report relay, which opens a public GitHub issue, and the app
+  shows the issue number with a button to open it. What's shown is exactly
+  what's sent; nothing is gathered again after you've looked.
 - **Outside the app**: while a Frame records, the syncing notification
   counts along with a stop button, and offers save clip otherwise. Quick
   settings tiles for save clip and record.
