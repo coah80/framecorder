@@ -15,6 +15,7 @@ pub const IDENTIFIER: &str = "com.framecorder.app";
 const USAGE: &str = "\
 usage:
   framecorder-app live [--state <dir>] [--fp <paired fingerprint>]
+  framecorder-app report \"what went wrong\"  preview and send a public issue
   framecorder-app --headless-sync <dir> [options]
       --state <dir>        where pairings and the index live (default: the app's)
       --pair <link>        pair using the framecorder://pair?... link from the QR code
@@ -66,7 +67,8 @@ pub fn default_state_dir() -> PathBuf {
 }
 
 pub fn main(args: Vec<String>) -> i32 {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
+    let _ = crate::core::report::init_logger(Box::new(logger), log::LevelFilter::Trace);
     let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
@@ -84,6 +86,39 @@ pub fn main(args: Vec<String>) -> i32 {
 }
 
 async fn run(args: Vec<String>) -> Result<(), String> {
+    if args.get(1).is_some_and(|a| a == "report") {
+        let description = args.get(2).ok_or("report needs a description")?;
+        let dir = dirs::video_dir().unwrap_or_else(std::env::temp_dir).join("framecorder");
+        let engine = Engine::new(
+            tokio::runtime::Handle::current(),
+            &default_state_dir(),
+            Arc::new(DirSink { root: dir }),
+            Arc::new(LogListener {
+                last: Mutex::new((String::new(), 0)),
+            }),
+            &crate::core::device_name(),
+            format!("desktop/{}", env!("CARGO_PKG_VERSION")),
+        );
+        let report = engine
+            .report_preview(
+                description,
+                crate::core::report::AppInfo::current("framecorder desktop", env!("CARGO_PKG_VERSION")),
+            )
+            .await;
+        println!(
+            "This report will appear on a public GitHub issue:\n{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+        println!("Send this report? Type yes:");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+        if answer.trim() != "yes" {
+            return Ok(());
+        }
+        let sent = crate::core::report::send(&report).await.map_err(|e| e.to_string())?;
+        println!("{}", sent.url);
+        return Ok(());
+    }
     let mut it = args.into_iter().skip(1);
     let (mut dir, mut state, mut link, mut host, mut code, mut fp) = (None, None, None, None, None, None);
     let (mut exit_after, mut discover_secs, mut discover) = (None, 5u64, false);

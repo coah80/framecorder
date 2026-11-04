@@ -365,6 +365,7 @@ impl GallerySink {
 }
 
 impl engine::Sink for GallerySink {
+    fn free_space(&self) -> Option<u64> { framecorder_app_lib::core::space::free(&self.staging) }
     fn completed(&self, _host: &store::Host, clip: &RemoteClip) -> Result<Option<String>, String> {
         tokio::task::block_in_place(|| self.gallery.completed(engine::safe_name(&clip.name), clip.size, Self::subdir(clip)))
             .map_err(|e| e.to_string())
@@ -442,7 +443,17 @@ impl engine::Finder for FinderRelay {
 
 fn init_logging() {
     #[cfg(target_os = "android")]
-    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("framecorder"));
+    {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let logger = android_logger::AndroidLogger::new(
+                android_logger::Config::default()
+                    .with_max_level(log::LevelFilter::Info)
+                    .with_tag("framecorder"),
+            );
+            let _ = framecorder_app_lib::core::report::init_logger(Box::new(logger), log::LevelFilter::Info);
+        });
+    }
 }
 
 /// `host` or `host:port`, with the Frame's default port when none is given.
@@ -517,6 +528,28 @@ impl Core {
 
 #[uniffi::export]
 impl Core {
+    pub async fn report_preview(&self, description: String, app: ReportAppInfo) -> Result<String, CoreError> {
+        let engine = self.engine.clone();
+        let report = self
+            .on_rt(async move { engine.report_preview(&description, app.into()).await })
+            .await?;
+        framecorder_report_json(&report)
+    }
+
+    pub async fn report_send(&self, preview_json: String) -> Result<ReportSent, CoreError> {
+        let report = serde_json::from_str(&preview_json).map_err(|_| CoreError::from("the report preview could not be read"))?;
+        self.on_rt(async move {
+            framecorder_app_lib::core::report::send(&report)
+                .await
+                .map(|s| ReportSent {
+                    number: s.number,
+                    url: s.url,
+                })
+                .map_err(|e| CoreError::from(e.to_string()))
+        })
+        .await?
+    }
+
     /// `state_dir` keeps pairings and the index, `staging_dir` holds
     /// downloads until they're handed to the gallery. Without a `finder`
     /// the core does its own mDNS (which needs a multicast lock).
@@ -787,4 +820,35 @@ mod tests {
         assert_eq!(with_port("[fe80::1]:4000").unwrap(), "[fe80::1]:4000");
         assert!(with_port("  ").is_err());
     }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ReportAppInfo {
+    pub name: String,
+    pub version: String,
+    pub os: String,
+    pub device: String,
+    pub arch: String,
+}
+
+impl From<ReportAppInfo> for framecorder_app_lib::core::report::AppInfo {
+    fn from(a: ReportAppInfo) -> Self {
+        Self {
+            name: a.name,
+            version: a.version,
+            os: a.os,
+            device: a.device,
+            arch: a.arch,
+        }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ReportSent {
+    pub number: u64,
+    pub url: String,
+}
+
+fn framecorder_report_json(report: &framecorder_app_lib::core::report::Report) -> Result<String, CoreError> {
+    serde_json::to_string_pretty(report).map_err(|_| CoreError::from("the report preview could not be prepared"))
 }
