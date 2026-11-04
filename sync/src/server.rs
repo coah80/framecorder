@@ -203,6 +203,13 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             }
             Ok(true)
         }
+        ("GET", ["diagnostics"]) => {
+            match diagnostics() {
+                Ok(body) => write_json(w, 200, &body.to_string(), keep)?,
+                Err(why) => write_error(w, 503, &why, keep)?,
+            }
+            Ok(true)
+        }
         ("GET", ["frame"]) => {
             write_json(w, 200, &frame::about(&state.paths, &state.library).to_string(), keep)?;
             Ok(true)
@@ -227,7 +234,11 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             }
             Ok(true)
         }
-        (_, ["hello" | "pair" | "clips" | "events" | "update" | "recording" | "remote" | "frame", ..]) => {
+        (
+            _,
+            ["hello" | "pair" | "clips" | "events" | "update" | "recording" | "remote" | "frame"
+            | "diagnostics", ..],
+        ) => {
             write_error(w, 405, "method not allowed", keep)?;
             Ok(true)
         }
@@ -236,6 +247,47 @@ fn handle(req: &Request, w: &mut impl Write, state: &State) -> io::Result<bool> 
             Ok(true)
         }
     }
+}
+
+fn diagnostics() -> Result<serde_json::Value, String> {
+    let home = std::env::var_os("HOME").ok_or("the headset's home folder isn't available")?;
+    diagnostics_from(&std::path::PathBuf::from(home).join(".local/bin/framecorder-ui"))
+}
+
+fn diagnostics_from(program: &std::path::Path) -> Result<serde_json::Value, String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("timeout")
+        .args(["--signal=KILL", "4s"])
+        .arg(program)
+        .arg("--diagnostics")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "couldn't collect headset details, try again later")?;
+    let mut bytes = Vec::new();
+    let read = child
+        .stdout
+        .take()
+        .ok_or("couldn't read headset details")?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes);
+    let status = child
+        .wait()
+        .map_err(|_| "couldn't collect headset details")?;
+    if read.is_err() || !status.success() || bytes.len() > 1024 * 1024 {
+        return Err(
+            "couldn't collect headset details, check that framecorder is up to date and try again"
+                .into(),
+        );
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "the headset returned unreadable details")?;
+    if !value.is_object() {
+        return Err("the headset returned unreadable details".into());
+    }
+    Ok(value)
 }
 
 #[derive(Deserialize)]
@@ -274,7 +326,9 @@ fn pair(req: &Request, w: &mut impl Write, state: &State) -> io::Result<()> {
         Err(e) => {
             log::info!("pairing refused: {e:?}");
             let msg = match e {
-                PairError::NoCode => "not pairing right now, open \"pair a device\" on the frame first",
+                PairError::NoCode => {
+                    "not pairing right now, open \"pair a device\" on the frame first"
+                }
                 PairError::Expired => "that code expired, get a new one on the frame",
                 _ => "wrong code",
             };
@@ -527,7 +581,45 @@ mod tests {
         assert!(state.devices.check("bar").is_some());
         assert_eq!(clients(&state)["devices"].as_array().unwrap().len(), 1);
         assert_eq!(response(&state, &req).0, 401);
+        for path in ["/clips", "/recording", "/frame", "/diagnostics"] {
+            for token in [None, Some("Bearer invalid"), Some("Bearer foo")] {
+                let mut req = request("GET", path, Value::Null, None);
+                req.headers.clear();
+                if let Some(token) = token {
+                    req.headers.push(("Authorization".into(), token.into()));
+                }
+                assert_eq!(response(&state, &req).0, 401, "{path} {token:?}");
+            }
+        }
+        assert_eq!(
+            response(&state, &request("POST", "/diagnostics", Value::Null, None)).0,
+            401
+        );
         assert_eq!(Devices::load(&state.paths.devices()).count(), 1);
+    }
+
+    #[test]
+    fn diagnostics_checks_the_installed_command_and_its_json() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, state) = setup();
+        let program = dir.path().join("framecorder-ui");
+        assert!(diagnostics_from(&program).is_err());
+        for (script, succeeds) in [
+            ("#!/bin/sh\n[ \"$1\" = --diagnostics ] || exit 1\nprintf '%s' '{\"collected_at\":\"2026-11-04T12:00:00Z\"}'\n", true),
+            ("#!/bin/sh\nprintf '%s' 'old ui'\n", false),
+            ("#!/bin/sh\nprintf '%s' '{}'\nexit 1\n", false),
+            ("#!/bin/sh\nprintf '%s' 'null'\n", false),
+        ] {
+            std::fs::write(&program, script).unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let result = diagnostics_from(&program);
+            assert_eq!(result.is_ok(), succeeds);
+            if succeeds { assert_eq!(result.unwrap()["collected_at"], "2026-11-04T12:00:00Z"); }
+        }
+        assert_eq!(
+            response(&state, &request("POST", "/diagnostics", Value::Null, None)).0,
+            405
+        );
     }
 
     #[test]

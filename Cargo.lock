@@ -455,6 +455,7 @@ dependencies = [
  "log",
  "pipewire",
  "qrcode",
+ "regex",
  "serde_json",
  "v4l2r",
 ]
