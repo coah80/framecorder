@@ -87,10 +87,12 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), eye == Eye::Right),
+        ("Both eyes blended", Action::Eye(Eye::Both), eye == Eye::Both),
     ];
     let (meaning, fixed) = match shape {
         _ if !m.unlocked => ("SteamVR's view is always the left eye", true),
         Shape::BothEyes => ("Both eyes are in the video", true),
+        _ if eye == Eye::Both => ("One level view from both eyes, like SteamVR's own", false),
         _ => ("The eye whose view gets recorded", false),
     };
     choice(c, f, m, hits, eye_row, "Eye", meaning, &eyes, locked || fixed);

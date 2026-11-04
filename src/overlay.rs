@@ -1,6 +1,6 @@
 //! A SteamVR dashboard tab: the overlay handles and the events it gets.
 //! Pixels go in with SetOverlayRaw, which is plenty for a UI that only
-//! changes when you poke it.
+//! changes when you poke it. SteamVR's own keyboard types into it too.
 
 use std::ffi::{c_char, c_void, CString};
 
@@ -23,8 +23,19 @@ const SLOT_SET_FROM_FILE: usize = 63;
 const SLOT_CREATE_DASHBOARD: usize = 67;
 const SLOT_IS_DASHBOARD_VISIBLE: usize = 68;
 const SLOT_SHOW_DASHBOARD: usize = 72;
+const SLOT_SHOW_KEYBOARD_FOR_OVERLAY: usize = 75;
+const SLOT_GET_KEYBOARD_TEXT: usize = 76;
+const SLOT_HIDE_KEYBOARD: usize = 77;
 
 const INPUT_MOUSE: i32 = 1;
+/// EGamepadTextInputMode and EGamepadTextInputLineMode: plain text, more
+/// than one line of it.
+const TEXT_MODE_NORMAL: i32 = 0;
+const LINE_MODE_MULTIPLE: i32 = 1;
+/// EKeyboardFlags: SteamVR's full keyboard, with its own text field.
+const KEYBOARD_FLAGS: u32 = 0;
+/// Room for the longest text the keyboard is ever asked for, as UTF-8.
+const KEYBOARD_TEXT_BYTES: usize = 4 * 4096;
 
 pub const EVENT_MOUSE_MOVE: u32 = 300;
 pub const EVENT_MOUSE_DOWN: u32 = 301;
@@ -34,6 +45,9 @@ pub const EVENT_OVERLAY_HIDDEN: u32 = 501;
 pub const EVENT_DASHBOARD_ACTIVATED: u32 = 502;
 pub const EVENT_DASHBOARD_DEACTIVATED: u32 = 503;
 pub const EVENT_QUIT: u32 = 700;
+pub const EVENT_KEYBOARD_CLOSED: u32 = 1200;
+pub const EVENT_KEYBOARD_CHAR_INPUT: u32 = 1201;
+pub const EVENT_KEYBOARD_DONE: u32 = 1202;
 
 /// VREvent_t. Linux builds of OpenVR pack it to 4 bytes, 60 in total.
 #[repr(C, packed(4))]
@@ -54,6 +68,12 @@ pub enum Event {
     Hidden,
     DashboardOpened,
     DashboardClosed,
+    /// Something was typed on SteamVR's keyboard; `keyboard_text` has it all.
+    KeyboardChar,
+    /// Done was pressed on the keyboard.
+    KeyboardDone,
+    /// The keyboard went away, finished with or not.
+    KeyboardClosed,
     Quit,
     Other(u32),
 }
@@ -188,6 +208,9 @@ impl<'a> DashboardTab<'a> {
             EVENT_DASHBOARD_ACTIVATED => Event::DashboardOpened,
             EVENT_DASHBOARD_DEACTIVATED => Event::DashboardClosed,
             EVENT_QUIT => Event::Quit,
+            EVENT_KEYBOARD_CHAR_INPUT => Event::KeyboardChar,
+            EVENT_KEYBOARD_DONE => Event::KeyboardDone,
+            EVENT_KEYBOARD_CLOSED => Event::KeyboardClosed,
             other => Event::Other(other),
         })
     }
@@ -199,6 +222,41 @@ impl<'a> DashboardTab<'a> {
                 let f: unsafe extern "C" fn(*const c_char) = slot(self.table, SLOT_SHOW_DASHBOARD);
                 f(key.as_ptr());
             }
+        }
+    }
+
+    /// Brings up SteamVR's keyboard, typing into this tab: its events come
+    /// through `poll`, and `keyboard_text` has what's been typed. `existing`
+    /// is what it starts with, `max` the most characters it takes.
+    pub fn show_keyboard(&self, description: &str, max: u32, existing: &str) -> Result<()> {
+        let description = CString::new(description)?;
+        let existing = CString::new(existing)?;
+        let err = unsafe {
+            let f: unsafe extern "C" fn(Handle, i32, i32, u32, *const c_char, u32, *const c_char, u64) -> i32 =
+                slot(self.table, SLOT_SHOW_KEYBOARD_FOR_OVERLAY);
+            f(self.main, TEXT_MODE_NORMAL, LINE_MODE_MULTIPLE, KEYBOARD_FLAGS, description.as_ptr(), max, existing.as_ptr(), 0)
+        };
+        if err != 0 {
+            bail!("SteamVR wouldn't show its keyboard (overlay error {err})");
+        }
+        Ok(())
+    }
+
+    /// What's in the keyboard's text field right now.
+    pub fn keyboard_text(&self) -> String {
+        let mut buf = vec![0u8; KEYBOARD_TEXT_BYTES];
+        unsafe {
+            let f: unsafe extern "C" fn(*mut c_char, u32) -> u32 = slot(self.table, SLOT_GET_KEYBOARD_TEXT);
+            f(buf.as_mut_ptr().cast(), buf.len() as u32);
+        }
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..end]).into_owned()
+    }
+
+    pub fn hide_keyboard(&self) {
+        unsafe {
+            let f: unsafe extern "C" fn() = slot(self.table, SLOT_HIDE_KEYBOARD);
+            f();
         }
     }
 

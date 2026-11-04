@@ -3,11 +3,13 @@
 //! Two screens: home (record, clip, and what's set up at a glance) and
 //! settings (its sections along the top, one at a time, so nothing is a
 //! wall of controls). And the setup, which comes before either the first
-//! time round. Every screen is a title with a chip saying what's being
-//! recorded, one button on the right, the content, and a note at the foot.
+//! time round, and reporting an issue, a step off the home screen. Every
+//! screen is a title with a chip saying what's being recorded, one button
+//! on the right, the content, and a note at the foot.
 
 mod home;
 mod onboarding;
+mod report;
 mod settings;
 mod sync;
 mod widgets;
@@ -21,6 +23,7 @@ use super::settings::{Eye, FrameRate, Quality, Settings, Shape};
 use super::text::{Face, Fonts};
 
 pub use onboarding::Step;
+pub use report::{Phase, ReportView};
 pub use sync::SHOWN as DEVICES_PER_PAGE;
 
 pub const WIDTH: u32 = 1280;
@@ -62,6 +65,7 @@ pub enum Screen {
     Home,
     Settings(Section),
     Onboarding(Step),
+    Report,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +97,12 @@ pub enum Action {
     FinishSetup,
     /// Stops all of framecorder until SteamVR starts again.
     TurnOff,
+    /// Opens the report screen.
+    Report,
+    /// Brings up SteamVR's keyboard to say what went wrong.
+    Type,
+    /// Sends the report.
+    Send,
 }
 
 pub enum Status {
@@ -119,8 +129,9 @@ pub struct Model<'a> {
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.
     pub clip_cooling: bool,
-    #[allow(dead_code)]
+    /// How many apps are watching the live view.
     pub live_viewers: usize,
+    pub report: ReportView<'a>,
     /// Whether the recorder may read the panels, or records SteamVR's view.
     pub unlocked: bool,
     pub status: Status,
@@ -163,6 +174,14 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
             header(canvas, fonts, m, &mut hits, "Set up", skip);
             onboarding::draw(canvas, fonts, m, step, &mut hits);
         }
+        Screen::Report => {
+            let button = match m.report.phase {
+                Phase::Sent { .. } => ("Done", Action::Close, true),
+                _ => ("Cancel", Action::Close, false),
+            };
+            header(canvas, fonts, m, &mut hits, "Report an issue", Some(button));
+            report::draw(canvas, fonts, m, &mut hits);
+        }
     }
     footer(canvas, fonts, m, &mut hits);
     hits
@@ -186,13 +205,18 @@ fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: 
         (false, true) => ("Panels unlocked", GREEN),
         (false, false) => ("SteamVR's view", YELLOW),
     };
-    let x = PAD + w + 20.0;
-    let w = widgets::chip(c, f, x, HEADER_Y + HEADER_H / 2.0, text, color);
-    match m.sync.update {
-        Update::Updating => widgets::chip(c, f, x + w + 12.0, HEADER_Y + HEADER_H / 2.0, "Updating…", YELLOW),
-        Update::Failed(_) => widgets::chip(c, f, x + w + 12.0, HEADER_Y + HEADER_H / 2.0, "Update failed", RED),
+    let cy = HEADER_Y + HEADER_H / 2.0;
+    let mut x = PAD + w + 20.0;
+    x += widgets::chip(c, f, x, cy, text, color) + 12.0;
+    x += match m.sync.update {
+        Update::Updating => widgets::chip(c, f, x, cy, "Updating…", YELLOW) + 12.0,
+        Update::Failed(_) => widgets::chip(c, f, x, cy, "Update failed", RED) + 12.0,
         Update::Idle => 0.0,
     };
+    // Someone's watching the live view from an app.
+    if m.live_viewers > 0 {
+        widgets::chip(c, f, x, cy, &format!("Live · {} watching", m.live_viewers), MAUVE);
+    }
 
     let Some((label, action, primary)) = button else { return };
     let r = Rect::new(WIDTH as f32 - PAD - 168.0, HEADER_Y, 168.0, BUTTON_H);
@@ -200,8 +224,9 @@ fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: 
 }
 
 /// The last recording's result, why the settings won't budge, or what's
-/// worth knowing about the section that's open. Settings also keep the way
-/// to close framecorder down here, out of the way.
+/// worth knowing about the screen that's open. Settings also keep the way
+/// to close framecorder down here, out of the way, and home the way to
+/// report an issue.
 fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
     let section = match m.screen {
         Screen::Settings(s) => Some(s),
@@ -212,34 +237,62 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         Update::Failed(why) => Some(update_failed(why.as_deref())),
         _ => None,
     };
-    let (text, color, text_color) = match m.note {
-        _ if locked_here => ("Recording. Stop it to change these.", YELLOW, YELLOW),
-        _ if *m.sync.update == Update::Updating => (UPDATING, YELLOW, YELLOW),
-        _ if m.relocked && !m.unlocked => (RELOCKED, YELLOW, YELLOW),
-        Some((text, true)) => (text, GREEN, SUBTEXT0),
-        Some((text, false)) => (text, RED, RED),
-        None if failed.is_some() => (failed.as_deref().unwrap_or_default(), RED, RED),
+    let line: Option<(String, Rgb, Rgb)> = match m.note {
+        _ if m.screen == Screen::Report => report_note(m),
+        _ if locked_here => Some(("Recording. Stop it to change these.".into(), YELLOW, YELLOW)),
+        _ if *m.sync.update == Update::Updating => Some((UPDATING.into(), YELLOW, YELLOW)),
+        _ if m.relocked && !m.unlocked => Some((RELOCKED.into(), YELLOW, YELLOW)),
+        Some((text, true)) => Some((text.into(), GREEN, SUBTEXT0)),
+        Some((text, false)) => Some((text.into(), RED, RED)),
+        None if failed.is_some() => failed.map(|f| (f, RED, RED)),
         None => match section {
-            Some(Section::Sync) => (SYNC_NOTE, YELLOW, YELLOW),
-            Some(_) => ("Changes save on their own and apply to the next recording.", OVERLAY1, SUBTEXT0),
-            None => return,
+            Some(Section::Sync) => Some((SYNC_NOTE.into(), YELLOW, YELLOW)),
+            Some(_) => Some(("Changes save on their own and apply to the next recording.".into(), OVERLAY1, SUBTEXT0)),
+            None => None,
         },
     };
-    let y = FOOTER_Y + 27.0;
-    c.hline(PAD, FOOTER_Y, WIDTH as f32 - 2.0 * PAD, TEXT, 0.05);
-    c.fill_circle(PAD + 6.0, y - 6.0, 5.0, color, 1.0);
-    c.text(f, Face::Body, 16.0, PAD + 22.0, y, text, text_color, 1.0);
-
-    if section.is_none() {
+    let link = match m.screen {
+        Screen::Home => Some(("Report an issue", Action::Report, MAUVE)),
+        Screen::Settings(_) => Some(("Close framecorder", Action::TurnOff, OVERLAY2)),
+        _ => None,
+    };
+    if line.is_none() && link.is_none() {
         return;
     }
-    let label = "Close framecorder";
-    let w = f.measure(Face::Body, 16.0, label) + 24.0;
-    let r = Rect::new(WIDTH as f32 - PAD - w, FOOTER_Y + 8.0, w, 44.0);
-    let hovered = m.hover == Some(Action::TurnOff);
-    c.text(f, Face::Body, 16.0, r.x + 12.0, y, label, if hovered { MAUVE } else { OVERLAY2 }, 1.0);
-    hits.push(Hit { rect: r, action: Action::TurnOff });
+    let y = FOOTER_Y + 27.0;
+    c.hline(PAD, FOOTER_Y, WIDTH as f32 - 2.0 * PAD, TEXT, 0.05);
+
+    let mut room = WIDTH as f32 - 2.0 * PAD - 22.0;
+    if let Some((label, action, color)) = link {
+        let w = f.measure(Face::Body, 16.0, label) + 24.0;
+        let r = Rect::new(WIDTH as f32 - PAD - w, FOOTER_Y + 8.0, w, 44.0);
+        let hovered = m.hover == Some(action);
+        let (color, alpha) = if hovered { (MAUVE, 1.0) } else { (color, if color == MAUVE { 0.85 } else { 1.0 }) };
+        c.text(f, Face::Body, 16.0, r.x + 12.0, y, label, color, alpha);
+        hits.push(Hit { rect: r, action });
+        room -= w + 24.0;
+    }
+    if let Some((text, color, text_color)) = line {
+        c.fill_circle(PAD + 6.0, y - 6.0, 5.0, color, 1.0);
+        let text = f.fit(Face::Body, 16.0, &text, room);
+        c.text(f, Face::Body, 16.0, PAD + 22.0, y, &text, text_color, 1.0);
+    }
 }
+
+/// What to know on the report screen: that it's public, that it's on its
+/// way, that it went, or why it didn't.
+fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
+    Some(match (m.report.phase, m.note) {
+        (Phase::Failed(why), _) => (format!("Couldn't send it: {why}"), RED, RED),
+        (Phase::Sending, _) => ("Sending…".into(), YELLOW, YELLOW),
+        (Phase::Sent { .. }, _) => ("Sent. Thank you for taking the time.".into(), GREEN, SUBTEXT0),
+        (Phase::Writing, Some((text, false))) => (text.into(), RED, RED),
+        (Phase::Writing, _) => (PUBLIC_NOTE.into(), YELLOW, YELLOW),
+    })
+}
+
+/// A report is a GitHub issue anyone can read.
+const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with your Steam name and framecorder's logs. Nothing from your videos.";
 
 /// Clips only move while the headset is up; say so where it matters.
 const SYNC_NOTE: &str = "Clips only sync while your Frame is on, on the same Wi-Fi, with the framecorder app open on the other device.";
