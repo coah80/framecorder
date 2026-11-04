@@ -6,5 +6,6 @@ pub mod input;
 pub mod openvr;
 pub mod overlay;
 pub mod setup;
+pub mod report;
 pub mod toast;
 pub mod ui;
