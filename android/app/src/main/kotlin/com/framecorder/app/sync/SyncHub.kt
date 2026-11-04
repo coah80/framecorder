@@ -17,9 +17,12 @@ import com.framecorder.core.FoundFrame
 import com.framecorder.core.FrameInfo
 import com.framecorder.core.FrameState
 import com.framecorder.core.FrameStatus
+import com.framecorder.core.LiveStatus
 import com.framecorder.core.RecordingPatch
 import com.framecorder.core.RecordingSettings
 import com.framecorder.core.RemoteState
+import com.framecorder.core.ReportAppInfo
+import com.framecorder.core.ReportSent
 import com.framecorder.core.SyncProgress
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -175,6 +178,28 @@ class SyncHub(private val app: Application) : Events {
         }
     }
 
+    /**
+     * Everything a report would carry, as the JSON that gets sent: what the
+     * user typed, this app and phone, the paired frame's diagnostics (or why
+     * they couldn't be read) and this app's recent log. Show it, then hand
+     * the same text to [reportSend].
+     */
+    suspend fun reportPreview(description: String): String = core.reportPreview(description, appInfo())
+
+    /** Opens the issue on GitHub; fails with what to do next in plain words. */
+    suspend fun reportSend(previewJson: String): ReportSent = core.reportSend(previewJson)
+
+    /**
+     * Pulls the frame's live view and serves it to players on this phone at
+     * the returned URL. One frame at a time; starting another stops the first.
+     */
+    suspend fun startLive(fingerprint: String): LiveStatus = core.startLive(fingerprint)
+
+    suspend fun stopLive() = core.stopLive()
+
+    /** Where live view stands, or null if it was never started. */
+    fun liveStatus(): LiveStatus? = core.liveStatus()
+
     /** Null if the Frame answers at its last address, else why not. */
     suspend fun check(fingerprint: String): String? = try {
         core.check(fingerprint)
@@ -314,6 +339,20 @@ private fun stateDir(context: Context): File {
 private fun deviceName(context: Context): String {
     val named = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }.getOrNull()
     if (!named.isNullOrBlank()) return named
+    return model()
+}
+
+/** "Google Pixel 8", never the name the user gave the phone. */
+private fun model(): String {
     val maker = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
     return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
 }
+
+/** This app and phone, the way an issue report describes them. */
+private fun appInfo() = ReportAppInfo(
+    name = "framecorder android",
+    version = BuildConfig.VERSION_NAME,
+    os = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
+    device = model(),
+    arch = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
+)

@@ -52,22 +52,26 @@ import com.framecorder.app.ui.common.firstAsk
 import com.framecorder.app.ui.diagnose.DiagnoseScreen
 import com.framecorder.app.ui.frame.FrameScreen
 import com.framecorder.app.ui.library.LibraryScreen
+import com.framecorder.app.ui.live.LiveScreen
 import com.framecorder.app.ui.pair.PairScreen
 import com.framecorder.app.ui.player.PlayerScreen
+import com.framecorder.app.ui.report.ReportScreen
 import com.framecorder.app.ui.settings.SettingsScreen
 
-/** Where the app is. The first three are the tabs in the floating nav. */
+/** Where the app is. The first four are the tabs in the floating nav. */
 sealed interface Screen {
     data object Library : Screen
     data class Frame(val fingerprint: String? = null) : Screen
+    data object Live : Screen
     data object Settings : Screen
     /** [among] is what a swipe goes through, in order; empty means every clip on the phone. */
     data class Player(val key: String, val among: List<String> = emptyList()) : Screen
     data class Pair(val link: String? = null, val replaces: String? = null) : Screen
     data class Diagnose(val fingerprint: String) : Screen
+    data object Report : Screen
 }
 
-private fun Screen.isTab() = this is Screen.Library || this is Screen.Frame || this is Screen.Settings
+private fun Screen.isTab() = this is Screen.Library || this is Screen.Frame || this is Screen.Live || this is Screen.Settings
 
 /** For the clip thumbnail that grows into the player. */
 val LocalSharedScope = staticCompositionLocalOf<SharedTransitionScope?> { null }
@@ -139,7 +143,7 @@ fun App(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, link: String?, clip: S
     LaunchedEffect(frames.size) { navShown = true }
 
     val top = backStack.lastOrNull() ?: Screen.Library
-    BackHandler(enabled = backStack.size == 1 && (top is Screen.Frame || top is Screen.Settings)) { go(Screen.Library) }
+    BackHandler(enabled = backStack.size == 1 && top.isTab() && top !is Screen.Library) { go(Screen.Library) }
 
     // a Surface so every screen gets the right text color, Scaffold or not
     Surface(color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
@@ -172,6 +176,7 @@ fun App(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, link: String?, clip: S
                                     hub = hub,
                                     onOpen = { key, among -> push(Screen.Player(key, among)) },
                                     onFrame = { go(Screen.Frame(it)) },
+                                    onReport = { push(Screen.Report) },
                                     takeLastSeen = { lastSeen.also { lastSeen = null } },
                                     onSelecting = { selecting = it },
                                 )
@@ -181,8 +186,12 @@ fun App(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, link: String?, clip: S
                                     hub = hub,
                                     fingerprint = key.fingerprint,
                                     onDiagnose = { push(Screen.Diagnose(it)) },
+                                    onReport = { push(Screen.Report) },
                                     onPairAnother = { push(Screen.Pair()) },
                                 )
+                            }
+                            entry<Screen.Live>(metadata = tabChange) {
+                                LiveScreen(hub = hub, onFrame = { go(Screen.Frame(it)) })
                             }
                             entry<Screen.Settings>(metadata = tabChange) {
                                 SettingsScreen(
@@ -191,7 +200,11 @@ fun App(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, link: String?, clip: S
                                     appUpdate = appUpdate,
                                     onFrame = { go(Screen.Frame(it)) },
                                     onPair = { push(Screen.Pair()) },
+                                    onReport = { push(Screen.Report) },
                                 )
+                            }
+                            entry<Screen.Report> {
+                                ReportScreen(hub = hub, onBack = ::pop)
                             }
                             entry<Screen.Player> { key ->
                                 PlayerScreen(hub = hub, key = key.key, among = key.among, onPage = { lastSeen = it }, onBack = ::pop)

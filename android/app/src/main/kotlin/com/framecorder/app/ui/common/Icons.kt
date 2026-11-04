@@ -55,6 +55,9 @@ object FcIcons {
     val Bell = stroke("notifications", "M6 17h12l-1.6-2.2V11a4.4 4.4 0 0 0-8.8 0v3.8z", "M10 20a2 2 0 0 0 4 0")
     val Phone = stroke("phone", rrect(7f, 2.5f, 10f, 19f, 2.5f), "M11 18.5h2")
     val Unlink = stroke("unpair", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7M3 3l18 18")
+    val Bug = stroke("report an issue", rrect(8f, 8f, 8f, 12f, 4f), "M12 12v8M8 13H5M8 17l-2 2M16 13h3M16 17l2 2M9.5 8L8 5.5M14.5 8L16 5.5")
+    val Live = icon("live", strokes = listOf("M5 7.5a9 9 0 0 1 14 0M7.8 10.5a5 5 0 0 1 8.4 0M12 14v6"), fills = listOf(circle(12f, 13.5f, 1.8f)))
+    val Copy = stroke("copy", rrect(9f, 9f, 11f, 11f, 2.5f), "M15 9V6.5A2.5 2.5 0 0 0 12.5 4h-6A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9")
 }
 
 private fun circle(cx: Float, cy: Float, r: Float) = "M${cx - r} ${cy}a$r $r 0 1 0 ${2 * r} 0a$r $r 0 1 0 ${-2 * r} 0z"
