@@ -1,0 +1,21 @@
+[Unit]
+Description=framecorder issue report relay (server only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/framecorder/report
+ExecStart=%h/framecorder/report/target/release/framecorder-report
+EnvironmentFile=%h/.config/framecorder-report/env
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/framecorder-report
+
+[Install]
+WantedBy=default.target
