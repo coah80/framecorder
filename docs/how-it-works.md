@@ -103,7 +103,7 @@ audio comes from pipewire (`src/audio.rs`):
 - **game audio** is a capture stream with `stream.capture.sink`, which listens to the monitor of whatever the default output is. it's marked passive, so listening in doesn't keep the speakers awake when nothing's playing
 - **the mic** is a normal capture stream. the frame mutes it whenever the headset's off your head, so desk tests come out silent
 
-every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. `--mic-track` adds a mic-only track too. each track is aac-encoded with ffmpeg (`src/aac.rs`):
+every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. `--mic-track` adds a mic-only track too. each track is aac-encoded with ffmpeg (`src/aac.rs`). it's our own small ffmpeg, linked into the recorder (`packaging/ffmpeg.sh`), so a steamos update that swaps the system's ffmpeg can't stop it starting:
 
 - small timing wobbles get bridged
 - anything more than 50 ms off gets resynced by padding silence or dropping samples, so it can't slowly drift out of sync

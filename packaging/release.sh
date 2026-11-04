@@ -21,6 +21,7 @@ fi
 command -v cargo >/dev/null 2>&1 || PATH="$HOME/.cargo/bin:$PATH"
 
 echo "building"
+packaging/ffmpeg.sh
 cargo build --release
 (cd sync && cargo build --release)
 

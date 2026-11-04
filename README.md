@@ -86,7 +86,7 @@ it builds, installs `framecorder` and `framecorder-ui` to `~/.local/bin`, gives 
 
 the tab only ever attaches to a steamvr that's already running. connecting as an overlay app is allowed to launch steamvr's server itself, and a server started from outside steamvr's own launcher leaves the headset stuck on passthrough, so it checks first and waits.
 
-needs gcc, clang, glslc, ffmpeg, pipewire and vulkan headers, which the frame's image already has.
+needs gcc, clang, glslc, pipewire and vulkan headers, which the frame's image already has. it builds its own small ffmpeg the first time (a few minutes), so a steamos update can't break the recorder.
 
 ## uninstall
 
