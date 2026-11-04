@@ -1,0 +1,6 @@
+# Add this ingress rule before your existing catch-all rule.
+# cloudflared supplies CF-Connecting-IP; only the loopback tunnel should reach the relay.
+# ingress:
+#   - hostname: framecorder-report.coah80.com
+#     service: http://127.0.0.1:4791
+#   - service: http_status:404
