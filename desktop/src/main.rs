@@ -77,7 +77,7 @@ fn init_log() {
             log.target(env_logger::Target::Pipe(Box::new(file)));
         }
     }
-    log.init();
+    let _ = framecorder_app_lib::core::report::init_logger(Box::new(log.build()), log::LevelFilter::Trace);
 }
 
 fn main() {

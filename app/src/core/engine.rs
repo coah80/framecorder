@@ -74,6 +74,7 @@ pub trait Sink: Send + Sync {
     fn staging(&self, host: &Host, clip: &RemoteClip) -> PathBuf;
     /// Moves a complete download to its final place and says where that is.
     fn finish(&self, staged: &Path, host: &Host, clip: &RemoteClip) -> Result<String, String>;
+    fn free_space(&self) -> Option<u64> { None }
     /// How many copies of a file exist at once while it's put in place.
     fn copies(&self) -> u64 {
         1
@@ -193,6 +194,8 @@ impl Engine {
         *self.finder.lock().unwrap() = finder;
         self.mdns.store(mdns, Ordering::SeqCst);
     }
+
+    pub(crate) fn report_free_space(&self) -> Option<u64> { self.sink.free_space() }
 
     pub fn app(&self) -> &str {
         &self.app
@@ -847,6 +850,7 @@ fn split_name(name: &str) -> (&str, String) {
 }
 
 impl Sink for DirSink {
+    fn free_space(&self) -> Option<u64> { space::free(&self.root) }
     fn completed(&self, _host: &Host, clip: &RemoteClip) -> Result<Option<String>, String> {
         let path = self.dir(clip).join(safe_name(&clip.name));
         match std::fs::metadata(&path) {

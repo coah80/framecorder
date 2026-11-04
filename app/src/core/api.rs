@@ -263,6 +263,28 @@ impl Client {
         ApiError::Other(text)
     }
 
+    pub async fn frame(&self) -> Result<serde_json::Value, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/frame").timeout(Duration::from_secs(2));
+        self.send(rb)
+            .await?
+            .json()
+            .await
+            .map_err(|_| ApiError::Other("the headset sent unreadable status".into()))
+    }
+
+    pub async fn diagnostics(&self) -> Result<Option<serde_json::Value>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/diagnostics").timeout(Duration::from_secs(4));
+        match self.send(rb).await {
+            Ok(r) => r
+                .json()
+                .await
+                .map(Some)
+                .map_err(|_| ApiError::Other("the headset sent unreadable diagnostics".into())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn hello(&self) -> Result<Hello, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/hello").timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
