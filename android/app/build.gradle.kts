@@ -165,4 +165,6 @@ dependencies {
     implementation(libs.code.scanner)
     implementation("${libs.jna.get()}@aar")
     debugImplementation(libs.compose.ui.tooling)
+    testImplementation(libs.junit)
+    testImplementation(libs.json)
 }

@@ -62,7 +62,7 @@ import com.framecorder.app.ui.common.lastSync
 import com.framecorder.app.ui.common.stateText
 
 @Composable
-fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (String) -> Unit, onPair: () -> Unit) {
+fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (String) -> Unit, onPair: () -> Unit, onReport: () -> Unit) {
     val context = LocalContext.current
     val frames by hub.frames.collectAsStateWithLifecycle()
     val clips by hub.clips.collectAsStateWithLifecycle()
@@ -182,14 +182,23 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item { GroupLabel("this phone") }
             item {
                 SegmentRow(
-                    0, 3, "saved to",
+                    0, 4, "saved to",
                     subtitle = "Movies/framecorder, clips in /clips. your gallery app shows them too",
                     leading = { Icon(FcIcons.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 )
             }
             item {
                 SegmentRow(
-                    1, 3, "how syncing works",
+                    1, 4, "report an issue",
+                    subtitle = "opens a github issue with this app's log and your frame's details",
+                    onClick = onReport,
+                    leading = { Icon(FcIcons.Bug, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailing = { Chevron() },
+                )
+            }
+            item {
+                SegmentRow(
+                    2, 4, "how syncing works",
                     subtitle = if (howOpen) null else "when and how clips get here",
                     onClick = { howOpen = !howOpen },
                     leading = { Icon(FcIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -208,7 +217,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
                 }
             }
             item {
-                SegmentRow(2, 3, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
+                SegmentRow(3, 4, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
             }
             item { Spacer(Modifier.height(8.dp)) }
         }

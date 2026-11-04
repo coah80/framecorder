@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.framecorder.app.ui.common.Chevron
@@ -49,6 +50,11 @@ import com.framecorder.core.RecordingSettings
 
 private val Shapes = listOf("wide" to "16:9", "square" to "1:1", "tall" to "9:16", "both" to "both eyes")
 private val Eyes = listOf("left" to "left eye", "right" to "right eye")
+/** Both eyes blended into one level view, the way SteamVR's own mirror does it. */
+private val BlendedEye = "both" to "both eyes blended"
+
+/** The eyes on offer: the blend only for a headset whose framecorder can do it. */
+fun eyeChoices(blend: Boolean): List<Pair<String, String>> = if (blend) Eyes + BlendedEye else Eyes
 /** 0 is clips off, like the desktop app's. */
 private val Lengths = listOf(0u to "off", 15u to "15 s", 30u to "30 s", 60u to "1 min", 120u to "2 min")
 
@@ -76,9 +82,10 @@ private fun audio(s: RecordingSettings) = when {
 /**
  * The headset's recording settings: shape and clip length right here, the
  * rest in a sheet. [settings] is null until the frame has said what they are.
+ * [blend] is whether its framecorder can blend both eyes into one view.
  */
 @Composable
-fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (RecordingPatch) -> Unit, modifier: Modifier = Modifier) {
+fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, onChange: (RecordingPatch) -> Unit, modifier: Modifier = Modifier) {
     var more by rememberSaveable { mutableStateOf(false) }
     val enabled = settings != null
     val s = settings ?: Defaults
@@ -86,6 +93,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (Record
     val eyes = s.eye != null
     val panels = s.panels != false
     val rows = if (eyes) 4 else 3
+    val eyeChoices = eyeChoices(blend)
     Column(modifier) {
         GroupLabel("next recording")
         Column(Modifier.alpha(if (enabled) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -99,7 +107,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, onChange: (Record
             }
             if (eyes) {
                 Group(1, rows, "eye") {
-                    Choices(Eyes, if (panels) s.eye ?: "left" else "left", enabled && panels) { onChange(RecordingPatch(eye = it)) }
+                    Choices(eyeChoices, if (panels) s.eye ?: "left" else "left", enabled && panels, lines = if (blend) 2 else 1) { onChange(RecordingPatch(eye = it)) }
                 }
             }
             Group(rows - 2, rows, "clip length") {
@@ -177,13 +185,14 @@ private fun Group(index: Int, count: Int, label: String, content: @Composable ()
     }
 }
 
-/** A connected button group with one picked. */
+/** A connected button group with one picked. [lines] lets a long label wrap instead of being cut. */
 @Composable
 private fun <T> Choices(
     options: List<Pair<T, String>>,
     picked: T,
     enabled: Boolean,
     tall: Boolean = false,
+    lines: Int = 1,
     glyph: (@Composable (T) -> Unit)? = null,
     allowed: (T) -> Boolean = { true },
     onPick: (T) -> Unit,
@@ -194,7 +203,7 @@ private fun <T> Choices(
                 checked = value == picked,
                 onCheckedChange = { if (value != picked) onPick(value) },
                 enabled = enabled && allowed(value),
-                modifier = Modifier.weight(1f).height(if (tall) 60.dp else 40.dp).semantics { role = Role.RadioButton },
+                modifier = Modifier.weight(1f).height(if (tall || lines > 1) 60.dp else 40.dp).semantics { role = Role.RadioButton },
                 shapes = when (i) {
                     0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
                     options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
@@ -208,7 +217,12 @@ private fun <T> Choices(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     glyph?.invoke(value)
-                    Text(label, style = if (tall) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge, maxLines = 1)
+                    Text(
+                        label,
+                        style = if (tall || lines > 1) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+                        maxLines = lines,
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }
