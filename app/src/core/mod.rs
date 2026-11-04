@@ -4,6 +4,7 @@
 pub mod api;
 pub mod discover;
 pub mod engine;
+pub mod live;
 pub mod pairlink;
 pub mod space;
 pub mod store;

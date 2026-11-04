@@ -263,6 +263,26 @@ impl Client {
         ApiError::Other(text)
     }
 
+    pub async fn live(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ApiError>> + Send>>, ApiError> {
+        let response = match self
+            .send_stream(self.request(reqwest::Method::GET, "/live"))
+            .await
+        {
+            Err(ApiError::Refused(404, _)) => {
+                return Err(ApiError::Refused(
+                    404,
+                    "the headset needs an update to show live view".into(),
+                ))
+            }
+            result => result?,
+        };
+        Ok(Box::pin(response.bytes_stream().map(|chunk| {
+            chunk.map_err(|_| ApiError::Unreachable("live view disconnected; reconnecting".into()))
+        })))
+    }
+
     pub async fn hello(&self) -> Result<Hello, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/hello").timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
