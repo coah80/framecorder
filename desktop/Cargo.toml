@@ -30,6 +30,8 @@ tray-icon = { version = "0.26.0", default-features = false, features = ["ksni"] 
 # deleting a clip puts it in the trash (recycle bin on windows), so it can come back
 trash = "5"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+# the live preview hands gpui frames the way its image cache holds them
+smallvec = "1"
 
 # finding and closing the old app, see oldapp.rs
 [target.'cfg(unix)'.dependencies]

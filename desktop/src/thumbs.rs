@@ -14,7 +14,7 @@ pub fn path_for(dir: &Path, key: &str) -> PathBuf {
     dir.join(format!("{safe}.jpg"))
 }
 
-fn ffmpeg() -> Command {
+pub(crate) fn ffmpeg() -> Command {
     let mut cmd = Command::new("ffmpeg");
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     #[cfg(windows)]

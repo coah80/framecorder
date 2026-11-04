@@ -7,10 +7,14 @@ use std::time::{Duration, Instant};
 use framecorder_app_lib::core::api::{About, Battery, Recording, Remote, Storage, UpdateStatus};
 use framecorder_app_lib::core::discover::Found;
 use framecorder_app_lib::core::engine::{Progress, State, Status};
+use framecorder_app_lib::core::live::{LivePhase, LiveStatus};
+use framecorder_app_lib::core::report::{AppInfo, Report, ReportLog, Sent};
 
 use crate::app::{Batch, DesktopUpdate, FrameApp, Page, Speed};
 use crate::check::{Check, Outcome, Step};
+use crate::preview::{self, Note};
 use crate::remote::Live;
+use crate::report::Phase;
 use crate::selfupdate::Release;
 use crate::sync::Clip;
 
@@ -31,8 +35,23 @@ pub const SCREENS: &[&str] = &[
     "frame-unreachable",
     "frame-syncing",
     "frame-eye",
+    "frame-blended",
+    "frame-no-blend",
     "frame-locked",
     "check",
+    "live",
+    "live-connecting",
+    "live-on",
+    "live-error",
+    "live-old",
+    "live-no-ffmpeg",
+    "report",
+    "report-collecting",
+    "report-review",
+    "report-json",
+    "report-sending",
+    "report-sent",
+    "report-error",
 ];
 
 fn status(state: State, update: bool) -> Status {
@@ -118,6 +137,81 @@ fn live(remote: Option<Remote>) -> Live {
         asked: true,
         ..Default::default()
     }
+}
+
+/// the stream's state as the core would report it
+pub fn live_status(phase: LivePhase) -> LiveStatus {
+    let on = phase == LivePhase::Live;
+    LiveStatus {
+        phase: phase.clone(),
+        url: format!("http://127.0.0.1:{}/live.ts", framecorder_app_lib::core::live::DEFAULT_PORT),
+        bytes_per_second: if on { 5_100_000 } else { 0 },
+        viewers: if on { 2 } else { 0 },
+        error: (phase == LivePhase::Error).then(|| "the headset needs an update to show live view".into()),
+    }
+}
+
+/// a report as the core would put it together, for the review step
+pub fn report(description: &str) -> Report {
+    let headset = serde_json::json!({
+        "collected_at": "2026-11-04T09:12:44Z",
+        "framecorder": {"version": "0.2.0", "channel": "release", "unlocked": true, "helper": "ok",
+            "services": {"framecorder-ui": "active", "framecorder-sync": "active", "framecorder-update.timer": "active"}},
+        "steam": {"name": "cole", "steamvr_version": "2.11.3", "steamvr_branch": "public"},
+        "os": {"name": "SteamOS", "version": "3.7.8", "build_id": "20251028.1", "branch": "rel", "kernel": "6.11.11-valve8"},
+        "device": {"model": "Steam Frame", "cpu": "Snapdragon 8 Gen 3", "cores": 8, "ram_total_mb": 15800, "ram_available_mb": 6100,
+            "disk_free_mb": 48000, "uptime_s": 8120, "battery_percent": 72, "refresh_hz": 90},
+        "settings": {"shape": "wide", "quality": "high", "fps": "auto", "eye": "left", "clips": true, "clip": 30},
+        "sync": {"paired": 2, "apps": ["desktop/0.2.0", "android/0.2.0"]},
+        "recent_errors": [
+            "2026-11-04 09:01:12 recorder.log: WARN encoder fell behind, dropped 3 frames",
+            "2026-11-04 09:03:40 framecorder-ui: ERROR couldn't reach the sync service: connection refused"
+        ],
+        "logs": [{"name": "recorder.log", "text": "..."}, {"name": "framecorder-ui.journal", "text": "..."}, {"name": "vrcompositor.txt", "text": "..."}]
+    });
+    Report {
+        version: 1,
+        source: "desktop".into(),
+        description: description.into(),
+        app: AppInfo {
+            name: "framecorder desktop".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            os: "Ubuntu 24.04.3 LTS".into(),
+            device: "linux pc, wayland, appimage".into(),
+            arch: "x86_64".into(),
+        },
+        headset: Some(headset),
+        headset_unavailable: None,
+        app_logs: vec![
+            ReportLog { name: "app.log".into(), text: "1762247520 INFO sync: connected to cole's frame\n1762247531 WARN sync: lost the event stream, reconnecting".into() },
+            ReportLog { name: "sync-state.json".into(), text: r#"{"paired":1,"headsets":[{"address":"192.168.1.42:38619","state":"Connected"}]}"#.into() },
+        ],
+    }
+}
+
+const WENT_WRONG: &str = "the clip i saved at 15:42 is tilted, the horizon leans to the left. 16:9 and the left eye, playing walkabout mini golf.";
+
+fn seed_live(app: &mut FrameApp, phase: Option<LivePhase>, picture: bool) {
+    app.page = Page::Live;
+    app.ffmpeg = true;
+    app.live.insert("demo".into(), live(Some(Remote { live_viewers: Some(1), ..remote() })));
+    if let Some(phase) = phase {
+        app.live_view.frame = Some("demo".into());
+        app.live_view.demo_status = Some(live_status(phase));
+    }
+    if picture {
+        app.live_view.picture = Some(preview::demo_frame());
+        app.live_view.note = Note::Showing;
+    }
+}
+
+fn seed_report(app: &mut FrameApp, phase: Phase) {
+    app.page = Page::Report;
+    app.report.description = WENT_WRONG.into();
+    if !matches!(phase, Phase::Writing | Phase::Collecting) {
+        app.report.show(report(WENT_WRONG), matches!(phase, Phase::Review { json: true }));
+    }
+    app.report.phase = phase;
 }
 
 pub fn seed(app: &mut FrameApp, screen: &str) {
@@ -217,6 +311,35 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
             let rec = Recording { eye: Some("right".into()), ..recording() };
             app.live.insert("demo".into(), Live { recording: Some(rec), ..live(Some(remote())) });
         }
+        // both eyes blended into one picture
+        "frame-blended" => {
+            let rec = Recording { eye: Some("both".into()), ..recording() };
+            app.live.insert("demo".into(), Live { recording: Some(rec), ..live(Some(remote())) });
+        }
+        // a frame too old to blend: it doesn't say who's watching, so the choice is greyed
+        "frame-no-blend" => {
+            let old = Remote { live_viewers: None, ..remote() };
+            app.live.insert("demo".into(), live(Some(old)));
+        }
+        "live" => seed_live(app, None, false),
+        "live-connecting" => seed_live(app, Some(LivePhase::Connecting), false),
+        "live-on" => seed_live(app, Some(LivePhase::Live), true),
+        "live-error" => seed_live(app, Some(LivePhase::Error), false),
+        "live-old" => {
+            seed_live(app, None, false);
+            app.live.insert("demo".into(), live(Some(Remote { live_viewers: None, ..remote() })));
+        }
+        "live-no-ffmpeg" => {
+            seed_live(app, Some(LivePhase::Live), false);
+            app.ffmpeg = false;
+        }
+        "report" => seed_report(app, Phase::Writing),
+        "report-collecting" => seed_report(app, Phase::Collecting),
+        "report-review" => seed_report(app, Phase::Review { json: false }),
+        "report-json" => seed_report(app, Phase::Review { json: true }),
+        "report-sending" => seed_report(app, Phase::Sending),
+        "report-sent" => seed_report(app, Phase::Sent(Sent { number: 128, url: "https://github.com/coah80/framecorder/issues/128".into() })),
+        "report-error" => seed_report(app, Phase::Failed("couldn't send the report; check your internet connection and try again".into())),
         // a frame whose panels aren't unlocked: a square was picked, but it records steamvr's view
         "frame-locked" => {
             let rec = Recording { shape: "square".into(), panels: Some(false), ..recording() };
