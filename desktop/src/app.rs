@@ -1,5 +1,5 @@
 //! the app's state and everything it can do. the screens that draw it are in
-//! sidebar.rs, clips.rs, pair.rs and settings.rs.
+//! sidebar.rs, clips.rs, frame.rs, live.rs, report.rs, pair.rs and settings.rs.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use framecorder_app_lib::core::engine::{Forgot, Progress, State, Status};
 use framecorder_app_lib::core::pairlink;
 use framecorder_app_lib::core::store::Entry;
 use gpui::{
-    div, prelude::*, px, App, Context, FocusHandle, FontWeight, KeyDownEvent, ScrollHandle, SharedString,
+    div, prelude::*, px, Context, FocusHandle, FontWeight, KeyDownEvent, ScrollHandle, SharedString,
     SystemNotification, SystemNotificationAction, SystemNotificationResponse, Task, Window,
 };
 
@@ -20,16 +20,19 @@ use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
-use crate::{autostart, check, clips, format, frame, pair, prefs, settings, sidebar, thumbs};
+use crate::{autostart, check, clips, format, frame, live, pair, prefs, report, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Clips,
     Frame,
+    Live,
     Settings,
     Pair,
     /// the connection check, reached from the frame page
     Check,
+    /// report an issue, reached from the sidebar
+    Report,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,7 +153,10 @@ pub struct FrameApp {
     told_about_tray: bool,
     pub desktop: DesktopUpdate,
     pub thumbs: HashMap<String, Thumb>,
-    ffmpeg: bool,
+    /// ffmpeg's installed, for thumbnails and the live picture
+    pub ffmpeg: bool,
+    pub report: report::State,
+    pub live_view: live::View,
     toast_task: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
 }
@@ -255,6 +261,8 @@ impl FrameApp {
             desktop: DesktopUpdate::None,
             thumbs: HashMap::new(),
             ffmpeg: false,
+            report: report::State::new(cx.focus_handle()),
+            live_view: live::View::new(),
             toast_task: None,
             _tasks: tasks,
         };
@@ -416,6 +424,10 @@ impl FrameApp {
         }
         if page != Page::Check {
             self.check = None;
+        }
+        // the live picture only decodes while its page is up. the stream itself carries on, obs may be on it
+        if page != Page::Live {
+            self.stop_preview(cx);
         }
         cx.notify();
     }
@@ -664,6 +676,8 @@ impl FrameApp {
     /// whether the window closing should leave the app running. the first
     /// time, a notification says where it went
     pub fn keep_running_on_close(&mut self, cx: &mut Context<Self>) -> bool {
+        // nothing streams with no window to see it in
+        self.stop_live(cx);
         if self.demo || !self.background || self.tray.is_none() {
             return false;
         }
@@ -1032,7 +1046,9 @@ impl Render for FrameApp {
                 .child(match self.page {
                     Page::Settings => settings::render(self, cx).into_any_element(),
                     Page::Frame => frame::render(self, window, cx).into_any_element(),
+                    Page::Live => live::render(self, window, cx).into_any_element(),
                     Page::Check => check::render(self, cx).into_any_element(),
+                    Page::Report => report::render(self, window, cx).into_any_element(),
                     _ => clips::render(self, window, cx).into_any_element(),
                 })
                 .into_any_element()
@@ -1098,10 +1114,6 @@ pub fn status_color(s: &Status) -> u32 {
         State::Unreachable | State::Full => theme::RED,
         State::Unpaired | State::WrongFingerprint => theme::PEACH,
     }
-}
-
-pub fn quit(cx: &mut App) {
-    cx.quit();
 }
 
 #[cfg(test)]

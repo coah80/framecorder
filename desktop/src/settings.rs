@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString};
 
-use crate::app::{quit, status_color, status_text, FrameApp, Page};
+use crate::app::{status_color, status_text, FrameApp, Page};
 use crate::sidebar::short_path;
 use crate::{format, sync};
 use crate::theme::{self, a, c};
@@ -194,7 +194,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                                 "stops syncing until you open it again, clips catch up then. closing the window does this too"
                             },
                         ))
-                        .child(outline("quit", "quit").on_click(|_, _, cx| quit(cx))),
+                        .child(outline("quit", "quit").on_click(cx.listener(|app, _, _, cx| app.quit(cx)))),
                 )
                 .child(row(false).child(text(
                     format!("framecorder {}", env!("CARGO_PKG_VERSION")),
