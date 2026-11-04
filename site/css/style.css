@@ -97,6 +97,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .does { display: grid; grid-template-columns: repeat(3, 1fr); gap: 56px; padding-top: 48px; border-top: 1px solid var(--line); }
 .does h2 { font-size: clamp(28px, 3.2vw, 40px); margin-bottom: 14px; }
 .does p { color: var(--subtext0); max-width: 30ch; text-wrap: pretty; }
+/* the ones that just landed */
+.does small { font: 500 12px var(--data); color: var(--mauve); text-transform: uppercase; letter-spacing: .08em; vertical-align: .4em; margin-left: 10px; }
 
 /* what it looks like: the tab in the headset, the app on a phone */
 .look { margin: var(--gap) 0 0; display: grid; grid-template-columns: 1fr 22%; gap: 32px; align-items: end; }

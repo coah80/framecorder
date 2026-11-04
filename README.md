@@ -33,7 +33,8 @@ the long version, lens math and all, is in [docs/how-it-works.md](docs/how-it-wo
 ## views and shapes
 
 - 16:9 (default), 1:1 and 9:16: one eye un-warped from what the panels show, level, centered vertically where the lens shows the most (about 16° above straight ahead, like steamvr's own view) and as wide as it goes without black edges (about 77° square, 64° x 96° tall). read with a sharp catmull-rom filter so it holds up next to steam's recorder. `--fov` overrides the width
-- both eyes (`--view raw`): both panels exactly as scanned out, distortion included
+- left eye, right eye, or both eyes blended (`--eye left`, `right`, `both`): blended is one flat video looking straight out from between the eyes, the two eyes mixed across the middle of what they both see, the way steamvr's own view does it. it's a bit wider than one eye. in the tab it's "Both eyes blended" under video, next to left and right, and the apps offer it too. anything close to your face can ghost a little in the middle, that's the two eyes disagreeing
+- both panels (`--view raw`): both panels exactly as scanned out, distortion included
 
 `--source headset` records SteamVR's headset view instead, the picture Steam's own recorder saves (16:9 left eye only on the frame). steamvr only renders it while someone's recording it, so it costs the game about 0.45 ms of gpu per frame and a few reprojected frames. the panel source costs the game nothing measurable, so it's the default.
 
@@ -63,6 +64,20 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 `framecorder-sync` runs on the headset and hands finished clips and recordings to the framecorder app (windows, macos, linux, android) over wi-fi, as soon as they're saved. pair from the tab: settings, sync, "pair a device" shows a qr code and a code to type. it only syncs while the frame is on, on the same wi-fi, with framecorder running. transfers go full speed, sending a file doesn't touch the gpu or the encoder. if you stream pc vr over the same wi-fi and it stutters during a sync, set `game_rate_mb` in `~/.config/framecorder/sync/settings.json` (8 is a good start). the desktop app's in `desktop/`, the android app in `android/`, the service in `sync/`, each with its own readme.
 
 on the old 0.1.x desktop app? it can't update itself, so download the new app once from [the site](https://framecorder.coah80.com/) and open or install it. your pairings and settings carry over, and the new app closes the old one for you.
+
+## watch it live
+
+a paired app can watch what the headset shows while it happens. it's the same video the recorder makes (same shape, eye and quality as your settings, game audio and mic mixed in), sent over wi-fi, so the headset does no extra encoding for it. nothing runs until someone's watching, and it stops when you stop it or close the app.
+
+on the desktop app, "live" in the sidebar. start it and it plays right there, and shows a local address like `http://127.0.0.1:38620/live.ts` with a copy button. (if that port's busy the app picks another, so copy the one it shows.) to record it with obs:
+
+1. in obs, under sources, hit + and pick media source
+2. uncheck "local file"
+3. paste that address into input, and ok
+
+obs plays it like any other source, so record, stream or crop it from there. anything else that opens a url works the same (vlc, ffmpeg). on android, "live" in the app plays it on the phone. from a terminal, `framecorder-app live` prints the address and waits.
+
+a few things to know: the tab says when someone's watching. while the framecorder tab itself is on screen the stream holds its last frame, the same as recordings, so the controls never end up on it. a headset on an older framecorder doesn't have live yet, the app tells you to update it.
 
 ## install
 
@@ -110,6 +125,8 @@ open the steamvr dashboard, there's a framecorder tab. the first screen is the r
 
 it starts with steamvr. to stop it, tab, recorder, clips and sync, until steamvr starts again: settings, "close framecorder" at the bottom. to bring it back sooner, pick framecorder from "launch program" on the frame's app bar, or press play on it in the steam library.
 
+something broke? see [report an issue](#report-an-issue) below.
+
 or from ssh:
 
 ```sh
@@ -122,6 +139,14 @@ kill -USR1 <pid> / kill -USR2 <pid>  # pause / resume
 ```
 
 `framecorder --help` has the rest.
+
+## report an issue
+
+every app has a "report an issue" button on its main screen: the tab's home screen, the desktop app, and the android app. type what went wrong, look over what's going with it, and send. it opens an issue on [github](https://github.com/coah80/framecorder/issues) for you, posted by framecorder-bot, and hands you the link.
+
+what goes with it, so nobody has to ask for it afterwards: the framecorder version and whether the panels are unlocked, the steamos and steamvr versions, your steam name, the headset's model, memory, free disk and battery, the recording settings, which apps are paired, any errors from the last two days, and the recent part of the logs (framecorder's own and steamvr's). the apps add their version, os and their own log. the issue is public, so the app shows you the summary first, and the full json if you want to read it. your home folder and user name, any ip outside your lan, mac addresses, serial numbers, pairing codes and keys are scrubbed out before anything's sent, and your videos are never opened.
+
+over ssh, `framecorder-ui --report "what went wrong"` does the same, and `framecorder-ui --diagnostics` prints exactly what would be sent.
 
 ## notes
 

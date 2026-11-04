@@ -2,7 +2,7 @@
 
 this is the long version of "how it works" from the readme: how framecorder gets the picture off the frame's panels, turns it into a normal flat video, and writes it out with audio, without costing the game anything you'd notice.
 
-the short version: it reads the exact buffer the vr compositor is sending to the panels, un-warps one eye with a single compute shader, and hands the result straight to the hardware encoder. pixels never touch the cpu, and nothing gets copied.
+the short version: it reads the exact buffer the vr compositor is sending to the panels, un-warps one eye (or blends both) with a single compute shader, and hands the result straight to the hardware encoder. pixels never touch the cpu, and nothing gets copied.
 
 ```
  vr compositor ──► scanout buffer (what the panels show, both eyes, lens-warped)
@@ -16,7 +16,8 @@ the short version: it reads the exact buffer the vr compositor is sending to the
  pipewire: game audio + mic ──► mix ──► aac ───────────────┤
                                                            ▼
                                        session thread ──► recording (.mp4)
-                                                      └─► replay buffer ──► clips
+                                                      ├─► replay buffer ──► clips
+                                                      └─► live view ──► paired apps (mpeg-ts)
 ```
 
 ## 1. finding what the panels show
