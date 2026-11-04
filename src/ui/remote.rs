@@ -13,6 +13,7 @@ const STALE_MS: u64 = 10_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Record,
+    Live,
     Stop,
     Clip,
 }
@@ -22,6 +23,8 @@ pub enum Command {
 pub struct Status {
     /// The setup's done, so the recorder may run.
     pub ready: bool,
+    pub live_viewers: usize,
+    pub live_capture: bool,
     pub panels: bool,
     pub recording: bool,
     /// Recording and not paused (it pauses while the tab's on screen).
@@ -85,6 +88,7 @@ impl Remote {
         let from = c["from"].as_str().unwrap_or("your phone").to_string();
         let command = match c["do"].as_str()? {
             "record" => Command::Record,
+            "live" => Command::Live,
             "stop" => Command::Stop,
             "clip" => Command::Clip,
             other => {
@@ -111,6 +115,8 @@ impl Remote {
         let body = json!({
             "pid": std::process::id(),
             "ready": status.ready,
+            "live_viewers": status.live_viewers,
+            "live_capture": status.live_capture,
             "panels": status.panels,
             "recording": status.recording,
             "running": status.running,
@@ -127,6 +133,23 @@ impl Remote {
             Err(e) => log::warn!("couldn't write {}: {e}", file.display()),
         }
     }
+}
+
+pub fn live_viewers() -> usize {
+    let Some(file) = path("live.json") else {
+        return 0;
+    };
+    let Some(s) = std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+        return 0;
+    };
+    if !s["pid"].as_u64().is_some_and(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists()) {
+        return 0;
+    }
+    s["viewers"].as_u64().unwrap_or(0) as usize
+}
+
+pub fn live_socket() -> Option<PathBuf> {
+    path("live.sock")
 }
 
 #[cfg(test)]

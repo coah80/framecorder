@@ -22,7 +22,7 @@ FLAVOR=release
 EXTRA=""
 if [ "${1:-}" = --for-tests ]; then
     FLAVOR=tests
-    EXTRA="--enable-gpl --enable-libx264 --enable-encoder=libx264 --enable-demuxer=mov --enable-decoder=h264,hevc,aac"
+    EXTRA="--enable-gpl --enable-libx264 --enable-encoder=libx264 --enable-demuxer=mov,mpegts --enable-decoder=h264,hevc,aac"
 fi
 STAMP="$VERSION $FLAVOR $(cksum <packaging/ffmpeg.sh | cut -d" " -f1)"
 if [ "$(cat "$PREFIX/.built" 2>/dev/null)" = "$STAMP" ]; then
@@ -40,7 +40,7 @@ cd "$WORK/FFmpeg-n$VERSION"
 ./configure --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
     --disable-autodetect --disable-programs --disable-doc --disable-network \
     --disable-everything --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-postproc \
-    --enable-encoder=aac --enable-muxer=mp4,mov,matroska --enable-protocol=file --enable-parser=aac,h264,hevc \
+    --enable-encoder=aac --enable-muxer=mp4,mov,matroska,mpegts --enable-protocol=file --enable-parser=aac,h264,hevc \
     $EXTRA >/dev/null
 make -j"$(nproc)" >/dev/null
 rm -rf "$PREFIX"

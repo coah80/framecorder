@@ -10,6 +10,8 @@ pub enum Command {
     /// Start a recording into this file.
     Record(PathBuf),
     StopRecord,
+    Live(Option<PathBuf>),
+    Keyframe,
     /// Save the last `secs` seconds, into this file or a default one.
     Clip { secs: Option<u32>, path: Option<PathBuf> },
     Quit,
@@ -23,6 +25,8 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "pause" => Ok(Command::Pause),
         "resume" => Ok(Command::Resume),
         "record" => path(rest).map(Command::Record).ok_or_else(|| "record needs a file".into()),
+        "live" => Ok(Command::Live(path(rest))),
+        "keyframe" => Ok(Command::Keyframe),
         "stop-record" => Ok(Command::StopRecord),
         "clip" => {
             let (secs, file) = rest.split_once(' ').map_or((rest, ""), |(s, f)| (s, f.trim()));
@@ -44,6 +48,9 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert_eq!(parse("pause\n"), Ok(Command::Pause));
+        assert_eq!(parse("live /tmp/live.sock"), Ok(Command::Live(Some("/tmp/live.sock".into()))));
+        assert_eq!(parse("live"), Ok(Command::Live(None)));
+        assert_eq!(parse("keyframe"), Ok(Command::Keyframe));
         assert_eq!(parse("record /tmp/a b.mp4"), Ok(Command::Record("/tmp/a b.mp4".into())));
         assert_eq!(parse("clip"), Ok(Command::Clip { secs: None, path: None }));
         assert_eq!(parse("clip 30"), Ok(Command::Clip { secs: Some(30), path: None }));

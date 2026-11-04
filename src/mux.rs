@@ -49,6 +49,8 @@ pub enum Msg {
     /// Start writing a recording here, from the next keyframe.
     Record(PathBuf),
     StopRecord,
+    Live(Option<PathBuf>),
+    Keyframe,
     /// Save the last `secs` seconds from the replay buffer.
     Clip { secs: u32, path: PathBuf },
 }
@@ -130,6 +132,8 @@ struct Session {
     recordings: u32,
     /// Where the video was when the last clip was taken.
     last_clip: Option<i64>,
+    live_path: Option<PathBuf>,
+    live: Option<writer::Live>,
 }
 
 impl Session {
@@ -160,12 +164,19 @@ impl Session {
             stats: Stats::default(),
             recordings: 0,
             last_clip: None,
+            live_path: None,
+            live: None,
             cfg,
         })
     }
 
     fn handle(&mut self, msg: Msg) -> Result<()> {
         match msg {
+            Msg::Live(path) => {
+                self.live_path = path;
+                self.live = None;
+            }
+            Msg::Keyframe => {}
             Msg::Video(p) => self.video(p)?,
             Msg::Audio(chunk) => self.audio(chunk)?,
             Msg::Pause(at) => self.paused_at = Some(at as i64 - self.cfg.start_ns as i64),
@@ -295,6 +306,20 @@ impl Session {
         if p.stream > 0 {
             let track = p.stream - 1;
             self.audio_out[track] = self.audio_out[track].max(p.pts + p.duration);
+        }
+        if self.live.is_none() && p.stream == 0 && p.key {
+            if let (Some(path), Some(streams)) = (&self.live_path, &self.streams) {
+                match writer::Live::new(path, streams) {
+                    Ok(live) => self.live = Some(live),
+                    Err(e) => log::warn!("couldn't start live video: {e:#}"),
+                }
+            }
+        }
+        if let Some(live) = &mut self.live {
+            if let Err(e) = live.send(&p) {
+                log::warn!("live video stopped: {e:#}");
+                self.live = None;
+            }
         }
         for o in &self.outputs {
             if let Some(rebased) = rebase(&p, o.start, o.end, self.fps) {

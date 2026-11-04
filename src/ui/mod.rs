@@ -155,6 +155,7 @@ struct App {
     settings: Settings,
     /// What phones ask for, through framecorder-sync.
     remote: Remote,
+    live_viewers: usize,
     /// When ui.conf last changed as far as we know, and when we last looked.
     settings_at: Option<SystemTime>,
     settings_checked: Instant,
@@ -235,7 +236,19 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let hover = (state == "idle").then_some(Action::Record);
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
     let free = Some(if state == "low-space" { 1_400_000_000 } else { 128_400_000_000 });
-    let model = Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked", free };
+    let model = Model {
+        settings: &settings,
+        screen,
+        sync,
+        live_viewers: 0,
+        clip_cooling: false,
+        unlocked,
+        status,
+        hover,
+        note,
+        relocked: state == "relocked",
+        free,
+    };
     view::draw(&mut canvas, &mut fonts, &model);
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
@@ -438,6 +451,7 @@ impl App {
         Self {
             settings,
             remote: Remote::new(),
+            live_viewers: 0,
             settings_at: Settings::changed_at(),
             settings_checked: Instant::now(),
             recorder: None,
@@ -660,10 +674,10 @@ impl App {
         if !self.settings.onboarded {
             return;
         }
-        let wanted = self.settings.clipping().is_some();
+        let wanted = self.settings.clipping().is_some() || self.live_viewers > 0;
         if let Some(r) = &mut self.recorder {
             let stale = r.replay != self.settings.clipping() || r.args != self.settings.recorder_args(self.unlocked);
-            if self.recording.is_none() && !r.quitting() && (stale || (!wanted && r.replay.is_some())) {
+            if self.recording.is_none() && !r.quitting() && (stale || !wanted) {
                 r.quit();
             }
             return;
@@ -745,8 +759,9 @@ impl App {
                 }
             }
         }
+        r.set_live(self.live_viewers > 0);
         // Without clipping the recorder only lives for one recording.
-        if self.recording.is_none() && r.replay.is_none() && !r.quitting() {
+        if self.recording.is_none() && self.live_viewers == 0 && r.replay.is_none() && !r.quitting() {
             r.quit();
         }
         let Some(exit) = r.exited() else { return };
@@ -771,6 +786,11 @@ impl App {
 
     /// Does what a phone asked for, and keeps phones posted on how things stand.
     fn check_remote(&mut self) {
+        let viewers = remote::live_viewers();
+        if viewers != self.live_viewers {
+            self.live_viewers = viewers;
+            self.dirty = true;
+        }
         if let Some((command, from)) = self.remote.poll() {
             log::info!("{from} asked to {command:?}");
             let result = self.handle_remote(command, &from);
@@ -780,6 +800,8 @@ impl App {
         let rec = self.recording.as_ref().filter(|r| !r.stopping);
         let status = remote::Status {
             ready: self.settings.onboarded,
+            live_viewers: self.live_viewers,
+            live_capture: self.live_viewers > 0 && self.recorder.as_ref().is_some_and(|r| !r.quitting()),
             panels: self.unlocked,
             recording: rec.is_some(),
             running: rec.is_some_and(|r| r.running_since.is_some()),
@@ -809,6 +831,19 @@ impl App {
             return "finish setting up framecorder on the headset first".into();
         }
         match command {
+            remote::Command::Live => {
+                self.manage_recorder();
+                let Some(r) = &mut self.recorder else {
+                    return "couldn't start the recorder, try again in a moment".into();
+                };
+                if r.quitting() {
+                    return "the recorder is restarting, try again in a moment".into();
+                }
+                r.set_live(false);
+                r.set_live(self.live_viewers > 0);
+                r.keyframe();
+                "ok".into()
+            }
             remote::Command::Record => {
                 if self.recording.is_none() {
                     if let Err(why) = self.prepare_recording() {
@@ -943,6 +978,7 @@ impl App {
             update: &self.sync.update,
         };
         Model {
+            live_viewers: self.live_viewers,
             settings: &self.settings,
             screen: self.screen,
             sync,
