@@ -98,9 +98,14 @@ impl FrameApp {
     }
 
     pub fn pick_frame(&mut self, fingerprint: String, cx: &mut Context<Self>) {
+        self.pick_frame_on(fingerprint, Page::Frame, cx);
+    }
+
+    /// makes a frame the one the frame and live pages are about, and goes to one of them
+    pub fn pick_frame_on(&mut self, fingerprint: String, page: Page, cx: &mut Context<Self>) {
         self.frame = Some(fingerprint.clone());
         self.ask_settings(&fingerprint, cx);
-        self.go(Page::Frame, cx);
+        self.go(page, cx);
     }
 
     pub fn on_remote(&mut self, fingerprint: &str, remote: Option<Remote>, cx: &mut Context<Self>) {

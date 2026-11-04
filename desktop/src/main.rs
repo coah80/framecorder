@@ -14,10 +14,13 @@ mod clips;
 mod demo;
 mod format;
 mod frame;
+mod live;
 mod oldapp;
 mod pair;
 mod prefs;
+mod preview;
 mod remote;
+mod report;
 mod search;
 mod selection;
 mod selfupdate;
@@ -48,7 +51,9 @@ usage:
                                        screens: clips, list, clips-selecting, list-selecting, syncing,
                                        unreachable, pair, settings, frame, frame-recording, frame-paused,
                                        frame-old, frame-closed, frame-unreachable, frame-syncing, frame-eye,
-                                       frame-locked, check";
+                                       frame-blended, frame-no-blend, frame-locked, check, live, live-connecting,
+                                       live-on, live-error, live-old, live-no-ffmpeg, report, report-collecting,
+                                       report-review, report-json, report-sending, report-sent, report-error";
 
 /// the one app, and its window when it has one. the window can close and
 /// come back from the tray, the app stays
@@ -214,7 +219,7 @@ fn main() {
                                     TrayMsg::Clip => {
                                         cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_clip(cx))
                                     }
-                                    TrayMsg::Quit => cx.quit(),
+                                    TrayMsg::Quit => cx.global::<Main>().app.clone().update(cx, |app, cx| app.quit(cx)),
                                 });
                             }
                         })

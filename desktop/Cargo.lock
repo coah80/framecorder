@@ -2002,6 +2002,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "smallvec",
  "tokio",
  "trash",
  "tray-icon",

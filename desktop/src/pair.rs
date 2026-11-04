@@ -43,7 +43,24 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 )
             })
             .child(pick(app, window, cx))
-            .child(code(app, window, cx)),
+            .child(code(app, window, cx))
+            .child(
+                div()
+                    .id("pair-report")
+                    .absolute()
+                    .bottom(px(26.))
+                    .left(px(pad))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(12.))
+                    .text_color(c(theme::OVERLAY2))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(c(theme::MAUVE)))
+                    .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
+                    .child(icon("flag", 13., c(theme::OVERLAY2)))
+                    .child("stuck? report an issue"),
+            ),
     )
 }
 

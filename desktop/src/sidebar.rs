@@ -12,8 +12,9 @@ use std::time::Duration;
 pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let count = app.clips.len();
     let clips_badge = (count > 0).then(|| data(count.to_string()).text_size(px(12.)).opacity(0.8).into_any_element());
-    // a red dot by "frame" while one's recording, on every page
+    // a red dot by "frame" while one's recording, and a mauve one by "live" while it streams, on every page
     let rec_badge = app.any_recording().then(|| dot(theme::RED, false).size(px(8.)).into_any_element());
+    let live_badge = app.live_on().then(|| dot(theme::MAUVE, false).size(px(8.)).into_any_element());
     div()
         .w(px(216.))
         .flex_none()
@@ -35,6 +36,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .gap(px(2.))
                 .child(nav(app, cx, Page::Clips, "clips", "clips", clips_badge))
                 .child(nav(app, cx, Page::Frame, "frame", "headset", rec_badge))
+                .child(nav(app, cx, Page::Live, "live", "live", live_badge))
                 .child(nav(app, cx, Page::Settings, "settings", "settings", None)),
         )
         .child(div().flex_1())
@@ -45,6 +47,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .gap(px(8.))
                 .children(frame_cards(app, cx))
                 .children(desktop_pill(app, cx))
+                .child(report(app, cx))
                 .child(folder(app, cx)),
         )
 }
@@ -243,6 +246,34 @@ fn folder(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
                         .text_color(c(theme::OVERLAY2))
                         .truncate(),
                 ),
+        )
+}
+
+/// report an issue, right under the frames so it's there on every page
+fn report(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let on = app.page == Page::Report;
+    let fg = if on { theme::MAUVE } else { theme::SUBTEXT0 };
+    div()
+        .id("report-issue")
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .h(px(44.))
+        .px(px(12.))
+        .rounded(px(10.))
+        .text_color(c(fg))
+        .cursor_pointer()
+        .when(on, |d| d.bg(a(theme::MAUVE, 0.1)))
+        .when(!on, |d| d.hover(|s| s.bg(c(theme::SURFACE1)).text_color(c(theme::TEXT))))
+        .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
+        .child(icon("flag", 18., c(fg)))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).line_height(px(17.)).child("report an issue"))
+                .child(div().text_size(px(11.)).line_height(px(15.)).text_color(c(theme::OVERLAY2)).truncate().child("sends logs to github")),
         )
 }
 
