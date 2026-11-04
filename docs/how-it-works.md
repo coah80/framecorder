@@ -53,7 +53,7 @@ the dmabuf gets imported into vulkan as an image (`src/gpu.rs`), exactly as it i
 
 the command buffers for every (scanout buffer, encoder buffer) pair are recorded once at import. per frame, framecorder just submits one of them and waits on a fence.
 
-## 3. un-warping one eye
+## 3. un-warping the eyes
 
 the panels show the picture *after* the lens pre-distortion, so a straight crop looks like a fisheye with colored fringes. to get a normal flat video, framecorder undoes exactly what steamvr did, using steamvr's own lens data (`src/lut.rs`).
 
@@ -66,6 +66,8 @@ this all happens once, at startup:
 
 one gotcha: the frame's compositor scans each eye out turned 180° inside its own half, while steamvr describes the panels upright. that was only found by recording on a real headset and getting upside-down videos. the shader flips each half back per sample, which keeps the seam between the eyes clean.
 
+`--eye both` builds two grids for the same level view direction, centered between the eyes. the automatic crop fits the area visible in either eye at the chosen aspect ratio. hidden areas are checked in the level render target before applying the compositor's cant. across the middle 20% of the stereo overlap, a smooth ramp fades from the left eye to the right; outside that strip only one eye is sampled. if one eye cannot show a direction, the other supplies it. this combines a wider view into one flat picture. nearby objects can still show stereo ghosting inside the blend strip, which needs checking on a recording.
+
 the result is a small lookup grid (a few thousand points) uploaded to the gpu once. per frame, the gpu does no lens math at all.
 
 ## 4. the one shader
@@ -73,6 +75,7 @@ the result is a small lookup grid (a few thousand points) uploaded to the gpu on
 every recorded frame is one compute dispatch of `shaders/convert.comp`, reading the scanout and writing the encoder's input:
 
 - **tiles.** each invocation writes a 4×2 block of pixels, and a workgroup covers 32×16 pixels, exactly 4×2 grid cells. the workgroup loads the grid points it needs into shared memory once, and each pixel's source position is a bilinear blend of its cell's corners
+- **blended eyes.** `--eye both` uses the same dispatch. workgroups load the second grid only when its blend weights need it, and pixels sample both eyes only within the crossfade. the default single-eye path keeps one grid and one eye sample.
 - **sharp reads.** each sample is catmull-rom in 5 bilinear taps instead of plain bilinear. the panel image has already been resampled once by the compositor, and a soft filter on top of that looked noticeably blurrier than steam's own recorder
 - **color fringing, only where it matters.** near the middle of the lens the three channels line up, so a pixel gets one read. only cells where red or blue drift more than 0.3 px from green do three separate reads
 - **straight to nv12.** colors go through bt.709 limited range. the scanout is already gamma-encoded, which is what video expects, so there's no transfer conversion. luma and interleaved chroma get packed into 32-bit words and written straight into the encoder's input buffer (a dmabuf the encoder owns), with no byte stores and no atomics

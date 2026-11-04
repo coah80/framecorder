@@ -25,6 +25,7 @@ const EYE_PX: f64 = 2160.0;
 const PANELS_ROTATED: bool = true;
 
 pub struct Lut {
+    pub blended: bool,
     pub width: u32,
     pub height: u32,
     pub step: f32,
@@ -37,7 +38,8 @@ pub struct Lut {
     /// Grid positions are in SteamVR's panel space; the scanout has each
     /// eye's half turned 180° from that. See `PANELS_ROTATED`.
     pub rotated_eyes: bool,
-    /// Scanout texture coordinates, 3 per grid point (r, g, b).
+    /// Scanout coordinates, r/g/b per point. Blended views append the right
+    /// eye grid, then one vec2 per point with its right-eye weight in x.
     pub points: Vec<[f32; 2]>,
 }
 
@@ -46,6 +48,7 @@ impl Lut {
         let width = out_w.div_ceil(STEP) + 1;
         let height = out_h.div_ceil(STEP) + 1;
         Self {
+            blended: false,
             width,
             height,
             step: STEP as f32,
@@ -471,6 +474,111 @@ pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, ou
     Ok(lut)
 }
 
+const BLEND_RANGE: [f64; 2] = [0.4, 0.6];
+
+fn blend_weight(tx: f64, overlap: [f64; 2]) -> f64 {
+    let start = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[0];
+    let end = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[1];
+    let t = ((tx - start) / (end - start)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn stereo_bounds(models: &[EyeModel; 2], cy: f64) -> Result<([f64; 2], f64)> {
+    let limit = models.iter().map(|m| (-m.l).max(m.r)).fold(0.0, f64::max);
+    let mut overlap = [f64::INFINITY, f64::NEG_INFINITY];
+    for k in 0..=MASK_SIZE {
+        let x = (k as f64 / MASK_SIZE as f64 * 2.0 - 1.0) * limit;
+        if models.iter().all(|m| m.shown(x, cy)) {
+            overlap[0] = overlap[0].min(x);
+            overlap[1] = overlap[1].max(x);
+        }
+    }
+    if overlap[0] >= overlap[1] {
+        bail!("the eyes have no stereo overlap at the center of the view");
+    }
+    Ok((overlap, limit))
+}
+
+fn stereo_fit(models: &[EyeModel; 2], aspect: f64, cy: f64, limit: f64) -> f64 {
+    let fits = |h: f64| {
+        (0..=EDGE_SAMPLES).all(|j| (0..=EDGE_SAMPLES).all(|i| {
+            let x = (i as f64 / EDGE_SAMPLES as f64 * 2.0 - 1.0) * h;
+            let y = cy + (j as f64 / EDGE_SAMPLES as f64 * 2.0 - 1.0) * h * aspect;
+            models.iter().any(|m| m.shown(x, y))
+        }))
+    };
+    let (mut lo, mut hi) = (0.0, limit);
+    for _ in 0..30 {
+        let mid = (lo + hi) / 2.0;
+        if fits(mid) { lo = mid; } else { hi = mid; }
+    }
+    lo
+}
+
+pub fn blended(vr: &OpenVr, fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
+    let models = [EyeModel::new(vr, 0)?, EyeModel::new(vr, 1)?];
+    stereo_lut(&models, fov_deg, out_w, out_h)
+}
+
+fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
+    let aspect = out_h as f64 / out_w as f64;
+    let cy = (models[0].middle().1 + models[1].middle().1) / 2.0;
+    let (overlap, limit) = stereo_bounds(models, cy)?;
+    let widest = stereo_fit(models, aspect, cy, limit);
+    if widest <= 0.0 {
+        bail!("couldn't find a clean combined view in SteamVR's lens data");
+    }
+    let h = fov_deg.map_or(widest * AUTO_FOV_MARGIN, |f| (f.to_radians() / 2.0).tan());
+    if h > widest {
+        log::warn!("the requested combined view reaches beyond the panels, the edges will be black");
+    }
+    let mut lut = Lut::new(out_w, out_h);
+    lut.blended = true;
+    let count = (lut.width * lut.height) as usize;
+    lut.points.resize(count * 7, INVALID);
+    let mut guesses = [[[0.5; 2]; 3]; 2];
+    let mut previous = [None; 2];
+    let mut max_split = 0.0f64;
+    let mut max_minify = 0.0f64;
+    let cells: Vec<_> = lut.grid().collect();
+    for (idx, x, y) in cells {
+        if x == 0.0 { previous = [None; 2]; }
+        let tx = (x / out_w as f64 * 2.0 - 1.0) * h;
+        let ty = cy + (y / out_h as f64 * 2.0 - 1.0) * h * aspect;
+        for (eye, model) in models.iter().enumerate() {
+            let mut solved = [None; 3];
+            if model.shown(tx, ty) {
+                for c in 0..3 {
+                    if let Some(d) = model.solve(c, model.target(tx, ty), guesses[eye][c]) {
+                        guesses[eye][c] = d;
+                        solved[c] = Some(d);
+                        lut.points[eye * count * 3 + idx + c] = [(eye as f64 * 0.5 + d[0] * 0.5) as f32, d[1] as f32];
+                    }
+                }
+            }
+            if let (Some(r), Some(g), Some(b), Some(prev)) = (solved[0], solved[1], solved[2], previous[eye]) {
+                let scale = dist(g, prev) / STEP as f64;
+                if scale > 0.0 {
+                    max_split = max_split.max(dist(r, g).max(dist(b, g)) / scale);
+                    max_minify = max_minify.max(scale * EYE_PX);
+                }
+            }
+            previous[eye] = solved[1];
+        }
+        let weight = match (lut.points[idx + 1] != INVALID, lut.points[count * 3 + idx + 1] != INVALID) {
+            (true, false) => 0.0,
+            (false, true) => 1.0,
+            _ => blend_weight(tx, overlap),
+        };
+        lut.points[count * 6 + idx / 3] = [weight as f32, 0.0];
+    }
+    lut.per_channel = max_split > MIN_FRINGE_PX;
+    lut.supersample = max_minify > SUPERSAMPLE_ABOVE;
+    log::info!("combined view: {:.1}° x {:.1}°, overlap {:.1}° to {:.1}°", 2.0 * h.atan().to_degrees(),
+        2.0 * (h * aspect).atan().to_degrees(), overlap[0].atan().to_degrees(), overlap[1].atan().to_degrees());
+    Ok(lut)
+}
+
 fn dist(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
@@ -536,4 +644,79 @@ fn nearest(forward: &[[[f64; 2]; 3]], n: usize, c: usize, target: [f64; 2]) -> O
         .map(|(k, p)| (k, dist(p[c], target)))
         .min_by(|a, b| a.1.total_cmp(&b.1))?;
     Some([(best % n) as f64 / (n - 1) as f64, (best / n) as f64 / (n - 1) as f64])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn eyes() -> [EyeModel; 2] {
+        std::array::from_fn(|eye| EyeModel {
+            eye,
+            l: if eye == 0 { -2.0 } else { -0.7 },
+            r: if eye == 0 { 0.7 } else { 2.0 },
+            t: -1.0,
+            b: 1.0,
+            roll: 0.0,
+            cant: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            forward: (0..DISTORTION_GRID * DISTORTION_GRID).map(|k| {
+                [[(k % DISTORTION_GRID) as f64 / (DISTORTION_GRID - 1) as f64,
+                  (k / DISTORTION_GRID) as f64 / (DISTORTION_GRID - 1) as f64]; 3]
+            }).collect(),
+            hidden: vec![false; MASK_SIZE * MASK_SIZE],
+            covered: vec![true; MASK_SIZE * MASK_SIZE],
+        })
+    }
+
+    #[test]
+    fn combined_view_fits_each_shape_and_uses_the_stereo_overlap() {
+        let models = eyes();
+        let (overlap, limit) = stereo_bounds(&models, 0.0).unwrap();
+        assert!((overlap[0] + 0.7).abs() < 0.01 && (overlap[1] - 0.7).abs() < 0.01);
+        for (tx, expected) in [(-0.5, 0.0), (0.0, 0.5), (0.5, 1.0)] {
+            assert!((blend_weight(tx, overlap) - expected).abs() < 1e-10);
+        }
+        assert!(blend_weight(-0.05, overlap) < 0.5);
+        assert!(blend_weight(0.05, overlap) > 0.5);
+        for (w, h, expected) in [(256, 144, 16.0 / 9.0), (96, 96, 1.0), (144, 256, 9.0 / 16.0)] {
+            let fitted = stereo_fit(&models, h as f64 / w as f64, 0.0, limit);
+            assert!((fitted - expected).abs() < 1e-6);
+            let lut = stereo_lut(&models, None, w, h).unwrap();
+            let count = (lut.width * lut.height) as usize;
+            assert!(lut.blended);
+            if w == h {
+                let center = (lut.height / 2 * lut.width + lut.width / 2) as usize;
+                assert!((lut.points[center * 3 + 1][0] - 10.0 / 27.0).abs() < 1e-6);
+                assert!((lut.points[count * 3 + center * 3 + 1][0] - 17.0 / 27.0).abs() < 1e-6);
+                assert_eq!(lut.points[count * 6 + center][0], 0.5);
+            }
+            for j in 0..lut.height - 1 {
+                for i in 0..lut.width - 1 {
+                    let valid_cell = |eye: usize| [0, 1, lut.width, lut.width + 1].iter().all(|off| {
+                        lut.points[eye * count * 3 + ((j * lut.width + i + off) * 3 + 1) as usize] != INVALID
+                    });
+                    assert!(valid_cell(0) || valid_cell(1), "black cell at {i},{j} in {w}x{h}");
+                }
+            }
+        }
+        assert!(stereo_fit(&models, 9.0 / 16.0, 0.0, limit) > models[0].widest(9.0 / 16.0).0);
+    }
+
+    #[test]
+    fn hidden_area_uses_the_other_eye_and_is_checked_before_cant() {
+        let mut models = eyes();
+        let x = ((0.0 - models[0].l) / (models[0].r - models[0].l) * MASK_SIZE as f64) as usize;
+        models[0].hidden[MASK_SIZE / 2 * MASK_SIZE + x] = true;
+        models[0].cant[0][2] = -0.2;
+        assert!(!models[0].shown(0.0, 0.0));
+        assert!(models[1].shown(0.0, 0.0));
+        let lut = stereo_lut(&models, Some(60.0), 96, 96).unwrap();
+        let count = (lut.width * lut.height) as usize;
+        let center = (lut.height / 2 * lut.width + lut.width / 2) as usize;
+        assert_eq!(lut.points[center * 3 + 1], INVALID);
+        assert_ne!(lut.points[count * 3 + center * 3 + 1], INVALID);
+        assert_eq!(lut.points[count * 6 + center][0], 1.0);
+        models[1].hidden.fill(true);
+        assert!(stereo_lut(&models, None, 96, 96).is_err());
+    }
 }

@@ -41,6 +41,7 @@ fn settings_rows(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut V
         (Shape::BothEyes, _) => shape.to_string(),
         (_, Eye::Left) => format!("{shape} · Left eye"),
         (_, Eye::Right) => format!("{shape} · Right eye"),
+        (_, Eye::Both) => format!("{shape} · Both eyes blended"),
     };
     let quality = match s.quality {
         Quality::Standard => "Standard",

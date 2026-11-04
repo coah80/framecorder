@@ -16,6 +16,7 @@ pub enum Shape {
 pub enum Eye {
     Left,
     Right,
+    Both,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,7 @@ impl Settings {
                 ("shape", "both") => s.shape = Shape::BothEyes,
                 ("eye", "left") => s.eye = Eye::Left,
                 ("eye", "right") => s.eye = Eye::Right,
+                ("eye", "both") => s.eye = Eye::Both,
                 ("quality", "standard") => s.quality = Quality::Standard,
                 ("quality", "high") => s.quality = Quality::High,
                 ("quality", "max") => s.quality = Quality::Max,
@@ -158,6 +160,7 @@ impl Settings {
             match self.eye {
                 Eye::Left => "left",
                 Eye::Right => "right",
+                Eye::Both => "both",
             },
             match self.quality {
                 Quality::Standard => "standard",
@@ -201,7 +204,7 @@ impl Settings {
                     _ => "16:9",
                 };
                 args.extend(["--view".into(), "eye".into(), "--aspect".into(), aspect.into()]);
-                let eye = if self.eye == Eye::Right { "right" } else { "left" };
+                let eye = match self.eye { Eye::Left => "left", Eye::Right => "right", Eye::Both => "both" };
                 args.extend(["--eye".into(), eye.into()]);
             }
         }
@@ -241,6 +244,16 @@ mod tests {
     fn args_for_both_eyes_with_mic() {
         let s = Settings { shape: Shape::BothEyes, mic: true, game_audio: false, ..Settings::default() };
         assert_eq!(s.recorder_args(true).join(" "), "--view raw --bitrate 40 --no-audio --mic");
+    }
+
+    #[test]
+    fn blended_eye_round_trips_and_falls_back_without_panels() {
+        for shape in [Shape::Wide, Shape::Square, Shape::Tall] {
+            let settings = Settings { eye: Eye::Both, shape, ..Settings::default() };
+            assert_eq!(Settings::parse(&settings.text()), Settings { onboarded: false, ..settings });
+            assert!(settings.recorder_args(true).join(" ").contains("--eye both"));
+            assert_eq!(settings.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic");
+        }
     }
 
     #[test]

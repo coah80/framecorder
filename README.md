@@ -115,6 +115,7 @@ or from ssh:
 ```sh
 framecorder                          # left eye, 16:9, game audio, until ctrl+c
 framecorder --aspect 9:16 --mic      # vertical with the mic on its own track
+framecorder --eye both blended.mp4   # flat view blended across the eyes
 framecorder --view raw clip.mkv      # both panels, distortion and all
 framecorder --duration 30 --qp 20    # 30 seconds at a fixed quality
 kill -USR1 <pid> / kill -USR2 <pid>  # pause / resume
