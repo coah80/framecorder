@@ -16,6 +16,7 @@ no frame around? the demo fills it with made up frames and clips, nothing syncs 
 
 ```sh
 cargo run -- --demo clips      # `--help` lists the screens, demo.rs makes them
+cargo run -- --demo live-on    # the live page with a made up picture; report-review, report-sent and so on for the report steps
 ```
 
 ## what it does
@@ -24,7 +25,9 @@ cargo run -- --demo clips      # `--help` lists the screens, demo.rs makes them
 - several at once, like the android app: ctrl-click (cmd on a mac) picks a clip, shift-click the range from the last one clicked, and a drag across the library picks everything it crosses, scrolling at the edges. while anything's picked a plain click picks or lets go instead of opening, ctrl+a picks everything on screen and esc lets go. the bar at the bottom says "3 selected · 195 MB", shows them in their folder, or moves them to the trash after asking once
 - a notification per new clip, with open and show in folder. settings can turn them off
 - pairing finds the frame by name (mdns) and by knocking on every nearby address, for routers that drop multicast, and takes its address typed in or a `framecorder://pair` link pasted. it pairs on the sixth digit
-- the frame page: record, stop, save clip and the mic, how it's doing (battery, storage, a download coming in), the settings for its next recording, what's here from it, and a connection check that runs the real checks one by one and says what each saw
+- the frame page: record, stop, save clip and the mic, how it's doing (battery, storage, a download coming in), the settings for its next recording (shape, which eye, or both eyes blended into one level picture on a frame new enough to do it), what's here from it, and a connection check that runs the real checks one by one and says what each saw
+- the live page: what the frame shows, as it shows it. the sync core pulls one stream from the frame and serves it at `http://127.0.0.1:38620/live.ts`, so obs (media source, local file off, that address as input) or anything that plays a url records it, and the page shows a small picture of it (ffmpeg decoding 5 frames a second at 480x270, about 40% of a core for a 1080p60 stream, only while the page is up; without ffmpeg the page says so and obs still works). it stops when you stop it or close the window
+- report an issue, in the sidebar on every page: say what went wrong, see exactly what goes with it (this app's version and os, the frame's diagnostics and logs, this app's log, your steam name so we can reply) and that it lands on a public github issue, then send. the issue number and link come back, with a button to open it
 - the tray icon (menu bar on a mac): open, sync now, quit. closing the window leaves it syncing there, the first time a notification says so. "keep running when closed" in settings turns that off, then closing quits. the tray on linux is a StatusNotifierItem over dbus (no gtk), which kde, and gnome with the appindicator extension, show. no tray means closing quits, same as turning keep running off
 - "start with the computer" (`--minimized` starts it straight in the tray)
 - frame updates, a link in the frame's card
@@ -45,6 +48,6 @@ the old 0.1.x tauri app can't update itself. download the new app once from [the
 - `main.rs` args, the tokio runtime, the window
 - `sync.rs` the engine, and the bridge from its listener to the ui thread
 - `app.rs` all the state and everything you can do
-- `sidebar.rs`, `clips.rs`, `frame.rs`, `check.rs`, `pair.rs`, `settings.rs` the screens; `remote.rs` what a frame's tab is up to
+- `sidebar.rs`, `clips.rs`, `frame.rs`, `check.rs`, `live.rs`, `report.rs`, `pair.rs`, `settings.rs` the screens; `remote.rs` what a frame's tab is up to; `preview.rs` the live page's picture, through ffmpeg
 - `widgets.rs`, `theme.rs`, `assets.rs` buttons, colors, the fonts and icons (baked in)
 - `tray.rs`, `prefs.rs`, `thumbs.rs`, `selfupdate.rs`, `autostart.rs`, `oldapp.rs`, `format.rs`, `demo.rs` the rest

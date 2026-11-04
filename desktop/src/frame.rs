@@ -16,7 +16,9 @@ use crate::theme::{self, a, c};
 use crate::widgets::{card, data, dot, icon, label, outline, primary, spinner, switch, title};
 
 const SHAPES: [(&str, &str); 4] = [("wide", "16:9"), ("square", "1:1"), ("tall", "9:16"), ("both", "both eyes")];
-const EYES: [(&str, &str); 2] = [("left", "left eye"), ("right", "right eye")];
+/// "both" blends the two into one level picture, like steamvr's own view. only
+/// headsets new enough to say who's watching live can do it
+const EYES: [(&str, &str); 3] = [("left", "left eye"), ("right", "right eye"), ("both", "both eyes blended")];
 /// 0 is clips off
 const LENGTHS: [(u32, &str); 5] = [(0, "off"), (15, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
 const QUALITIES: [(&str, &str); 3] = [("standard", "standard"), ("high", "high"), ("max", "max")];
@@ -67,7 +69,8 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
         .as_ref()
         .filter(|p| p.fingerprint == s.fingerprint)
         .map(|p| if p.total > 0 { p.done as f32 / p.total as f32 } else { 1.0 });
-    let picker = (app.statuses.len() > 1).then(|| frames(app, &s.fingerprint, cx));
+    let picker = (app.statuses.len() > 1).then(|| frames(app, &s.fingerprint, Page::Frame, cx));
+    let can_blend = remote.as_ref().is_some_and(|r| r.live_viewers.is_some());
 
     div()
         .id("frame-page")
@@ -99,7 +102,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .flex_col()
                 .gap(px(10.))
                 .child(label("next recording"))
-                .child(next_recording(&s, settings.as_ref(), connected, cx))
+                .child(next_recording(&s, settings.as_ref(), connected, can_blend, cx))
                 .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child(match (&settings, connected, asked) {
                     (_, false, _) => format!("connect to {} to change these.", s.name),
                     (Some(_), _, _) => "these take effect from the frame's next recording.".to_string(),
@@ -115,7 +118,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .items_start()
                 .gap(px(14.))
                 .child(here(&app.clips, &s.fingerprint).flex_1().min_w(px(260.)))
-                .child(this_frame(&s.fingerprint, cx)),
+                .child(this_frame(&s.fingerprint, can_blend, cx)),
         )
         .into_any_element()
 }
@@ -181,8 +184,8 @@ fn here(clips: &[Clip], fingerprint: &str) -> Div {
         })
 }
 
-/// the rows about this frame: the connection check, a retry, and unpairing
-fn this_frame(fingerprint: &str, cx: &mut Context<FrameApp>) -> Div {
+/// the rows about this frame: live view when it can, the connection check, a retry, and unpairing
+fn this_frame(fingerprint: &str, can_live: bool, cx: &mut Context<FrameApp>) -> Div {
     let fp = fingerprint.to_string();
     let row = |id: &str, icon_name: &str, head: &str, sub: &str, red: bool| {
         let ink = if red { theme::RED } else { theme::TEXT };
@@ -206,7 +209,7 @@ fn this_frame(fingerprint: &str, cx: &mut Context<FrameApp>) -> Div {
                     .child(div().text_size(px(11.)).text_color(c(theme::OVERLAY2)).truncate().child(sub.to_string())),
             )
     };
-    let (check, unpair) = (fp.clone(), fp);
+    let (watch, check, unpair) = (fp.clone(), fp.clone(), fp);
     card()
         .flex_1()
         .min_w(px(250.))
@@ -214,6 +217,12 @@ fn this_frame(fingerprint: &str, cx: &mut Context<FrameApp>) -> Div {
         .flex()
         .flex_col()
         .child(div().px(px(14.)).pt(px(12.)).pb(px(4.)).child(label("this frame")))
+        .when(can_live, |d| {
+            d.child(
+                row("live", "live", "watch it live", "here, or record it in obs", false)
+                    .on_click(cx.listener(move |app, _, _, cx| app.pick_frame_on(watch.clone(), Page::Live, cx))),
+            )
+        })
         .child(
             row("check", "wifi", "check the connection", "see what's getting in the way", false)
                 .on_click(cx.listener(move |app, _, _, cx| app.open_check(check.clone(), cx))),
@@ -259,8 +268,8 @@ fn header(s: &Status) -> Div {
     )
 }
 
-/// which frame, when there's more than one
-fn frames(app: &FrameApp, picked: &str, cx: &mut Context<FrameApp>) -> Div {
+/// which frame, when there's more than one. picking one stays on `page`
+pub fn frames(app: &FrameApp, picked: &str, page: Page, cx: &mut Context<FrameApp>) -> Div {
     div().flex().flex_wrap().gap(px(8.)).children(app.statuses.iter().map(|s| {
         let on = s.fingerprint == picked;
         let fp = s.fingerprint.clone();
@@ -280,7 +289,7 @@ fn frames(app: &FrameApp, picked: &str, cx: &mut Context<FrameApp>) -> Div {
             .bg(if on { a(theme::MAUVE, 0.08) } else { theme::card() })
             .text_color(c(if on { theme::TEXT } else { theme::SUBTEXT0 }))
             .when(!on, |d| d.hover(|s| s.border_color(c(theme::SURFACE2)).text_color(c(theme::TEXT))))
-            .on_click(cx.listener(move |app, _, _, cx| app.pick_frame(fp.clone(), cx)))
+            .on_click(cx.listener(move |app, _, _, cx| app.pick_frame_on(fp.clone(), page, cx)))
             .child(dot(status_color(s), false))
             .child(s.name.clone())
     }))
@@ -591,7 +600,7 @@ fn battery(percent: u8, charging: bool) -> Div {
 
 type Pick = Rc<dyn Fn(usize) -> Recording>;
 
-fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx: &mut Context<FrameApp>) -> Div {
+fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can_blend: bool, cx: &mut Context<FrameApp>) -> Div {
     let enabled = connected && settings.is_some();
     let r = settings.cloned().unwrap_or_else(defaults);
     let fp = s.fingerprint.clone();
@@ -610,7 +619,17 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
     };
     let shapes: Vec<Choice> =
         SHAPES.iter().enumerate().map(|(i, &(v, l))| Choice { label: l, glyph: Some(v), off: locked && i > 0 }).collect();
-    let eyes: Vec<Choice> = EYES.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: locked || both }).collect();
+    let eyes: Vec<Choice> = EYES
+        .iter()
+        .map(|&(v, l)| Choice { label: l, glyph: None, off: locked || both || (v == "both" && !can_blend) })
+        .collect();
+    let eye_hint = if both {
+        Some("both are in the video".to_string())
+    } else if !can_blend {
+        Some("blending needs the frame's next update".to_string())
+    } else {
+        None
+    };
     let lengths: Vec<Choice> = LENGTHS.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: false }).collect();
 
     card()
@@ -628,7 +647,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, cx:
         )))
         // older headsets don't say which eye, and then there's nothing to pick
         .when_some(eye, |d, eye| {
-            d.child(setting(false, "eye", both.then(|| "both are in the video".into())).child(choices(
+            d.child(setting(false, "eye", eye_hint).child(choices(
                 &fp,
                 "eye",
                 &eyes,
