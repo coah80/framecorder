@@ -117,6 +117,7 @@ pub enum Forgot {
 }
 
 pub struct Engine {
+    live: super::live::LiveController,
     rt: Handle,
     hosts: Mutex<Hosts>,
     index: Mutex<Index>,
@@ -166,6 +167,7 @@ impl Engine {
         app: String,
     ) -> Arc<Self> {
         Arc::new(Self {
+            live: super::live::LiveController::default(),
             rt,
             hosts: Mutex::new(Hosts::load(state_dir)),
             index: Mutex::new(Index::load(state_dir)),
@@ -192,6 +194,22 @@ impl Engine {
     pub fn set_finder(&self, finder: Option<Arc<dyn Finder>>, mdns: bool) {
         *self.finder.lock().unwrap() = finder;
         self.mdns.store(mdns, Ordering::SeqCst);
+    }
+
+    pub async fn start_live(&self, fingerprint: &str) -> Result<super::live::LiveStatus, String> {
+        let host = self.host(fingerprint).ok_or("that frame isn't paired")?;
+        let client = Client::pinned(&host.addr, &host.fingerprint, &self.app)
+            .map_err(|e| e.to_string())?
+            .with_token(&host.token);
+        self.live.start(client).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn stop_live(&self) {
+        self.live.stop().await;
+    }
+
+    pub fn live_status(&self) -> Option<super::live::LiveStatus> {
+        self.live.status()
     }
 
     pub fn app(&self) -> &str {
@@ -263,6 +281,7 @@ impl Engine {
     }
 
     pub async fn stop(&self) {
+        self.live.stop().await;
         let tasks: Vec<_> = {
             let mut running = self.running.lock().unwrap();
             self.enabled.store(false, Ordering::SeqCst);
@@ -296,6 +315,7 @@ impl Engine {
     }
 
     pub async fn unpair(&self, fingerprint: &str) -> Result<Forgot, String> {
+        self.live.stop().await;
         let host = self.host(fingerprint);
         if let Some(r) = self.running.lock().unwrap().remove(fingerprint) {
             r.task.abort();
