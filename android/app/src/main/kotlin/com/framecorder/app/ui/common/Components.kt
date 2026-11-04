@@ -211,6 +211,8 @@ fun FloatingNav(
     ) {
         NavItem(current is Screen.Library, FcIcons.Library, "library") { onTab(Screen.Library) }
         NavItem(current is Screen.Frame, FcIcons.Headset, "frame", badge = frameDot, pulsing = syncing) { onTab(Screen.Frame()) }
+        // live view needs a frame; with none paired, the frame tab is the pairing screen anyway
+        if (list.isNotEmpty()) NavItem(current is Screen.Live, FcIcons.Live, "live") { onTab(Screen.Live) }
         NavItem(current is Screen.Settings, FcIcons.Settings, "settings", badge = if (newer != null) MaterialTheme.colorScheme.primary else null) { onTab(Screen.Settings) }
     }
 }

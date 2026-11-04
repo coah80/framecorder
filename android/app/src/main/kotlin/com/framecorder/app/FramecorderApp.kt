@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 class FramecorderApp : Application() {
     lateinit var hub: SyncHub
@@ -50,6 +51,10 @@ class FramecorderApp : Application() {
         }
         scope.launch {
             hub.synced.collect { clip -> notifier.clipArrived(clip, hub.frames.value.firstOrNull { it.fingerprint == clip.host }?.name, hub.gallery) }
+        }
+        scope.launch {
+            // live view never runs with nobody looking: it costs the headset
+            started.map { it > 0 }.distinctUntilChanged().collect { shown -> if (!shown) hub.stopLive() }
         }
     }
 }
