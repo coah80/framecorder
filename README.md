@@ -67,7 +67,7 @@ on the old 0.1.x desktop app? it can't update itself, so download the new app on
 
 ## watch it live
 
-a paired app can watch what the headset shows while it happens. it's the same video the recorder makes (same shape, eye and quality as your settings, game audio and mic mixed in), sent over wi-fi, so the headset does no extra encoding for it. nothing runs until someone's watching, and it stops when you stop it or close the app.
+a paired app can watch what the headset shows while it happens. it's the same video the recorder makes (same shape, eye and quality as your settings, game audio and mic mixed in), sent over wi-fi. while it's already recording or keeping clips, watching costs the headset no extra encoding. nothing runs until someone's watching, and it stops when you stop it or close the app.
 
 on the desktop app, "live" in the sidebar. start it and it plays right there, and shows a local address like `http://127.0.0.1:38620/live.ts` with a copy button. (if that port's busy the app picks another, so copy the one it shows.) to record it with obs:
 
