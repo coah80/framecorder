@@ -5,6 +5,7 @@ pub mod api;
 pub mod discover;
 pub mod engine;
 pub mod pairlink;
+pub mod report;
 pub mod space;
 pub mod store;
 pub mod tls;
