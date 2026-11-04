@@ -152,8 +152,9 @@ fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), s.eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), s.eye == Eye::Right),
+        ("Both eyes blended", Action::Eye(Eye::Both), s.eye == Eye::Both),
     ];
-    segmented(c, f, m, hits, Rect::new(inner.x, y + TILE_H + 56.0, 420.0, 52.0), &eyes, false);
+    segmented(c, f, m, hits, Rect::new(inner.x, y + TILE_H + 56.0, 640.0, 52.0), &eyes, false);
 }
 
 /// One shape to pick: a little outline of it, its ratio and a word on it.

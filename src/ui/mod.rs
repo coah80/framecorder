@@ -9,6 +9,7 @@ mod pairing;
 mod paint;
 mod recorder;
 mod remote;
+mod report;
 mod settings;
 mod storage;
 mod text;
@@ -28,11 +29,12 @@ use crate::overlay::{DashboardTab, Event};
 use crate::toast::Toast;
 use recorder::{Kind, Recorder};
 use remote::Remote;
+use report::{Outcome, Report, Summary};
 use settings::Settings;
 use text::Fonts;
 use pairing::clients::{Transfer, Update};
 use pairing::{Device, Pairing, Presence};
-use view::{Action, Hit, Model, Screen, Section, Status, Step, SyncView};
+use view::{Action, Hit, Model, Phase, ReportView, Screen, Section, Status, Step, SyncView};
 
 const KEY: &str = "framecorder.dashboard";
 const TOAST_KEY: &str = "framecorder.toast";
@@ -133,6 +135,13 @@ impl Sync {
     }
 }
 
+/// Something for SteamVR's keyboard, done on the next tick by whoever
+/// holds the tab.
+enum Keyboard {
+    Show,
+    Hide,
+}
+
 /// A recording in progress, as far as the tab is concerned.
 struct Recording {
     /// Recorded time, not counting pauses.
@@ -182,6 +191,9 @@ struct App {
     relocked: bool,
     /// Bytes free for recordings, measured while the home screen's up.
     free: Option<u64>,
+    /// An issue being reported, or the last one sent.
+    report: Report,
+    keyboard: Option<Keyboard>,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -190,6 +202,10 @@ struct App {
 /// For what sync shows: live and sync-live (a download, a device away, one
 /// on the old app), updating, update-failed, low-space, long-name, many and
 /// many-2 (the second page), each with -home for the home screen's card.
+/// watching and watching-2 are the home screen with apps on the live view,
+/// video-both the video section with both eyes blended, and reporting an
+/// issue is report, report-gathering, report-typing, report-written,
+/// report-sending, report-sent and report-failed.
 pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut fonts = Fonts::load()?;
     if state == "toast" {
@@ -200,11 +216,11 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
     let status = match state {
-        "recording" | "locked" => Status::Recording { recorded: Duration::from_secs(754) },
+        "recording" | "locked" | "watching-2" => Status::Recording { recorded: Duration::from_secs(754) },
         _ => Status::Idle,
     };
     let screen = match state {
-        "video" | "locked" => Screen::Settings(Section::Video),
+        "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
@@ -215,10 +231,12 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "setup-clips" | "setup-no-sync" => Screen::Onboarding(Step::Clips),
         "setup-sync" | "setup-pair" => Screen::Onboarding(Step::Sync),
         "setup-done" => Screen::Onboarding(Step::Done),
+        s if s.starts_with("report") => Screen::Report,
         _ => Screen::Home,
     };
     let settings = match state {
         "setup-both-eyes" => Settings { shape: settings::Shape::BothEyes, ..settings },
+        "video-both" => Settings { eye: settings::Eye::Both, ..settings },
         _ => settings,
     };
     let sample = Pairing::sample()?;
@@ -233,14 +251,25 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let page = usize::from(state == "many-2");
     let sync = SyncView { available: state != "setup-no-sync", devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
-    let hover = (state == "idle").then_some(Action::Record);
+    let hover = match state {
+        "idle" => Some(Action::Record),
+        "report-written" => Some(Action::Send),
+        _ => None,
+    };
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
     let free = Some(if state == "low-space" { 1_400_000_000 } else { 128_400_000_000 });
+    let live_viewers = match state {
+        "watching" => 1,
+        "watching-2" => 2,
+        _ => 0,
+    };
+    let summary = sample_summary();
+    let report = sample_report(state, &summary);
     let model = Model {
         settings: &settings,
         screen,
         sync,
-        live_viewers: 0,
+        live_viewers,
         clip_cooling: false,
         unlocked,
         status,
@@ -248,10 +277,40 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         note,
         relocked: state == "relocked",
         free,
+        report,
     };
     view::draw(&mut canvas, &mut fonts, &model);
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
+}
+
+/// What a report's summary looks like on a healthy headset.
+fn sample_summary() -> Summary {
+    Summary {
+        framecorder: "0.2.0 · panels unlocked".into(),
+        os: "SteamOS 3.7.8 · build 20251001.1".into(),
+        steamvr: "2.12.5 · public".into(),
+        steam_name: Some("coah80".into()),
+        errors: 12,
+        logs: ["recorder", "framecorder-ui", "framecorder-sync", "framecorder-update", "vrserver", "vrcompositor"].map(String::from).to_vec(),
+    }
+}
+
+/// The report screen at each point along the way.
+fn sample_report<'a>(state: &str, summary: &'a Summary) -> ReportView<'a> {
+    const WRITTEN: &str = "Clips from the last hour came out tilted to the left, maybe 10 degrees, after the update this morning. Recordings I start by hand are fine.\n\nIt's the same in every game, I tried Beat Saber and the home space.";
+    let (text, typing, phase) = match state {
+        "report-typing" => ("Clips from the last hour came out tilted", true, Phase::Writing),
+        "report-written" | "report-sending" | "report-failed" => (WRITTEN, false, Phase::Writing),
+        _ => ("", false, Phase::Writing),
+    };
+    let phase = match state {
+        "report-sending" => Phase::Sending,
+        "report-sent" => Phase::Sent { number: 42, url: "https://github.com/coah80/framecorder/issues/42" },
+        "report-failed" => Phase::Failed("couldn't reach the issue service, check your connection and try again"),
+        _ => phase,
+    };
+    ReportView { text, typing, summary: (state != "report-gathering").then_some(summary), phase }
 }
 
 /// Made up paired devices for the previews: a couple that are just there,
@@ -339,8 +398,25 @@ pub fn run() -> Result<()> {
             tab.show(KEY);
         }
         while let Some(event) = tab.poll() {
-            if !app.handle(event) {
+            let handled = match event {
+                Event::KeyboardChar | Event::KeyboardDone | Event::KeyboardClosed => app.typed(event, tab.keyboard_text()),
+                event => app.handle(event),
+            };
+            if !handled {
                 QUIT.store(true, Ordering::SeqCst);
+            }
+        }
+        if let Some(wish) = app.keyboard.take() {
+            match wish {
+                Keyboard::Show => {
+                    if let Err(e) = tab.show_keyboard("What went wrong?", report::MAX_CHARS as u32, &app.report.text) {
+                        log::warn!("{e:#}");
+                        app.report.typing = false;
+                        app.note = Some((format!("Couldn't open SteamVR's keyboard: {e:#}"), false));
+                        app.dirty = true;
+                    }
+                }
+                Keyboard::Hide => tab.hide_keyboard(),
             }
         }
         if input.as_ref().is_some_and(|i| i.clip_pressed()) {
@@ -354,6 +430,7 @@ pub fn run() -> Result<()> {
         app.auto_pause(tab_visible);
         app.check_recorder();
         app.check_remote();
+        app.check_report();
         // An update swapped this program out. Restart into it once nothing's
         // being recorded and nobody's using the tab.
         if !tab_visible && app.recording.is_none() && replaced() {
@@ -370,8 +447,9 @@ pub fn run() -> Result<()> {
             app.check_sync(false);
         } else {
             app.sync.stop_pairing();
-            if matches!(app.screen, Screen::Settings(_)) {
-                // Next time the tab opens it's back on the record button.
+            if matches!(app.screen, Screen::Settings(_) | Screen::Report) {
+                // Next time the tab opens it's back on the record button. A
+                // report on its way keeps going, and lands as a note.
                 app.go(Screen::Home);
             }
         }
@@ -473,7 +551,21 @@ impl App {
             unlocked,
             relocked,
             free: storage::free_for_recordings(),
+            report: Report::new(),
+            keyboard: None,
         }
+    }
+
+    /// What SteamVR's keyboard did, with what it holds.
+    fn typed(&mut self, event: Event, text: String) -> bool {
+        match event {
+            Event::KeyboardChar => self.report.typed(text),
+            Event::KeyboardDone => self.report.finished(text),
+            Event::KeyboardClosed => self.report.closed(text),
+            _ => {}
+        }
+        self.dirty = true;
+        true
     }
 
     /// Returns false when SteamVR wants us gone.
@@ -507,6 +599,9 @@ impl App {
         let s = &mut self.settings;
         match action {
             Action::TurnOff => return self.turn_off(),
+            Action::Report => return self.go(Screen::Report),
+            Action::Type => return self.start_typing(),
+            Action::Send => return self.report.send(),
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -551,6 +646,34 @@ impl App {
             }
         }
         self.save_settings();
+    }
+
+    /// Brings up SteamVR's keyboard over the report, with the draft in it.
+    fn start_typing(&mut self) {
+        if matches!(self.report.phase(), report::Phase::Writing | report::Phase::Failed(_)) && !self.report.typing {
+            self.report.typing = true;
+            self.keyboard = Some(Keyboard::Show);
+        }
+    }
+
+    /// Picks up what the report's threads finished: the details to show,
+    /// or how the send went, which lands as a note (and a toast, in case
+    /// the tab's been closed meanwhile).
+    fn check_report(&mut self) {
+        match self.report.poll() {
+            None => {}
+            Some(Outcome::Gathered) => self.dirty = true,
+            Some(Outcome::Sent { number, url }) => {
+                self.note = Some((format!("Sent as issue #{number} · {url}"), true));
+                self.toast = Some((format!("Report sent, it's issue #{number}"), true));
+                self.dirty = true;
+            }
+            Some(Outcome::Failed(why)) => {
+                self.note = Some((format!("Couldn't send the report: {why}"), false));
+                self.toast = Some(("Couldn't send the report".into(), false));
+                self.dirty = true;
+            }
+        }
     }
 
     fn save_settings(&mut self) -> bool {
@@ -888,6 +1011,21 @@ impl App {
         if screen == Screen::Home {
             self.free = storage::free_for_recordings();
         }
+        // Leaving the report takes the keyboard down, and once one's been
+        // sent, the next starts fresh. Opening it starts gathering details.
+        if self.screen == Screen::Report && screen != Screen::Report {
+            if self.report.typing {
+                self.report.typing = false;
+                self.keyboard = Some(Keyboard::Hide);
+            }
+            if matches!(self.report.phase(), report::Phase::Sent { .. }) {
+                self.report = Report::new();
+            }
+        }
+        if screen == Screen::Report {
+            self.note = None;
+            self.report.open();
+        }
         self.screen = screen;
         self.hover = None;
         self.dirty = true;
@@ -977,6 +1115,13 @@ impl App {
             pairing: self.sync.pairing.as_ref().map(|p| p.as_ref().map_err(|e| e.as_str())),
             update: &self.sync.update,
         };
+        let phase = match self.report.phase() {
+            report::Phase::Writing => Phase::Writing,
+            report::Phase::Sending => Phase::Sending,
+            report::Phase::Sent { number, url } => Phase::Sent { number: *number, url },
+            report::Phase::Failed(why) => Phase::Failed(why),
+        };
+        let report = ReportView { text: &self.report.text, typing: self.report.typing, summary: self.report.summary.as_ref(), phase };
         Model {
             live_viewers: self.live_viewers,
             settings: &self.settings,
@@ -989,6 +1134,7 @@ impl App {
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: self.relocked,
             free: self.free,
+            report,
         }
     }
 }
