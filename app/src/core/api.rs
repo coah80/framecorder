@@ -57,6 +57,9 @@ pub struct Remote {
     pub clips: Option<u32>,
     /// A clip can be saved right now.
     pub clip_ready: bool,
+    /// How many apps are watching live. Older headsets don't send it, and
+    /// can't do live view or blended eyes either.
+    pub live_viewers: Option<u32>,
 }
 
 /// The Frame's recording settings. They apply from its next recording.

@@ -89,7 +89,7 @@ fn clips() -> Vec<Clip> {
 
 /// a frame with its tab up and a 30 s clip buffer going
 fn remote() -> Remote {
-    Remote { available: true, ready: true, recording: false, running: false, elapsed_ms: 0, clips: Some(30), clip_ready: true }
+    Remote { available: true, ready: true, recording: false, running: false, elapsed_ms: 0, clips: Some(30), clip_ready: true, live_viewers: Some(0) }
 }
 
 fn recording() -> Recording {
