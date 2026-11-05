@@ -15,6 +15,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+/// Every issue the relay opens gets this, so they're easy to find.
+const LABEL: &str = "app report";
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -231,7 +234,7 @@ impl GitHub {
         if !self.label_ready {
             match self.request(
                 "GET",
-                &format!("{repo}/labels/from%20the%20app"),
+                &format!("{repo}/labels/{}", LABEL.replace(' ', "%20")),
                 Some(&token),
                 None,
             ) {
@@ -244,7 +247,7 @@ impl GitHub {
                         "POST",
                         &format!("{repo}/labels"),
                         Some(&token),
-                        Some(json!({"name":"from the app","color":"cba6f7"})),
+                        Some(json!({"name":LABEL,"color":"cba6f7"})),
                     )?;
                 }
                 Err(e) => return Err(e),
@@ -255,7 +258,7 @@ impl GitHub {
             "POST",
             &format!("{repo}/issues"),
             Some(&token),
-            Some(json!({"title":title,"body":body,"labels":["from the app"]})),
+            Some(json!({"title":title,"body":body,"labels":[LABEL]})),
         );
         match reply {
             Ok(v) => Ok(
@@ -270,6 +273,7 @@ impl GitHub {
 }
 
 use std::io::Read;
+
 fn jwt(c: &Credentials) -> Result<String> {
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
     let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(
