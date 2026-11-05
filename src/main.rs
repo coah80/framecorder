@@ -155,7 +155,7 @@ struct Args {
     #[arg(long, conflicts_with = "bitrate")]
     qp: Option<u32>,
 
-    /// Also record the microphone, as its own audio track.
+    /// Also record the microphone, mixed in with the game ducking under it.
     #[arg(long)]
     mic: bool,
 

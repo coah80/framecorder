@@ -42,7 +42,7 @@ the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at
 
 ## audio
 
-game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it; `--mic-track` adds a mic only track for editing. the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent.
+game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it, and while you talk the game drops under your voice, so a loud game never drowns you out. `--mic-track` adds a mic only track for editing. the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent.
 
 ## clips
 
@@ -131,7 +131,7 @@ or from ssh:
 
 ```sh
 framecorder                          # left eye, 16:9, game audio, until ctrl+c
-framecorder --aspect 9:16 --mic      # vertical with the mic on its own track
+framecorder --aspect 9:16 --mic      # vertical with the mic mixed in
 framecorder --eye both blended.mp4   # flat view blended across the eyes
 framecorder --view raw clip.mkv      # both panels, distortion and all
 framecorder --duration 30 --qp 20    # 30 seconds at a fixed quality
