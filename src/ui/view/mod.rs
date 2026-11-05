@@ -198,8 +198,8 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
     hits
 }
 
-/// The title with its mauve full stop, the chip saying what's being
-/// recorded, and one button on the right.
+/// The title with its mauve full stop, a chip while recording or when the
+/// panels are locked, and one button on the right.
 fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: &str, button: Option<(&str, Action, bool)>) {
     let recording = m.locked();
     let baseline = HEADER_Y + 40.0;
@@ -211,14 +211,17 @@ fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: 
         Status::Stopping => "Saving".to_string(),
         Status::Idle => String::new(),
     };
-    let (text, color) = match (recording, m.unlocked) {
-        (true, _) => (rec.as_str(), RED),
-        (false, true) => ("Panels unlocked", GREEN),
-        (false, false) => ("SteamVR's view", YELLOW),
+    // unlocked is how it should be, so only the exception gets a chip
+    let chip = match (recording, m.unlocked) {
+        (true, _) => Some((rec.as_str(), RED)),
+        (false, true) => None,
+        (false, false) => Some(("Panels locked", YELLOW)),
     };
     let cy = HEADER_Y + HEADER_H / 2.0;
     let mut x = PAD + w + 20.0;
-    x += widgets::chip(c, f, x, cy, text, color) + 12.0;
+    if let Some((text, color)) = chip {
+        x += widgets::chip(c, f, x, cy, text, color) + 12.0;
+    }
     x += match m.sync.update {
         Update::Updating => widgets::chip(c, f, x, cy, "Updating…", YELLOW) + 12.0,
         Update::Failed(_) => widgets::chip(c, f, x, cy, "Update failed", RED) + 12.0,
