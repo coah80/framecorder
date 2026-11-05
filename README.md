@@ -123,7 +123,7 @@ open the steamvr dashboard, there's a framecorder tab. the first screen is the r
 
 (it goes by the tab and not the whole dashboard because on the frame the steam menu counts as open the whole time you're in home)
 
-it starts with steamvr. to stop it, tab, recorder, clips and sync, until steamvr starts again: settings, "close framecorder" at the bottom. to bring it back sooner, pick framecorder from "launch program" on the frame's app bar, or press play on it in the steam library.
+it starts with steamvr. to stop it, tab, recorder, clips and sync, until steamvr starts again: settings, "close framecorder" at the bottom. to bring it back sooner, pick framecorder from "launch program" on the frame's app bar, or press play on it in the steam library. if you'd rather open it only when you want it, turn off settings, general, "start with steamvr". updates leave that how you set it.
 
 something broke? see [report an issue](#report-an-issue) below.
 

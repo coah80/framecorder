@@ -24,12 +24,13 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, section: Section, hits: &m
         Section::Video => video(c, f, m, inner, hits),
         Section::Audio => audio(c, f, m, inner, hits),
         Section::Clips => clips(c, f, m, inner, hits),
+        Section::General => general(c, f, m, inner, hits),
         Section::Sync => unreachable!(),
     }
 }
 
 fn pills(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
-    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Sync, "Sync")];
+    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Sync, "Sync"), (Section::General, "General")];
     let mut x = PAD;
     for (section, name) in sections {
         let w = f.measure(Face::BodyMedium, 18.0, name) + 52.0;
@@ -133,6 +134,15 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     for (i, note) in notes.iter().enumerate() {
         c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);
     }
+}
+
+fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
+    let meaning = if m.autostart {
+        "framecorder starts when SteamVR does"
+    } else {
+        "Off · open framecorder from the dashboard when you want it"
+    };
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", meaning, Action::Autostart, m.autostart, false);
 }
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
