@@ -142,7 +142,8 @@ impl Session {
         let mut mixers = Vec::new();
         for (i, spec) in cfg.audio_tracks.iter().enumerate() {
             tracks.push(aac::Track::new(i + 1, cfg.audio_bitrate)?);
-            mixers.push((spec.inputs.len() > 1).then(|| Mixer::new(spec.inputs.len())));
+            let voice = spec.inputs.iter().position(|s| *s == Source::Mic);
+            mixers.push((spec.inputs.len() > 1).then(|| Mixer::new(spec.inputs.len(), voice)));
         }
         let ring = cfg.replay_secs.map(|s| Ring::new(s, cfg.fps));
         if let Some(secs) = cfg.replay_secs {
