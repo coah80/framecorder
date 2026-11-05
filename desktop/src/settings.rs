@@ -1,4 +1,4 @@
-//! settings: your frames, this computer, and how syncing works.
+//! settings: your frames and this computer.
 
 use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString};
 
@@ -17,6 +17,11 @@ fn row(first: bool) -> Div {
         .px(px(16.))
         .py(px(14.))
         .when(!first, |d| d.border_t_1().border_color(theme::line()))
+}
+
+/// a row's name, on its own
+fn name(head: impl Into<SharedString>) -> Div {
+    div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).child(head.into())
 }
 
 fn text(head: impl Into<SharedString>, sub: impl IntoElement) -> Div {
@@ -150,33 +155,21 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .when_some(app.autostart, |d, on| {
                     d.child(
                         row(true)
-                            .child(text("start with the computer", "opens when you log in, so clips arrive without you opening it"))
+                            .child(name("start with the computer"))
                             .child(switch("autostart", on).on_click(cx.listener(move |app, _, _, cx| app.set_autostart(!on, cx)))),
                     )
                 })
                 .when(app.tray.is_some() || app.demo, |d| {
                     let on = app.background;
-                    let what = if on {
-                        if cfg!(target_os = "macos") { "closing the window leaves it syncing in the menu bar" } else { "closing the window leaves it syncing in the tray" }
-                    } else {
-                        "closing the window quits it. clips catch up the next time it's open"
-                    };
                     d.child(
                         row(app.autostart.is_none())
-                            .child(text("keep running when closed", what))
+                            .child(name("keep running when closed"))
                             .child(switch("background", on).on_click(cx.listener(move |app, _, _, cx| app.set_background(!on, cx)))),
                     )
                 })
                 .child(
                     row(app.autostart.is_none() && app.tray.is_none() && !app.demo)
-                        .child(text(
-                            "say when a clip lands",
-                            if app.notify {
-                                "a notification per clip, with open and show in folder"
-                            } else {
-                                "off, so new clips arrive quietly"
-                            },
-                        ))
+                        .child(name("say when a clip lands"))
                         .child(switch("notify", app.notify).on_click(cx.listener(|app, _, _, cx| app.set_notify(!app.notify, cx)))),
                 )
                 .child(
@@ -186,38 +179,9 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 )
                 .child(
                     row(false)
-                        .child(text(
-                            "quit framecorder",
-                            if app.background && (app.tray.is_some() || app.demo) {
-                                "stops syncing until you open it again, clips catch up then"
-                            } else {
-                                "stops syncing until you open it again, clips catch up then. closing the window does this too"
-                            },
-                        ))
+                        .child(name("quit framecorder"))
                         .child(outline("quit", "quit").on_click(cx.listener(|app, _, _, cx| app.quit(cx)))),
                 )
-                .child(row(false).child(text(
-                    format!("framecorder {}", env!("CARGO_PKG_VERSION")),
-                    "fonts: montserrat, poppins, space grotesk (sil ofl)",
-                ))),
-        ))
-        .child(section(
-            "how syncing works",
-            div().grid().grid_cols(3).gap(px(10.)).children(
-                [
-                    ("bolt", "a clip is sent the moment it's saved on your frame"),
-                    ("wifi", "only while the frame is on, on the same wi-fi, and this app is open"),
-                    ("lock", "nothing goes through the internet, straight from the frame to here"),
-                ]
-                .map(|(i, t)| {
-                    card()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .p(px(14.))
-                        .child(icon(i, 18., c(theme::MAUVE)))
-                        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(t))
-                }),
-            ),
+                .child(row(false).child(name(format!("framecorder {}", env!("CARGO_PKG_VERSION"))))),
         ))
 }

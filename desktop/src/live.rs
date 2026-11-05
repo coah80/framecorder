@@ -222,9 +222,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
         .flex()
         .flex_col()
         .gap(px(16.))
-        .child(div().flex().flex_col().gap(px(6.)).child(title("live", 26.)).child(
-            div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(format!("what {} shows, as it shows it. watch here, or record it in obs.", s.name)),
-        ))
+        .child(title("live", 26.))
         .children(picker)
         .child(
             div()
@@ -321,20 +319,13 @@ fn now(s: &Status, connected: bool, can: bool, on: bool, starting: bool, status:
 
 /// who's watching: on the frame, and the players on this computer
 fn watching(connected: bool, can: bool, on_frame: Option<u32>, players: Option<u32>, narrow: bool) -> Div {
-    let line = |n: u32, one: &str, many: &str, sub: &str| {
+    let line = |n: u32, one: &str, many: &str| {
         div()
             .flex()
             .items_center()
             .gap(px(12.))
             .child(data(n.to_string()).text_size(px(22.)).text_color(c(if n > 0 { theme::MAUVE } else { theme::TEXT })))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(if n == 1 { one.to_string() } else { many.to_string() }))
-                    .child(div().text_size(px(11.)).text_color(c(theme::OVERLAY2)).child(sub.to_string())),
-            )
+            .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(if n == 1 { one.to_string() } else { many.to_string() }))
     };
     let quiet = |t: &str| div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(t.to_string());
     let col = card().when(!narrow, |d| d.w(px(250.))).flex_none().flex().flex_col().gap(px(14.)).p(px(16.)).child(label("watching"));
@@ -343,8 +334,8 @@ fn watching(connected: bool, can: bool, on_frame: Option<u32>, players: Option<u
         (None, _) if !can => col.child(quiet("the frame's next framecorder update says who's watching.")),
         (None, _) => col.child(quiet("the frame hasn't said who's watching.")),
         (Some(f), p) => col
-            .child(line(f, "app watching the frame", "apps watching the frame", "this one counts, while it's on"))
-            .child(line(p.unwrap_or(0), "player on this computer", "players on this computer", "obs, or anything playing the address")),
+            .child(line(f, "app watching the frame", "apps watching the frame"))
+            .child(line(p.unwrap_or(0), "player on this computer", "players on this computer")),
     }
 }
 
@@ -365,14 +356,7 @@ fn picture(app: &FrameApp, status: Option<&LiveStatus>, on: bool) -> Div {
         .flex_col()
         .gap(px(10.))
         .p(px(16.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(label("the picture"))
-                .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child(format!("small, {} frames a second. obs gets the whole stream.", preview::FPS))),
-        )
+        .child(label("the picture"))
         .child(
             div()
                 .w_full()
@@ -437,7 +421,4 @@ fn obs(url: Option<&str>, cx: &mut Context<FrameApp>) -> Div {
                 ),
         )
         .child(div().flex().flex_col().gap(px(8.)).children(OBS_STEPS.iter().enumerate().map(|(i, t)| step(i, t))))
-        .child(div().text_size(px(12.)).text_color(c(theme::OVERLAY2)).child(
-            "the address only works on this computer, while live view is on. anything that plays a url works the same way, like vlc.",
-        ))
 }
