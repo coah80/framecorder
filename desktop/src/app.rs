@@ -20,7 +20,7 @@ use crate::selfupdate::{self, Release};
 use crate::sync::{self, Clip, Core, Msg};
 use crate::theme::{self, c};
 use crate::tray::Tray;
-use crate::{autostart, check, clips, format, frame, live, pair, prefs, report, settings, sidebar, thumbs};
+use crate::{autostart, check, clipboard, clips, format, frame, live, pair, prefs, report, settings, sidebar, thumbs};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -448,6 +448,32 @@ impl FrameApp {
             cx.reveal_path(&clip.location);
         } else {
             self.toast("that file's been moved or deleted", cx);
+        }
+    }
+
+    /// the file itself goes on the clipboard, to paste into discord, a chat,
+    /// a folder or an editor
+    pub fn copy_clip(&mut self, clip: &Clip, cx: &mut Context<Self>) {
+        self.copy_paths(std::slice::from_ref(clip), cx);
+    }
+
+    /// copies the clips that are still there, and says so. the demo's clips
+    /// don't exist, they go on the clipboard anyway so the button can be tried
+    pub fn copy_paths(&mut self, clips: &[Clip], cx: &mut Context<Self>) {
+        let there: Vec<PathBuf> = clips.iter().filter(|c| self.demo || c.location.exists()).map(|c| c.location.clone()).collect();
+        let missing = clips.len() - there.len();
+        if there.is_empty() {
+            let msg = if clips.len() == 1 { "that file's been moved or deleted" } else { "those files have been moved or deleted" };
+            self.toast(msg, cx);
+            return;
+        }
+        match clipboard::copy_files(&there) {
+            Ok(()) => {
+                let (what, them) = if there.len() == 1 { ("".to_string(), "it") } else { (format!(" {}", there.len()), "them") };
+                let note = if missing > 0 { format!(", {missing} had been moved or deleted") } else { String::new() };
+                self.toast(format!("copied{what}, paste {them} anywhere{note}"), cx);
+            }
+            Err(e) => self.toast(format!("couldn't copy: {e}"), cx),
         }
     }
 
