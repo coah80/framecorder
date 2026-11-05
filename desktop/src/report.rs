@@ -247,10 +247,9 @@ fn writing(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> D
                     }),
             )
             .child(
-                div().flex().items_center().justify_between().child(
-                    div().text_size(px(12.)).text_color(c(theme::OVERLAY2)).child("your steam name goes in, so we can reply where you'll see it."),
-                )
-                .child(data(format!("{count} / {MOST}")).text_size(px(11.)).text_color(c(if count >= MOST { theme::PEACH } else { theme::OVERLAY2 }))),
+                div().flex().justify_end().child(
+                    data(format!("{count} / {MOST}")).text_size(px(11.)).text_color(c(if count >= MOST { theme::PEACH } else { theme::OVERLAY2 })),
+                ),
             ),
         )
         .child(div().flex().child(if app.report_can_send() {
