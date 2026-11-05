@@ -1,4 +1,4 @@
-//! picking several clips at once, to delete them or show them in their folder
+//! picking several clips at once, to copy them, delete them or show them in their folder
 //! together. ctrl-click (cmd on a mac) picks one, shift-click the range from
 //! the last one clicked, and a drag across the library picks everything it
 //! crosses, the way a swipe does on the phone. the bar at the bottom says
@@ -349,6 +349,12 @@ impl FrameApp {
         .detach();
     }
 
+    /// every picked clip that's still there goes on the clipboard, as the files
+    pub fn copy_selected(&mut self, cx: &mut Context<Self>) {
+        let picked = self.selected();
+        self.copy_paths(&picked, cx);
+    }
+
     /// one folder window, on the first picked clip that's still there
     pub fn reveal_selected(&mut self, cx: &mut Context<Self>) {
         match self.selected().iter().find(|c| c.location.exists()) {
@@ -434,6 +440,11 @@ fn actions(all: bool, cx: &mut Context<FrameApp>) -> Div {
         .child(
             outline("selection-all", if all { "select none" } else { "select all" })
                 .on_click(cx.listener(|app, _, _, cx| app.select_all(cx))),
+        )
+        .child(
+            outline("selection-copy", "copy")
+                .child(icon("copy", 15., c(theme::SUBTEXT1)))
+                .on_click(cx.listener(|app, _, _, cx| app.copy_selected(cx))),
         )
         .child(
             outline("selection-reveal", "show in folder")

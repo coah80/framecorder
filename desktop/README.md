@@ -21,8 +21,8 @@ cargo run -- --demo live-on    # the live page with a made up picture; report-re
 
 ## what it does
 
-- clips land in `~/Videos/framecorder` (`~/Movies/framecorder` on a mac), clips in `clips/`. a clip in the library opens in the system's player, shows in its folder, or goes to the trash (the recycle bin on windows)
-- several at once, like the android app: ctrl-click (cmd on a mac) picks a clip, shift-click the range from the last one clicked, and a drag across the library picks everything it crosses, scrolling at the edges. while anything's picked a plain click picks or lets go instead of opening, ctrl+a picks everything on screen and esc lets go. the bar at the bottom says "3 selected · 195 MB", shows them in their folder, or moves them to the trash after asking once
+- clips land in `~/Videos/framecorder` (`~/Movies/framecorder` on a mac), clips in `clips/`. a clip in the library opens in the system's player, shows in its folder, copies (the file itself, so it pastes into discord, a chat or a folder), or goes to the trash (the recycle bin on windows)
+- several at once, like the android app: ctrl-click (cmd on a mac) picks a clip, shift-click the range from the last one clicked, and a drag across the library picks everything it crosses, scrolling at the edges. while anything's picked a plain click picks or lets go instead of opening, ctrl+a picks everything on screen and esc lets go. the bar at the bottom says "3 selected · 195 MB", copies them, shows them in their folder, or moves them to the trash after asking once
 - a notification per new clip, with open and show in folder. settings can turn them off
 - pairing finds the frame by name (mdns) and by knocking on every nearby address, for routers that drop multicast, and takes its address typed in or a `framecorder://pair` link pasted. it pairs on the sixth digit
 - the frame page: record, stop, save clip and the mic, how it's doing (battery, storage, a download coming in), the settings for its next recording (shape, which eye, or both eyes blended into one level picture on a frame new enough to do it), what's here from it, and a connection check that runs the real checks one by one and says what each saw
@@ -50,4 +50,4 @@ the old 0.1.x tauri app can't update itself. download the new app once from [the
 - `app.rs` all the state and everything you can do
 - `sidebar.rs`, `clips.rs`, `frame.rs`, `check.rs`, `live.rs`, `report.rs`, `pair.rs`, `settings.rs` the screens; `remote.rs` what a frame's tab is up to; `preview.rs` the live page's picture, through ffmpeg
 - `widgets.rs`, `theme.rs`, `assets.rs` buttons, colors, the fonts and icons (baked in)
-- `tray.rs`, `prefs.rs`, `thumbs.rs`, `selfupdate.rs`, `autostart.rs`, `oldapp.rs`, `format.rs`, `demo.rs` the rest
+- `tray.rs`, `prefs.rs`, `thumbs.rs`, `clipboard.rs`, `selfupdate.rs`, `autostart.rs`, `oldapp.rs`, `format.rs`, `demo.rs` the rest
