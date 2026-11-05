@@ -715,6 +715,11 @@ impl App {
         let stopped = Command::new("systemctl")
             .args(["--user", "--no-block", "stop", "framecorder-sync.service", "framecorder-ui.service"])
             .status();
+        // A tab opened from the app bar runs outside the service, where
+        // stopping the service ends nothing, so it quits itself too.
+        if stopped.as_ref().is_ok_and(|s| s.success()) {
+            QUIT.store(true, Ordering::SeqCst);
+        }
         match stopped {
             Ok(s) if s.success() => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
             Ok(s) => self.note = Some((format!("Couldn't close framecorder: systemctl {s}"), false)),
