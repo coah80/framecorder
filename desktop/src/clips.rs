@@ -644,7 +644,7 @@ struct Look {
 
 fn tile(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<FrameApp>) -> AnyElement {
     let group = SharedString::from(format!("tile-{index}"));
-    let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
+    let (open, reveal, copy, delete) = (clip.clone(), clip.clone(), clip.clone(), clip.clone());
     // a picked tile shrinks into its frame, like the phone's
     let inset = if look.selected { 6. } else { 0. };
     div()
@@ -715,10 +715,16 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<
                         app.delete_clip(&delete, cx);
                     },
                 )))
-                .child(tile_button(format!("reveal-{}", clip.key), group, "folder", theme::TEXT).on_click(cx.listener(
+                .child(tile_button(format!("reveal-{}", clip.key), group.clone(), "folder", theme::TEXT).on_click(cx.listener(
                     move |app, _, _, cx| {
                         cx.stop_propagation();
                         app.reveal_clip(&reveal, cx);
+                    },
+                )))
+                .child(tile_button(format!("copy-{}", clip.key), group, "copy", theme::TEXT).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.copy_clip(&copy, cx);
                     },
                 ))),
         )
@@ -726,7 +732,7 @@ fn tile(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<
 }
 
 fn row(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<FrameApp>) -> AnyElement {
-    let (open, reveal, delete) = (clip.clone(), clip.clone(), clip.clone());
+    let (open, reveal, copy, delete) = (clip.clone(), clip.clone(), clip.clone(), clip.clone());
     div()
         .id(SharedString::from(format!("row-{}", clip.key)))
         .relative()
@@ -780,6 +786,12 @@ fn row(app: &FrameApp, clip: &Clip, index: usize, look: Look, cx: &mut Context<F
                     move |app, _, _, cx| {
                         cx.stop_propagation();
                         app.reveal_clip(&reveal, cx);
+                    },
+                )))
+                .child(row_button(format!("rowcopy-{}", clip.key), "copy", theme::SUBTEXT0).on_click(cx.listener(
+                    move |app, _, _, cx| {
+                        cx.stop_propagation();
+                        app.copy_clip(&copy, cx);
                     },
                 ))),
         )

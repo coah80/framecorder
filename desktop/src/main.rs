@@ -10,6 +10,7 @@ mod appimage;
 mod assets;
 mod autostart;
 mod check;
+mod clipboard;
 mod clips;
 mod demo;
 mod format;

@@ -1992,6 +1992,7 @@ dependencies = [
  "async-channel",
  "auto-launch",
  "chrono",
+ "cocoa 0.26.0",
  "dirs 6.0.0",
  "env_logger",
  "framecorder-app",
@@ -2009,6 +2010,7 @@ dependencies = [
  "ureq",
  "windows-sys 0.61.2",
  "winresource",
+ "x11rb",
  "zbus",
 ]
 
