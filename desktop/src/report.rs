@@ -275,9 +275,7 @@ fn sending() -> Div {
         .gap(px(14.))
         .p(px(18.))
         .child(spinner("report-sending", 18., c(theme::MAUVE)))
-        .child(div().flex().flex_col().gap(px(2.)).child(div().font_weight(FontWeight::MEDIUM).child("sending")).child(
-            div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child("asking your frame how it's doing and gathering this app's log. a few seconds."),
-        ))
+        .child(div().font_weight(FontWeight::MEDIUM).child("sending"))
 }
 
 fn sent_card(sent: &Sent, cx: &mut Context<FrameApp>) -> Div {
@@ -303,9 +301,6 @@ fn sent_card(sent: &Sent, cx: &mut Context<FrameApp>) -> Div {
                         .child(data(sent.url.clone()).text_size(px(12.)).text_color(c(theme::SUBTEXT0)).truncate()),
                 ),
         )
-        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(
-            "thanks. keep an eye on it: that's where any questions and the fix will be.",
-        ))
         .child(
             div()
                 .flex()
@@ -340,8 +335,7 @@ fn failed(why: String, cx: &mut Context<FrameApp>) -> Div {
                         .flex_col()
                         .gap(px(4.))
                         .child(div().font_weight(FontWeight::MEDIUM).text_color(c(theme::RED)).child("it didn't send"))
-                        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).whitespace_normal().child(why))
-                        .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child("nothing was posted. what you wrote is still here.")),
+                        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).whitespace_normal().child(why)),
                 ),
         )
         .child(

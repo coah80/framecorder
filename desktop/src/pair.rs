@@ -165,13 +165,7 @@ fn left(again: bool, narrow: bool) -> impl IntoElement {
         .border_color(theme::line())
         .child(wordmark())
         .child(
-            div().flex().flex_col().gap(px(14.)).child(title(if again { "pair it again" } else { "pair your frame" }, if narrow { 30. } else { 38. })).child(
-                div().max_w(px(340.)).text_size(px(15.)).text_color(c(theme::SUBTEXT1)).child(if again {
-                    "what's already here stays, and nothing comes down twice."
-                } else {
-                    "clips and recordings come straight over your wi-fi, nothing goes through the internet."
-                }),
-            ),
+            title(if again { "pair it again" } else { "pair your frame" }, if narrow { 30. } else { 38. }),
         )
         .child(
             card()
@@ -199,13 +193,6 @@ fn left(again: bool, narrow: bool) -> impl IntoElement {
                         .text_color(c(theme::SUBTEXT0))
                         .child("it shows a 6 digit code. you'll type it on the right."),
                 ),
-        )
-        .child(
-            div()
-                .max_w(px(340.))
-                .text_size(px(12.))
-                .text_color(c(theme::OVERLAY2))
-                .child("syncing only happens while the frame is on, on the same wi-fi, and this app is open"),
         )
 }
 
@@ -325,8 +312,5 @@ fn code(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl
                 .when(!ready, |d| d.opacity(0.35).cursor_default())
                 .when(ready, |d| d.on_click(cx.listener(|app, _, _, cx| app.submit_pair(cx)))),
         )
-        .child(match &p.error {
-            Some(e) => div().text_size(px(13.)).text_color(c(theme::RED)).child(e.clone()),
-            None => div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child("it pairs as soon as you type the last digit."),
-        })
+        .when_some(p.error.clone(), |d, e| d.child(div().text_size(px(13.)).text_color(c(theme::RED)).child(e)))
 }

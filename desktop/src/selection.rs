@@ -473,18 +473,7 @@ fn question(selected: &[Clip]) -> Div {
                 .bg(a(theme::RED, 0.12))
                 .child(icon("trash", 16., c(theme::RED))),
         )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(c(theme::RED))
-                        .child(format!("move {} to {}?", what(selected), bin())),
-                )
-                .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT1)).child("they can come back from there.")),
-        )
+        .child(div().font_weight(FontWeight::MEDIUM).text_color(c(theme::RED)).child(format!("move {} to {}?", what(selected), bin())))
 }
 
 fn answers(cx: &mut Context<FrameApp>) -> Div {

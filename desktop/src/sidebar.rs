@@ -267,14 +267,7 @@ fn report(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
         .when(!on, |d| d.hover(|s| s.bg(c(theme::SURFACE1)).text_color(c(theme::TEXT))))
         .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
         .child(icon("flag", 18., c(fg)))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).line_height(px(17.)).child("report an issue"))
-                .child(div().text_size(px(11.)).line_height(px(15.)).text_color(c(theme::OVERLAY2)).truncate().child("sends logs to github")),
-        )
+        .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("report an issue"))
 }
 
 /// "updating", grey, filling in mauve from the left over and over, like a bar
