@@ -37,6 +37,8 @@ fn defaults() -> Recording {
         eye: None,
         panels: None,
         split_audio: None,
+        mic_source: None,
+        mics: None,
     }
 }
 
@@ -614,10 +616,10 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
         Rc::new(move |i| f(&r, i))
     };
     let shapes: Vec<Choice> =
-        SHAPES.iter().enumerate().map(|(i, &(v, l))| Choice { label: l, glyph: Some(v), off: locked && i > 0 }).collect();
+        SHAPES.iter().enumerate().map(|(i, &(v, l))| Choice { label: l.into(), glyph: Some(v), off: locked && i > 0 }).collect();
     let eyes: Vec<Choice> = EYES
         .iter()
-        .map(|&(v, l)| Choice { label: l, glyph: None, off: locked || both || (v == "both" && !can_blend) })
+        .map(|&(v, l)| Choice { label: l.into(), glyph: None, off: locked || both || (v == "both" && !can_blend) })
         .collect();
     let eye_hint = if both {
         None
@@ -626,7 +628,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
     } else {
         None
     };
-    let lengths: Vec<Choice> = LENGTHS.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: false }).collect();
+    let lengths: Vec<Choice> = LENGTHS.iter().map(|&(_, l)| Choice { label: l.into(), glyph: None, off: false }).collect();
 
     card()
         .flex()
@@ -727,6 +729,33 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                     }),
             ),
         )
+        .when_some(mic_picker(&r, enabled), |d, (options, picked, pick)| {
+            d.child(setting(false, "mic", None).child(choices(&fp, "mic", &options, picked, enabled && r.mic, pick, cx)))
+        })
+}
+
+/// the headset's mics to pick from, once there's a choice: another one plugged
+/// in, or the picked one gone. older headsets don't list them
+fn mic_picker(r: &Recording, enabled: bool) -> Option<(Vec<Choice>, usize, Pick)> {
+    let mics = r.mics.as_ref()?;
+    let picked = r.mic_source.clone().unwrap_or_default();
+    let gone = !picked.is_empty() && !mics.iter().any(|m| m.name == picked);
+    if mics.len() < 2 && !gone {
+        return None;
+    }
+    let mut options: Vec<Choice> = mics.iter().map(|m| Choice { label: m.label.clone().into(), glyph: None, off: !enabled }).collect();
+    let on = if picked.is_empty() { mics.iter().position(|m| m.default) } else { mics.iter().position(|m| m.name == picked) };
+    // the picked one isn't plugged in: the default's recorded meanwhile
+    if gone {
+        options.push(Choice { label: "not connected".into(), glyph: None, off: false });
+    }
+    let names: Vec<String> = mics.iter().map(|m| m.name.clone()).collect();
+    let r = r.clone();
+    let pick: Pick = Rc::new(move |i| match names.get(i) {
+        Some(name) => Recording { mic_source: Some(name.clone()), ..r.clone() },
+        None => r.clone(),
+    });
+    Some((options, on.unwrap_or(mics.len()), pick))
 }
 
 /// why the shapes and the eye are greyed out: the panels aren't unlocked on the headset
@@ -766,7 +795,7 @@ fn setting(first: bool, name: &str, hint: Option<String>) -> Div {
 }
 
 struct Choice {
-    label: &'static str,
+    label: SharedString,
     /// a shape to draw the outline of, over the label
     glyph: Option<&'static str>,
     /// greyed out: the headset can't do it right now
@@ -774,7 +803,7 @@ struct Choice {
 }
 
 fn plain(options: &[(&str, &'static str)]) -> Vec<Choice> {
-    options.iter().map(|&(_, l)| Choice { label: l, glyph: None, off: false }).collect()
+    options.iter().map(|&(_, l)| Choice { label: l.into(), glyph: None, off: false }).collect()
 }
 
 /// one row of options with one picked, like the library's filters
@@ -813,7 +842,7 @@ fn choices(fp: &str, name: &str, options: &[Choice], picked: usize, enabled: boo
                 .when(can, |d| d.cursor_pointer().hover(|s| s.text_color(c(theme::MAUVE)).bg(a(theme::MAUVE, 0.08))))
                 .when(can, |d| d.on_click(cx.listener(move |app, _, _, cx| app.change_settings(&fp, pick(i), cx))))
                 .when_some(o.glyph, |d, g| d.child(shape_glyph(g, ink)))
-                .child(o.label)
+                .child(o.label.clone())
         }))
 }
 

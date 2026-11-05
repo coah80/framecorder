@@ -4,21 +4,30 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
 use crate::config::write_atomic;
 
+#[path = "../../src/mics.rs"]
+mod mics;
+
 static CHANGES: Mutex<()> = Mutex::new(());
+/// The mics, looked up at most this often: pw-dump takes ~30 ms.
+const MICS_FOR: Duration = Duration::from_secs(3);
+static MICS: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
 
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 9] = [
+const KEYS: [(&str, &str); 10] = [
     ("shape", "wide"),
     ("eye", "left"),
     ("quality", "high"),
     ("fps", "auto"),
     ("game_audio", "true"),
     ("mic", "true"),
+    // a PipeWire node name, empty for the one SteamOS uses
+    ("mic_source", ""),
     ("split_audio", "true"),
     ("clips", "true"),
     ("clip", "30"),
@@ -32,6 +41,7 @@ fn allowed(key: &str, value: &str) -> bool {
         "fps" => matches!(value, "auto" | "60" | "30"),
         "game_audio" | "mic" | "split_audio" | "clips" => matches!(value, "true" | "false"),
         "clip" => matches!(value, "15" | "30" | "60" | "120"),
+        "mic_source" => value.is_empty() || mics::valid_name(value),
         _ => false,
     }
 }
@@ -71,7 +81,7 @@ pub fn read(path: &Path) -> Value {
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of eye, shape, quality, fps, game_audio, mic, split_audio, clips, clip".into());
+        return Err("expected an object with some of eye, shape, quality, fps, game_audio, mic, mic_source, split_audio, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -115,8 +125,20 @@ pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     Ok(read(path))
 }
 
+/// The mics there are, for picking one, the Frame's own first.
+fn mics() -> Value {
+    let mut cached = MICS.lock().unwrap();
+    if let Some((_, mics)) = cached.as_ref().filter(|(at, _)| at.elapsed() < MICS_FOR) {
+        return mics.clone();
+    }
+    let mics: Value = mics::list().into_iter().map(|m| json!({"name": m.name, "label": m.label, "default": m.default})).collect();
+    *cached = Some((Instant::now(), mics.clone()));
+    mics
+}
+
 pub fn status(paths: &crate::config::Paths) -> Value {
     let mut settings = read(&paths.recording());
+    settings["mics"] = mics();
     settings["panels"] = std::fs::read(paths.status())
         .ok()
         .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
@@ -136,7 +158,7 @@ mod tests {
         let s = read(&dir.path().join("ui.conf"));
         assert_eq!(
             s,
-            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "split_audio": true, "clips": true, "clip": 30})
+            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
         );
     }
 

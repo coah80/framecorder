@@ -64,12 +64,25 @@ private val Qualities = listOf("standard" to "standard", "high" to "high", "max"
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
     "max" -> 80
     else -> 40
+}
+
+/**
+ * The headset's mics to pick from, and the picked one, once there's a choice:
+ * another one plugged in, or the picked one gone. Older headsets don't list them.
+ */
+private fun micChoices(s: RecordingSettings): Pair<List<Pair<String, String>>, String>? {
+    val mics = s.mics ?: return null
+    val picked = s.micSource.orEmpty()
+    val gone = picked.isNotEmpty() && mics.none { it.name == picked }
+    if (mics.size < 2 && !gone) return null
+    val options = mics.map { it.name to it.label } + if (gone) listOf(picked to "not connected") else emptyList()
+    return options to picked.ifEmpty { mics.firstOrNull { it.default }?.name.orEmpty() }
 }
 
 private fun audio(s: RecordingSettings) = when {
@@ -148,14 +161,16 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(dotted("next recording"), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 8.dp, bottom = 14.dp))
-                Group(0, 3, "quality · ${mbps(settings.quality)} Mbit/s") {
+                val mics = micChoices(settings)
+                val groups = if (mics != null) 4 else 3
+                Group(0, groups, "quality · ${mbps(settings.quality)} Mbit/s") {
                     Choices(Qualities, settings.quality, true) { onChange(RecordingPatch(quality = it)) }
                 }
-                Group(1, 3, "frame rate") {
+                Group(1, groups, "frame rate") {
                     Choices(Rates, settings.fps, true) { onChange(RecordingPatch(fps = it)) }
                 }
                 Column(
-                    Modifier.fillMaxWidth().clip(segmentShape(2, 3, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
+                    Modifier.fillMaxWidth().clip(segmentShape(2, groups, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
                 ) {
                     Toggle("game audio", settings.gameAudio) { onChange(RecordingPatch(gameAudio = it)) }
                     Toggle("mic", settings.mic) { onChange(RecordingPatch(mic = it)) }
@@ -163,6 +178,11 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                     settings.splitAudio?.let { split ->
                         val both = settings.gameAudio && settings.mic
                         Toggle("split tracks", both && split, enabled = both) { onChange(RecordingPatch(splitAudio = it)) }
+                    }
+                }
+                if (mics != null) {
+                    Group(3, groups, "mic") {
+                        Choices(mics.first, mics.second, settings.mic, lines = 2) { onChange(RecordingPatch(micSource = it)) }
                     }
                 }
             }

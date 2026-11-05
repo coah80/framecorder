@@ -29,6 +29,7 @@ enum Report {
 
 struct Mock {
     settings: Settings,
+    mics: Vec<crate::mics::Mic>,
     screen: Screen,
     recording: Option<Instant>,
     clipped_at: Option<Instant>,
@@ -72,6 +73,7 @@ impl Mock {
         };
         Self {
             settings: Settings { onboarded: start != "setup", ..Settings::default() },
+            mics: super::sample_mics("audio-mics"),
             screen: if start == "setup" { Screen::Onboarding(Step::Shape) } else { Screen::Home },
             recording: None,
             clipped_at: None,
@@ -170,6 +172,11 @@ impl Mock {
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
+            Action::MicSource(i) => {
+                if let Some(mic) = self.mics.get(i) {
+                    s.mic_source = mic.name.clone();
+                }
+            }
             Action::Clips => s.clips = !s.clips,
             Action::ClipLength(secs) => s.clip_secs = secs,
         }
@@ -227,6 +234,7 @@ impl Mock {
         };
         let model = Model {
             settings: &self.settings,
+            mics: &self.mics,
             screen: self.screen,
             sync: SyncView {
                 available: self.sync_available,
