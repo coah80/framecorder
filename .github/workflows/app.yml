@@ -48,6 +48,11 @@ jobs:
 
       # the live preview test decodes a real stream with the ffmpeg cli, like the app does
       - uses: FedericoCarboni/setup-ffmpeg@v3
+        if: ${{ !startsWith(matrix.os, 'macos') }}
+      # that action only has x64 builds, the mac runners are arm
+      - name: ffmpeg (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install ffmpeg
 
       - name: test
         run: cargo test --release
