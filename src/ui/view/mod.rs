@@ -237,10 +237,9 @@ fn header(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, title: 
     widgets::button(c, f, m, hits, r, label, action, primary);
 }
 
-/// The last recording's result, why the settings won't budge, or what's
-/// worth knowing about the screen that's open. Settings also keep the way
-/// to close framecorder down here, out of the way, and home the way to
-/// report an issue.
+/// The last recording's result, or why the settings won't budge. Settings
+/// also keep the way to close framecorder down here, out of the way, and
+/// home the way to report an issue.
 fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
     let section = match m.screen {
         Screen::Settings(s) => Some(s),
@@ -258,12 +257,7 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         _ if m.relocked && !m.unlocked => Some((RELOCKED.into(), YELLOW, YELLOW)),
         Some((text, true)) => Some((text.into(), GREEN, SUBTEXT0)),
         Some((text, false)) => Some((text.into(), RED, RED)),
-        None if failed.is_some() => failed.map(|f| (f, RED, RED)),
-        None => match section {
-            Some(Section::Sync) => Some((SYNC_NOTE.into(), YELLOW, YELLOW)),
-            Some(_) => Some(("Changes save on their own and apply to the next recording.".into(), OVERLAY1, SUBTEXT0)),
-            None => None,
-        },
+        None => failed.map(|f| (f, RED, RED)),
     };
     let link = match m.screen {
         Screen::Home => Some(("Report an issue", Action::Report, MAUVE)),
@@ -307,9 +301,6 @@ fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
 
 /// A report is a GitHub issue anyone can read.
 const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with your Steam name and framecorder's logs. Nothing from your videos.";
-
-/// Clips only move while the headset is up; say so where it matters.
-const SYNC_NOTE: &str = "Clips only sync while your Frame is on, on the same Wi-Fi, with the framecorder app open on the other device.";
 
 /// An update replaced the recorder, which drops its permission.
 const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer unlocks the panels again.";
