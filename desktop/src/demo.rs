@@ -101,9 +101,32 @@ fn clips() -> Vec<Clip> {
             duration_s: Some(len),
             // landed a few minutes after it was saved
             synced_at: at(d, h, m).timestamp() + 180,
-            location: PathBuf::from("/nonexistent"),
+            location: place(i, &at(d, h, m).format("%Y-%m-%d_%H-%M-%S.mp4").to_string()),
         })
         .collect()
+}
+
+/// a real little video behind every made up clip, so open, reveal, copy and
+/// the thumbnails behave like they do on real ones
+const FILES: [&[u8]; 9] = [
+    include_bytes!("../assets/demo/clip0.mp4"),
+    include_bytes!("../assets/demo/clip1.mp4"),
+    include_bytes!("../assets/demo/clip2.mp4"),
+    include_bytes!("../assets/demo/clip3.mp4"),
+    include_bytes!("../assets/demo/clip4.mp4"),
+    include_bytes!("../assets/demo/clip5.mp4"),
+    include_bytes!("../assets/demo/clip6.mp4"),
+    include_bytes!("../assets/demo/clip7.mp4"),
+    include_bytes!("../assets/demo/clip8.mp4"),
+];
+
+fn place(i: usize, name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join("framecorder-demo").join("clips").join(name);
+    let written = std::fs::create_dir_all(path.parent().unwrap_or(&path)).and_then(|()| std::fs::write(&path, FILES[i % FILES.len()]));
+    if let Err(e) = written {
+        log::warn!("couldn't write the demo clip {}: {e}", path.display());
+    }
+    path
 }
 
 /// a frame with its tab up and a 30 s clip buffer going
