@@ -194,6 +194,8 @@ struct App {
     /// An issue being reported, or the last one sent.
     report: Report,
     keyboard: Option<Keyboard>,
+    /// Whether the tab starts with SteamVR, looked up when settings open.
+    autostart: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -223,6 +225,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
         "audio" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
+        "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
         "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
@@ -278,6 +281,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         relocked: state == "relocked",
         free,
         report,
+        autostart: state != "general-off",
     };
     view::draw(&mut canvas, &mut fonts, &model);
     std::fs::write(path, &canvas.pixels)?;
@@ -553,6 +557,7 @@ impl App {
             free: storage::free_for_recordings(),
             report: Report::new(),
             keyboard: None,
+            autostart: true,
         }
     }
 
@@ -602,6 +607,15 @@ impl App {
             Action::Report => return self.go(Screen::Report),
             Action::Type => return self.start_typing(),
             Action::Send => return self.report.send(),
+            Action::Autostart => {
+                let want = !self.autostart;
+                if crate::setup::set_autostart(want) {
+                    self.autostart = want;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -721,7 +735,14 @@ impl App {
             QUIT.store(true, Ordering::SeqCst);
         }
         match stopped {
-            Ok(s) if s.success() => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
+            Ok(s) if s.success() => {
+                let back = if crate::setup::autostart() {
+                    "Closing. framecorder starts again with SteamVR."
+                } else {
+                    "Closing. Open framecorder from the dashboard when you want it."
+                };
+                self.note = Some((back.into(), true));
+            }
             Ok(s) => self.note = Some((format!("Couldn't close framecorder: systemctl {s}"), false)),
             Err(e) => self.note = Some((format!("Couldn't close framecorder: {e}"), false)),
         }
@@ -1013,6 +1034,9 @@ impl App {
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
         }
+        if screen == Screen::Settings(Section::General) {
+            self.autostart = crate::setup::autostart();
+        }
         if screen == Screen::Home {
             self.free = storage::free_for_recordings();
         }
@@ -1140,6 +1164,7 @@ impl App {
             relocked: self.relocked,
             free: self.free,
             report,
+            autostart: self.autostart,
         }
     }
 }
