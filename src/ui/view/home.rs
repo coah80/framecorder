@@ -109,9 +109,9 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
     hits.push(Hit { rect: link, action });
 
     if list.is_empty() {
-        let line = if m.sync.available { "Get the app on your phone or computer." } else { "Run the installer again to set it up." };
-        c.text(f, Face::BodyMedium, 18.0, x, r.y + 80.0, "Nothing paired yet", TEXT, 1.0);
-        c.text(f, Face::Body, 16.0, x, r.y + 108.0, line, SUBTEXT0, 1.0);
+        if !m.sync.available {
+            c.text(f, Face::Body, 16.0, x, r.y + 80.0, "Run the installer again to set it up.", SUBTEXT0, 1.0);
+        }
         return;
     }
     let shown = if list.len() > SHOWN { SHOWN - 1 } else { SHOWN };
@@ -205,8 +205,8 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
     }
 
     let (status, color) = match (s.clips, recording) {
-        (false, _) => ("Clips are off".to_string(), OVERLAY2),
-        (true, true) => ("Clips are off while recording, the recording has it all".to_string(), OVERLAY2),
+        (false, _) => return,
+        (true, true) => ("Clips are off while recording".to_string(), OVERLAY2),
         (true, false) => (format!("Hold the left thumbstick to clip the last {}", length(s.clip_secs)), SUBTEXT0),
     };
     c.text_centered(f, Face::Body, 16.0, cx, r.y + r.h - 30.0, &status, color, 1.0);

@@ -8,26 +8,19 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    Welcome,
     Shape,
     Quality,
     Audio,
     Clips,
     Sync,
-    Done,
 }
 
-const STEPS: [Step; 7] = [Step::Welcome, Step::Shape, Step::Quality, Step::Audio, Step::Clips, Step::Sync, Step::Done];
+const STEPS: [Step; 5] = [Step::Shape, Step::Quality, Step::Audio, Step::Clips, Step::Sync];
 
 impl Step {
     /// Pairing only gets asked about where there's a sync service to pair with.
     fn shown(self, sync: bool) -> bool {
         self != Step::Sync || sync
-    }
-
-    /// Whether there's something to pick, unlike the hello and goodbye.
-    fn asks(self) -> bool {
-        !matches!(self, Step::Welcome | Step::Done)
     }
 
     pub fn next(self, sync: bool) -> Option<Step> {
@@ -38,15 +31,10 @@ impl Step {
         STEPS.iter().rev().copied().skip_while(|&s| s != self).skip(1).find(|s| s.shown(sync))
     }
 
-    /// Which question this is and out of how many, for the steps that ask one.
+    /// Which step this is and out of how many.
     pub fn progress(self, sync: bool) -> (usize, usize) {
-        let asked = || STEPS.iter().filter(|s| s.asks() && s.shown(sync));
-        let at = match self {
-            Step::Welcome => 0,
-            Step::Done => asked().count(),
-            step => asked().take_while(|&&s| s != step).count() + 1,
-        };
-        (at, asked().count())
+        let shown = || STEPS.iter().filter(|s| s.shown(sync));
+        (shown().take_while(|&&s| s != self).count() + 1, shown().count())
     }
 }
 
@@ -65,13 +53,11 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, step: Step, hits: &mut Vec
     card(c, pane);
     let inner = Rect::new(pane.x + INSET, pane.y + 28.0, pane.w - 2.0 * INSET, pane.h - 50.0);
     match step {
-        Step::Welcome => hello(c, f, pane, "Let's set up your recordings", "A few quick choices. You can change them all later in settings."),
         Step::Shape => shape(c, f, m, inner, hits),
         Step::Quality => quality(c, f, m, inner, hits),
         Step::Audio => audio(c, f, m, inner, hits),
         Step::Clips => clips(c, f, m, inner, hits),
         Step::Sync => pair(c, f, m, inner, hits),
-        Step::Done => hello(c, f, pane, "You're all set", "Hit record, then switch tabs or close the menu and it starts."),
     }
     nav(c, f, m, step, hits);
 }
@@ -83,41 +69,28 @@ fn nav(c: &mut Canvas, f: &mut Fonts, m: &Model, step: Step, hits: &mut Vec<Hit>
         button(c, f, m, hits, Rect::new(PAD, NAV_Y, NAV_W, NAV_H), "Back", Action::Step(back), false);
     }
     let r = Rect::new(WIDTH as f32 - PAD - NAV_W, NAV_Y, NAV_W, NAV_H);
-    match (step, step.next(sync)) {
-        (Step::Welcome, Some(next)) => button(c, f, m, hits, r, "Get started", Action::Step(next), true),
-        (_, Some(next)) => button(c, f, m, hits, r, "Next", Action::Step(next), true),
-        (_, None) => button(c, f, m, hits, r, "Finish", Action::FinishSetup, true),
+    match step.next(sync) {
+        Some(next) => button(c, f, m, hits, r, "Next", Action::Step(next), true),
+        None => button(c, f, m, hits, r, "Finish", Action::FinishSetup, true),
     }
 
     let (at, of) = step.progress(sync);
     let (cx, cy) = (WIDTH as f32 / 2.0, NAV_Y + NAV_H / 2.0);
     let gap = 28.0;
     let x0 = cx - gap * (of as f32 - 1.0) / 2.0;
-    // The dots move up to make room for the count under them.
-    let y = if step.asks() { cy - 12.0 } else { cy };
+    let y = cy - 12.0;
     for i in 1..=of {
         let x = x0 + (i - 1) as f32 * gap;
-        if i == at && step.asks() {
+        if i == at {
             c.fill_circle(x, y, 8.0, MAUVE, 1.0);
         } else {
-            c.fill_circle(x, y, 6.0, if i <= at { MAUVE } else { SURFACE1 }, if i <= at { 0.5 } else { 1.0 });
+            c.fill_circle(x, y, 6.0, if i < at { MAUVE } else { SURFACE1 }, if i < at { 0.5 } else { 1.0 });
         }
     }
-    if step.asks() {
-        c.text_centered(f, Face::Data, 18.0, cx, cy + 24.0, &format!("{at} of {of}"), SUBTEXT0, 1.0);
-    }
+    c.text_centered(f, Face::Data, 18.0, cx, cy + 24.0, &format!("{at} of {of}"), SUBTEXT0, 1.0);
 }
 
-/// The first and last steps: the record dot, a heading, and one line.
-fn hello(c: &mut Canvas, f: &mut Fonts, pane: Rect, heading: &str, line: &str) {
-    let (cx, cy) = (pane.x + pane.w / 2.0, pane.y + 124.0);
-    c.ring(cx, cy, 52.0, 4.0, MAUVE, 0.7);
-    c.fill_circle(cx, cy, 38.0, MAUVE, 0.92);
-    c.text_centered(f, Face::Heading, 40.0, cx, cy + 124.0, heading, TEXT, 1.0);
-    c.text_centered(f, Face::Body, 21.0, cx, cy + 172.0, line, SUBTEXT0, 1.0);
-}
-
-/// What's being asked, and what the current pick means.
+/// The step's name, and a value for the current pick when there is one.
 fn question(c: &mut Canvas, f: &mut Fonts, inner: Rect, heading: &str, meaning: &str) {
     c.text(f, Face::Heading, 32.0, inner.x, inner.y + 40.0, heading, TEXT, 1.0);
     c.text(f, Face::Body, 19.0, inner.x, inner.y + 78.0, meaning, SUBTEXT0, 1.0);
@@ -126,17 +99,17 @@ fn question(c: &mut Canvas, f: &mut Fonts, inner: Rect, heading: &str, meaning: 
 fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let meaning = match s.shape {
-        Shape::Wide => "Widescreen · 1920 × 1080 · good for most things",
-        Shape::Square => "Square · 1440 × 1440",
-        Shape::Tall => "Vertical · 1080 × 1920 · good for phones",
-        Shape::BothEyes => "Both panels, just as the headset shows them",
+        Shape::Wide => "1920 × 1080",
+        Shape::Square => "1440 × 1440",
+        Shape::Tall => "1080 × 1920",
+        Shape::BothEyes => "",
     };
-    question(c, f, inner, "What shape should your videos be?", meaning);
+    question(c, f, inner, "Shape", meaning);
     let shapes = [
         (Shape::Wide, "16:9", "Widescreen"),
         (Shape::Square, "1:1", "Square"),
-        (Shape::Tall, "9:16", "Vertical, for phones"),
-        (Shape::BothEyes, "Both eyes", "Just as the headset shows it"),
+        (Shape::Tall, "9:16", "Vertical"),
+        (Shape::BothEyes, "Both eyes", ""),
     ];
     let y = inner.y + CONTROLS_Y;
     let w = (inner.w - 3.0 * 16.0) / 4.0;
@@ -148,7 +121,7 @@ fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     if s.shape == Shape::BothEyes {
         return;
     }
-    label(c, f, inner.x, y + TILE_H + 40.0, "THE EYE THAT GETS RECORDED");
+    label(c, f, inner.x, y + TILE_H + 40.0, "EYE");
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), s.eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), s.eye == Eye::Right),
@@ -197,12 +170,9 @@ fn tile(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, 
 
 fn quality(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
-    let meaning = match s.quality {
-        Quality::Standard => "Smaller files that still look good",
-        Quality::High => "Sharp, without the files getting huge",
-        Quality::Max => "As sharp as it gets, with the biggest files",
-    };
-    question(c, f, inner, "How sharp should they be?", meaning);
+    // Megabits a second, times 60 s, over 8 bits a byte.
+    let meaning = format!("{} Mbit/s · about {} MB a minute", s.quality.mbps(), s.quality.mbps() * 60 / 8);
+    question(c, f, inner, "Quality", &meaning);
     let qualities = [
         ("Standard", Action::Quality(Quality::Standard), s.quality == Quality::Standard),
         ("High", Action::Quality(Quality::High), s.quality == Quality::High),
@@ -213,7 +183,7 @@ fn quality(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec
 
 fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
-    question(c, f, inner, "What should they sound like?", "Turn off anything you don't want in the video.");
+    question(c, f, inner, "Audio", "");
     let at = |i: f32| Rect::new(inner.x, inner.y + CONTROLS_Y + i * 108.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, false);
     toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, false);
@@ -221,16 +191,12 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
-    let meaning = if s.clips {
-        format!("Hold the left thumbstick to clip the last {}", length(s.clip_secs))
-    } else {
-        "Nothing is kept, so there's nothing to clip".to_string()
-    };
-    question(c, f, inner, "Clip what just happened", &meaning);
+    let meaning = if s.clips { format!("Hold the left thumbstick to clip the last {}", length(s.clip_secs)) } else { String::new() };
+    question(c, f, inner, "Clips", &meaning);
     let y = inner.y + CONTROLS_Y;
     toggle_row(c, f, m, hits, Rect::new(inner.x, y, inner.w, 92.0), "Clips", Action::Clips, s.clips, false);
 
-    label(c, f, inner.x, y + 92.0 + 40.0, "HOW MUCH A CLIP KEEPS");
+    label(c, f, inner.x, y + 92.0 + 40.0, "LENGTH");
     let lengths: Vec<(String, Action, bool)> = CLIP_LENGTHS.iter().map(|&n| (length(n), Action::ClipLength(n), s.clip_secs == n)).collect();
     let options: Vec<(&str, Action, bool)> = lengths.iter().map(|(t, a, on)| (t.as_str(), *a, *on)).collect();
     segmented(c, f, m, hits, Rect::new(inner.x, y + 92.0 + 56.0, inner.w, PICK_H), &options, !s.clips);
@@ -247,7 +213,7 @@ fn pair(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hi
     if let Some(pairing) = m.sync.pairing {
         return sync::pair(c, f, m, inner, pairing, hits);
     }
-    question(c, f, inner, "Get clips on your phone or computer", "Pair the framecorder app now, or later in settings.");
+    question(c, f, inner, "Sync", "");
     let y = inner.y + CONTROLS_Y;
     button(c, f, m, hits, Rect::new(inner.x, y, 240.0, PICK_H), "Pair a device", Action::Pair, false);
 
@@ -275,14 +241,13 @@ mod tests {
     use super::*;
 
     fn walk(sync: bool) -> Vec<Step> {
-        std::iter::successors(Some(Step::Welcome), |s| s.next(sync)).collect()
+        std::iter::successors(Some(Step::Shape), |s| s.next(sync)).collect()
     }
 
     #[test]
     fn pairing_is_only_asked_about_when_sync_is_there() {
         assert_eq!(walk(true), STEPS);
         assert!(!walk(false).contains(&Step::Sync));
-        assert_eq!(Step::Done.back(false), Some(Step::Clips));
         assert_eq!(Step::Clips.progress(false), (4, 4));
         assert_eq!(Step::Clips.progress(true), (4, 5));
     }
@@ -297,7 +262,7 @@ mod tests {
             }
         }
         // Sync going away while its step is up still leaves a way out.
-        assert_eq!(Step::Sync.next(false), Some(Step::Done));
+        assert_eq!(Step::Sync.next(false), None);
         assert_eq!(Step::Sync.back(false), Some(Step::Clips));
     }
 }

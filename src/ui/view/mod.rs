@@ -181,8 +181,7 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
         }
         Screen::Onboarding(step) => {
             // Nothing left to skip on the last step.
-            let skip = (step != Step::Done).then_some(("Skip", Action::FinishSetup, false));
-            header(canvas, fonts, m, &mut hits, "Set up", skip);
+            header(canvas, fonts, m, &mut hits, "Set up", Some(("Skip", Action::FinishSetup, false)));
             onboarding::draw(canvas, fonts, m, step, &mut hits);
         }
         Screen::Report => {
@@ -307,7 +306,7 @@ const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer un
 
 /// An app or the timer is updating framecorder; the tab restarts itself
 /// once it's not recording and nobody's looking at it.
-const UPDATING: &str = "Updating framecorder… it restarts on its own once you're out of this tab and not recording.";
+const UPDATING: &str = "Restarts on its own once you're out of this tab and not recording.";
 
 /// The last update an app started didn't go through, in plain words.
 fn update_failed(why: Option<&str>) -> String {
