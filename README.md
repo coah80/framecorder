@@ -11,7 +11,7 @@ it runs right on the headset. there's a tab in the steamvr dashboard with a big 
 measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920x1080 hevc:
 
 - gpu: about 0.6 ms per recorded frame at 500 MHz, a lot less at gameplay clocks. it runs on a high priority queue, so it gets its turn right after each refresh even in a heavy game (a low priority one starves there: missed frames, and torn ones, since the compositor draws the next frame into the same buffer)
-- cpu: about 5-7% of ONE core with game audio + mic, out of 8
+- cpu: about 5-7% of ONE core with game audio + mic, out of 8, about 2% more with split tracks
 - ram: about 10 MB of its own, the rest is shared libraries
 - the dashboard tab: under 1% of a core, sleeps when the menu is closed, only redraws when something changes
 - video encoding: the snapdragon's hardware encoder, so no cpu or gpu time there
@@ -42,7 +42,7 @@ the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at
 
 ## audio
 
-game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it, and while you talk the game drops under your voice, so a loud game never drowns you out. `--mic-track` adds a mic only track for editing. the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent.
+game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it, and while you talk the game drops under your voice, so a loud game never drowns you out. with split tracks on (the default, under audio in settings), the game and the mic also get a track each for editing (`--mic-track` on the command line). the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent.
 
 ## clips
 

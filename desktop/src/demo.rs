@@ -142,6 +142,7 @@ fn recording() -> Recording {
         clip: 30,
         eye: Some("left".into()),
         panels: Some(true),
+        split_audio: Some(true),
     }
 }
 

@@ -186,7 +186,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = gpu::Priority::High)]
     gpu_priority: gpu::Priority,
 
-    /// Also keep the mic on its own track, for editing.
+    /// Also keep the game and the mic on their own tracks, for editing.
     #[arg(long)]
     mic_track: bool,
 
@@ -621,7 +621,11 @@ fn audio_tracks(game: bool, mic: bool, mic_track: bool) -> Vec<mux::TrackSpec> {
     use audio::Source::{Game, Mic};
     let track = |title, inputs| mux::TrackSpec { title, inputs };
     match (game, mic) {
-        (true, true) if mic_track => vec![track("Game + mic", vec![Game, Mic]), track("Microphone", vec![Mic])],
+        (true, true) if mic_track => vec![
+            track("Game + mic", vec![Game, Mic]),
+            track("Game", vec![Game]),
+            track("Microphone", vec![Mic]),
+        ],
         (true, true) => vec![track("Game + mic", vec![Game, Mic])],
         (true, false) => vec![track("Game", vec![Game])],
         (false, true) => vec![track("Microphone", vec![Mic])],

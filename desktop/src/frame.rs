@@ -36,6 +36,7 @@ fn defaults() -> Recording {
         clip: 30,
         eye: None,
         panels: None,
+        split_audio: None,
     }
 }
 
@@ -681,7 +682,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
             cx,
         )))
         .child(
-            // the two switches side by side, one under the other in a narrow window
+            // the switches side by side, one under the other in a narrow window
             setting(false, "sound", None).child(
                 div()
                     .flex_1()
@@ -707,7 +708,23 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                         enabled,
                         with(|r, _| Recording { mic: !r.mic, ..r.clone() }),
                         cx,
-                    )),
+                    ))
+                    // older headsets can't split, and splitting needs both
+                    .when_some(r.split_audio, |d, split| {
+                        let both = r.game_audio && r.mic;
+                        d.child(
+                            toggle(
+                                &fp,
+                                "split-audio",
+                                "split tracks",
+                                both && split,
+                                enabled && both,
+                                with(|r, _| Recording { split_audio: r.split_audio.map(|s| !s), ..r.clone() }),
+                                cx,
+                            )
+                            .when(!both, |d| d.opacity(0.4)),
+                        )
+                    }),
             ),
         )
 }

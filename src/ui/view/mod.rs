@@ -85,6 +85,7 @@ pub enum Action {
     Fps(FrameRate),
     GameAudio,
     Mic,
+    SplitAudio,
     /// Replay buffer length.
     ClipLength(u32),
     Pair,

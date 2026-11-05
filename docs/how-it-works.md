@@ -111,7 +111,7 @@ audio comes from pipewire (`src/audio.rs`):
 - **game audio** is a capture stream with `stream.capture.sink`, which listens to the monitor of whatever the default output is. it's marked passive, so listening in doesn't keep the speakers awake when nothing's playing
 - **the mic** is a normal capture stream. the frame mutes it whenever the headset's off your head, so desk tests come out silent
 
-every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. while the mic's talking, the game ducks to 6 db under it (never more than 26 db, and not at all when it's already quieter), dropping in 15 ms and coming back over about half a second once you've stopped for 0.4 s, so a loud game never drowns out the voice. the mic is digital silence when nobody's talking, so only speech sets it off. `--mic-track` adds a mic-only track too. each track is aac-encoded with ffmpeg (`src/aac.rs`). it's our own small ffmpeg, linked into the recorder (`packaging/ffmpeg.sh`), so a steamos update that swaps the system's ffmpeg can't stop it starting:
+every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. while the mic's talking, the game ducks to 6 db under it (never more than 26 db, and not at all when it's already quieter), dropping in 15 ms and coming back over about half a second once you've stopped for 0.4 s, so a loud game never drowns out the voice. the mic is digital silence when nobody's talking, so only speech sets it off. with split tracks on (`--mic-track`, the tab's default) the game and the mic also get a track each, raw, for editing. the mix stays first, since that's the one players, phones and the live view play. each track is aac-encoded with ffmpeg (`src/aac.rs`). it's our own small ffmpeg, linked into the recorder (`packaging/ffmpeg.sh`), so a steamos update that swaps the system's ffmpeg can't stop it starting:
 
 - small timing wobbles get bridged
 - anything more than 50 ms off gets resynced by padding silence or dropping samples, so it can't slowly drift out of sync
@@ -141,7 +141,7 @@ measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920×1080 hevc:
 | | |
 |---|---|
 | gpu | ~0.6 ms per recorded frame at 500 mhz, less at gameplay clocks |
-| cpu | ~5-7% of one core (out of 8) with game audio + mic |
+| cpu | ~5-7% of one core (out of 8) with game audio + mic, ~2% more with split tracks |
 | ram | ~10 mb of its own, plus replay packet locations and pending disk writes when clips are on; packet bytes fall back to ram if disk storage fails |
 | encoding | the hardware encoder, no cpu or gpu time |
 | the dashboard tab | under 1% of a core, sleeps when the menu's closed |

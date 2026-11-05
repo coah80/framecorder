@@ -116,6 +116,9 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let at = |i: f32| Rect::new(inner.x, inner.y + 22.0 + i * 108.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
     toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
+    // splitting needs something to split
+    let both = s.game_audio && s.mic;
+    toggle_row(c, f, m, hits, at(2.0), "Split tracks", Action::SplitAudio, both && s.split_audio, locked || !both);
 }
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

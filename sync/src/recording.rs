@@ -12,13 +12,14 @@ use crate::config::write_atomic;
 static CHANGES: Mutex<()> = Mutex::new(());
 
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 8] = [
+const KEYS: [(&str, &str); 9] = [
     ("shape", "wide"),
     ("eye", "left"),
     ("quality", "high"),
     ("fps", "auto"),
     ("game_audio", "true"),
     ("mic", "true"),
+    ("split_audio", "true"),
     ("clips", "true"),
     ("clip", "30"),
 ];
@@ -29,7 +30,7 @@ fn allowed(key: &str, value: &str) -> bool {
         "shape" => matches!(value, "wide" | "square" | "tall" | "both"),
         "quality" => matches!(value, "standard" | "high" | "max"),
         "fps" => matches!(value, "auto" | "60" | "30"),
-        "game_audio" | "mic" | "clips" => matches!(value, "true" | "false"),
+        "game_audio" | "mic" | "split_audio" | "clips" => matches!(value, "true" | "false"),
         "clip" => matches!(value, "15" | "30" | "60" | "120"),
         _ => false,
     }
@@ -46,7 +47,7 @@ fn lookup<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 
 fn to_json(key: &str, value: &str) -> Value {
     match key {
-        "game_audio" | "mic" | "clips" => json!(value == "true"),
+        "game_audio" | "mic" | "split_audio" | "clips" => json!(value == "true"),
         "clip" => json!(value.parse::<u32>().unwrap_or(30)),
         _ => json!(value),
     }
@@ -70,7 +71,7 @@ pub fn read(path: &Path) -> Value {
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of eye, shape, quality, fps, game_audio, mic, clips, clip".into());
+        return Err("expected an object with some of eye, shape, quality, fps, game_audio, mic, split_audio, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -135,7 +136,7 @@ mod tests {
         let s = read(&dir.path().join("ui.conf"));
         assert_eq!(
             s,
-            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "clips": true, "clip": 30})
+            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "game_audio": true, "mic": true, "split_audio": true, "clips": true, "clip": 30})
         );
     }
 
