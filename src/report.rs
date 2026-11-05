@@ -182,9 +182,16 @@ fn vdf(text: &str) -> Option<Value> {
 }
 
 fn persona(users: &Value) -> Value {
-    users["users"]
-        .as_object()
-        .and_then(|users| users.values().find(|u| u["mostrecent"] == "1"))
+    let Some(users) = users["users"].as_object() else {
+        return Value::Null;
+    };
+    // the frame's steam doesn't write MostRecent, so fall back to whoever
+    // signed in last
+    let signed_in = |u: &&Value| u["timestamp"].as_str().and_then(|t| t.parse::<u64>().ok());
+    users
+        .values()
+        .find(|u| u["mostrecent"] == "1")
+        .or_else(|| users.values().filter(|u| signed_in(u).is_some()).max_by_key(signed_in))
         .map(|u| u["personaname"].clone())
         .unwrap_or(Value::Null)
 }
@@ -206,6 +213,10 @@ static SERIAL: LazyLock<Regex> = LazyLock::new(|| {
 static SECRET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)token|authorization|pairing.?code|certificate|private.?key|password|accountname|account name|BEGIN .* KEY").expect("secret regex")
 });
+
+/// SteamOS's own user names, the same on every headset, so they identify nobody
+/// and hiding them would mangle every "steamos" in the logs.
+const SHARED_USERS: [&str; 2] = ["steamos", "deck"];
 
 fn redact(text: &str, home: &str, user: &str, accounts: &[String]) -> String {
     let mut pem = false;
@@ -230,7 +241,7 @@ fn redact(text: &str, home: &str, user: &str, accounts: &[String]) -> String {
     if !home.is_empty() {
         text = text.replace(home, "~");
     }
-    if !user.is_empty() {
+    if !user.is_empty() && !SHARED_USERS.contains(&user) {
         let pattern = format!(r"\b{}\b", regex::escape(user));
         if let Ok(re) = Regex::new(&pattern) {
             text = re.replace_all(&text, "<user>").into_owned();
@@ -414,6 +425,10 @@ pub fn collect() -> Value {
     steam_info["name"] = persona(&users);
     if let Some(version) = read(steam.join("steamapps/common/SteamVR/bin/version.txt")) {
         steam_info["steamvr_version"] = json!(version);
+    } else if let Some(version) = read("/opt/steamvr/bin/version.txt") {
+        // on the frame steamvr comes with steamos, not from steam
+        steam_info["steamvr_version"] = json!(version);
+        steam_info["steamvr_branch"] = json!("comes with SteamOS");
     }
     let os = read("/etc/os-release")
         .map(|s| pairs(&s, '='))
@@ -647,6 +662,10 @@ mod tests {
                 r#""users" { "123" { "PersonaName" "Inactive" "MostRecent" "0" } }"#,
                 Value::Null,
             ),
+            (
+                r#""users" { "1" { "AccountName" "a" "PersonaName" "Before" "timestamp" "1700000000" } "2" { "AccountName" "b" "PersonaName" "Frame" "timestamp" "1790000000" } }"#,
+                json!("Frame"),
+            ),
             ("broken {", Value::Null),
         ] {
             assert_eq!(persona(&vdf(text).unwrap_or_default()), expected);
@@ -708,6 +727,10 @@ mod tests {
             ("8.8.8.8:443 1.1.1.1.", "<ip> <ip>"),
             ("-----BEGIN PRIVATE KEY-----\nsynthetic-key-data\n-----END PRIVATE KEY-----\nsafe", "<redacted>\n<redacted>\n<redacted>\nsafe"),
         ] { assert_eq!(redact(input, "/home/player", "player", &["private_login".into()]), expected); }
+        assert_eq!(
+            redact("/home/steamos/x on steamos 3.8", "/home/steamos", "steamos", &[]),
+            "~/x on steamos 3.8"
+        );
     }
 
     #[test]
