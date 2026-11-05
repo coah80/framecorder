@@ -20,8 +20,11 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 echo "building ffmpeg $VERSION for the desktop app ${ARCH:-}"
 curl -fsSL "$URL" -o "$WORK/ffmpeg.tar.gz"
-if command -v sha256sum >/dev/null 2>&1; then sum="sha256sum"; else sum="shasum -a 256"; fi
-echo "$SHA256  $WORK/ffmpeg.tar.gz" | $sum -c --quiet
+got=$( (sha256sum "$WORK/ffmpeg.tar.gz" 2>/dev/null || shasum -a 256 "$WORK/ffmpeg.tar.gz") | cut -d" " -f1)
+if [ "$got" != "$SHA256" ]; then
+    echo "the ffmpeg source doesn't match its pinned sha256 ($got)" >&2
+    exit 1
+fi
 tar -xzf "$WORK/ffmpeg.tar.gz" -C "$WORK"
 cd "$WORK/FFmpeg-n$VERSION"
 
