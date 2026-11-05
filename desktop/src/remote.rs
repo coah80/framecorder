@@ -9,7 +9,6 @@ use framecorder_app_lib::core::engine::{State, Status};
 use gpui::{Context, SystemNotification};
 
 use crate::app::{FrameApp, Page};
-use crate::format;
 
 /// what a frame has told us since it connected
 #[derive(Default)]
@@ -47,7 +46,7 @@ impl Live {
     }
 }
 
-/// the headline on the frame page, and the line under it
+/// the headline on the frame page, and the line under it (none when the headline says it all)
 pub fn words(s: &Status, remote: Option<&Remote>) -> (&'static str, String) {
     let said = |t: &str| t.to_string();
     match s.state {
@@ -64,9 +63,7 @@ pub fn words(s: &Status, remote: Option<&Remote>) -> (&'static str, String) {
             Some(r) if !r.ready => ("not set up yet", said("finish setting up framecorder on the headset first.")),
             Some(r) if r.recording && !r.running => ("recording, paused", said("recording, paused while the framecorder tab is open.")),
             Some(r) if r.recording => ("recording", said("recording. stop it here or on the headset.")),
-            Some(r) if r.clip_ready => {
-                ("ready", format!("keeping the last {}, ready to save.", format::span(u64::from(r.clips.unwrap_or(30)) * 1000)))
-            }
+            Some(r) if r.clip_ready => ("ready", String::new()),
             Some(r) if r.clips.is_none() => {
                 ("ready", said("clips are off, so there's nothing to save. record instead, or turn them on below."))
             }
@@ -355,10 +352,7 @@ mod tests {
         assert_eq!(words(&c, Some(&remote(true, false, false, false, None, false))).0, "not set up yet");
         assert_eq!(words(&c, Some(&remote(true, true, true, false, Some(30), false))).0, "recording, paused");
         assert_eq!(words(&c, Some(&remote(true, true, true, true, Some(30), false))).0, "recording");
-        assert_eq!(
-            words(&c, Some(&remote(true, true, false, false, Some(60), true))).1,
-            "keeping the last 1:00, ready to save."
-        );
+        assert_eq!(words(&c, Some(&remote(true, true, false, false, Some(60), true))), ("ready", String::new()));
         assert!(words(&c, Some(&remote(true, true, false, false, None, false))).1.starts_with("clips are off"));
         assert!(words(&status(State::Unpaired), None).1.contains("pair again"));
     }

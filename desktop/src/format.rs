@@ -26,15 +26,6 @@ pub fn length(secs: f64) -> String {
     }
 }
 
-/// a short stretch of time the way it's said: "30 s", then "2:00" from a minute up
-pub fn span(ms: u64) -> String {
-    if ms < 60_000 {
-        format!("{} s", (ms + 500) / 1000)
-    } else {
-        length(ms as f64 / 1000.0)
-    }
-}
-
 /// "4.2 MB/s"
 pub fn rate(bytes_per_second: f64) -> String {
     format!("{}/s", size(bytes_per_second.max(0.) as u64))
@@ -103,8 +94,6 @@ mod tests {
         assert_eq!(length(30.0), "0:30");
         assert_eq!(length(761.0), "12:41");
         assert_eq!(length(3725.0), "1:02:05");
-        assert_eq!(span(15_000), "15 s");
-        assert_eq!(span(120_000), "2:00");
         assert_eq!(rate(4_200_000.), "4.2 MB/s");
     }
 
