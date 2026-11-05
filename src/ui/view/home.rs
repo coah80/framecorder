@@ -93,7 +93,7 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
     let x = r.x + 24.0;
     let list = m.sync.devices;
     let heading = match (m.sync.available, list.len()) {
-        (false, _) => "SYNC · NOT SET UP".to_string(),
+        (false, _) => "SYNC · NOT RUNNING".to_string(),
         (true, 0) => "SYNC · NOT PAIRED".to_string(),
         (true, 1) => "SYNC · 1 DEVICE".to_string(),
         (true, n) => format!("SYNC · {n} DEVICES"),
@@ -110,7 +110,9 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
 
     if list.is_empty() {
         if !m.sync.available {
-            c.text(f, Face::Body, 16.0, x, r.y + 80.0, "Run the installer again to set it up.", SUBTEXT0, 1.0);
+            for (i, line) in SYNC_FIX.iter().enumerate() {
+                c.text(f, Face::Body, 16.0, x, r.y + 80.0 + i as f32 * 24.0, line, SUBTEXT0, 1.0);
+            }
         }
         return;
     }

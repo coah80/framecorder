@@ -301,6 +301,11 @@ fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
 /// A report is a GitHub issue anyone can read.
 const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with your Steam name and framecorder's logs. Nothing from your videos.";
 
+/// The sync service writes its info when it first starts, so without it
+/// the service never ran here. The install command sets it up again.
+const SYNC_MISSING: &str = "Sync isn't running on this headset";
+const SYNC_FIX: [&str; 2] = ["Run the install command from", "framecorder.coah80.com again."];
+
 /// An update replaced the recorder, which drops its permission.
 const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer unlocks the panels again.";
 

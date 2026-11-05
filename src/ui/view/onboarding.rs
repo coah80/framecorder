@@ -205,8 +205,8 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 /// Pairing is the one step that's fine to leave for later.
 fn pair(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     if !m.sync.available {
-        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, "The sync service isn't running on this headset", RED, 1.0);
-        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, "Run the installer again to set it up.", SUBTEXT0, 1.0);
+        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, SYNC_MISSING, RED, 1.0);
+        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, &SYNC_FIX.join(" "), SUBTEXT0, 1.0);
         return;
     }
     // The code looks the same as in settings.
