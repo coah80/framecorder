@@ -138,7 +138,8 @@ pub struct Model<'a> {
     /// Whether the recorder may read the panels, or records SteamVR's view.
     pub unlocked: bool,
     pub status: Status,
-    pub hover: Option<Action>,
+    /// Where the pointer is, so the one control under it lights up.
+    pub pointer: Option<(f32, f32)>,
     /// Last finished recording or error, and whether it went well.
     pub note: Option<(&'a str, bool)>,
     /// An update took the panels' permission away.
@@ -153,6 +154,11 @@ impl Model<'_> {
     /// Recording settings can't change under a recording.
     fn locked(&self) -> bool {
         !matches!(self.status, Status::Idle)
+    }
+
+    /// Whether the pointer is over a control's hit area.
+    fn over(&self, r: Rect) -> bool {
+        self.pointer.is_some_and(|(x, y)| r.contains(x, y))
     }
 }
 
@@ -271,7 +277,7 @@ fn footer(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
     if let Some((label, action, color)) = link {
         let w = f.measure(Face::Body, 16.0, label) + 24.0;
         let r = Rect::new(WIDTH as f32 - PAD - w, FOOTER_Y + 8.0, w, 44.0);
-        let hovered = m.hover == Some(action);
+        let hovered = m.over(r);
         let (color, alpha) = if hovered { (MAUVE, 1.0) } else { (color, if color == MAUVE { 0.85 } else { 1.0 }) };
         c.text(f, Face::Body, 16.0, r.x + 12.0, y, label, color, alpha);
         hits.push(Hit { rect: r, action });

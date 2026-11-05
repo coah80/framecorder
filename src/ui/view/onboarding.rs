@@ -162,7 +162,7 @@ fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 fn tile(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, shape: Shape, name: &str, sub: &str) {
     let action = Action::Shape(shape);
     let selected = m.settings.shape == shape;
-    let hovered = m.hover == Some(action);
+    let hovered = m.over(r);
     if selected {
         c.fill_rrect(r, 18.0, MAUVE, 0.12);
         c.stroke_rrect(r, 18.0, 2.0, MAUVE, 1.0);

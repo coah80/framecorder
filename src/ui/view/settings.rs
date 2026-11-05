@@ -37,7 +37,7 @@ fn pills(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut 
         let r = Rect::new(x, CONTENT_Y, w, PILLS_H);
         let action = Action::Open(section);
         let selected = section == current;
-        let hovered = m.hover == Some(action);
+        let hovered = m.over(r);
         if selected {
             c.fill_rrect(r, 14.0, MAUVE, 0.12);
             c.stroke_rrect(r, 14.0, 1.5, MAUVE, 0.5);

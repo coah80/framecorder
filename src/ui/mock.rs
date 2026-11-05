@@ -34,7 +34,8 @@ struct Mock {
     clipped_at: Option<Instant>,
     note: Option<(String, bool)>,
     toast: Option<(String, bool)>,
-    hover: Option<Action>,
+    pointer: Option<(f32, f32)>,
+    over: Option<usize>,
     devices: Vec<Device>,
     page: usize,
     sync_available: bool,
@@ -76,7 +77,8 @@ impl Mock {
             clipped_at: None,
             note: None,
             toast: None,
-            hover: None,
+            pointer: None,
+            over: None,
             devices,
             page: 0,
             sync_available: start != "no-sync",
@@ -200,9 +202,10 @@ impl Mock {
     }
 
     fn hover_at(&mut self, x: f32, y: f32) {
-        let over = self.hits.iter().find(|h| h.rect.contains(x, y)).map(|h| h.action);
-        if over != self.hover {
-            self.hover = over;
+        self.pointer = Some((x, y));
+        let over = self.hits.iter().position(|h| h.rect.contains(x, y));
+        if over != self.over {
+            self.over = over;
             self.version += 1;
         }
     }
@@ -239,7 +242,7 @@ impl Mock {
                 Some(at) => Status::Recording { recorded: at.elapsed() },
                 None => Status::Idle,
             },
-            hover: self.hover,
+            pointer: self.pointer,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: false,
             free: Some(self.free),
