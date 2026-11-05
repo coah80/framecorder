@@ -102,6 +102,10 @@ fn only_one() -> Result<Option<std::fs::File>> {
 /// it's on screen.
 struct Sync {
     available: bool,
+    /// Why the service couldn't start, when it said.
+    error: Option<String>,
+    /// Whether the tab has tried starting the service itself.
+    started: bool,
     devices: Vec<Device>,
     /// An update of framecorder an app or the timer started.
     update: Update,
@@ -115,7 +119,16 @@ struct Sync {
 impl Sync {
     fn look() -> Self {
         let paired = pairing::paired();
-        Self { available: pairing::available(), devices: paired.devices, update: paired.update, page: 0, pairing: None, checked: Instant::now() }
+        Self {
+            available: pairing::available(),
+            error: pairing::start_error(),
+            started: false,
+            devices: paired.devices,
+            update: paired.update,
+            page: 0,
+            pairing: None,
+            checked: Instant::now(),
+        }
     }
 
     /// Whether something's changing by the second: worth looking more often.
@@ -207,7 +220,8 @@ struct App {
 /// For what sync shows: live and sync-live (a download, a device away, one
 /// on the old app), updating, update-failed, low-space, long-name, many and
 /// many-2 (the second page), each with -home for the home screen's card,
-/// and unpaired and no-sync for the home screen with nothing paired.
+/// and unpaired, no-sync and sync-error for the home screen with nothing
+/// paired.
 /// watching and watching-2 are the home screen with apps on the live view,
 /// video-both the video section with both eyes blended, and reporting an
 /// issue is report, report-gathering, report-typing, report-written,
@@ -256,7 +270,9 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         _ => Update::Idle,
     };
     let page = usize::from(state == "many-2");
-    let sync = SyncView { available: !matches!(state, "setup-no-sync" | "no-sync"), devices: &devices, page, pairing, update: &update };
+    let error = (state == "sync-error").then_some("making the videos folder: Permission denied (os error 13)");
+    let available = !matches!(state, "setup-no-sync" | "no-sync" | "sync-error");
+    let sync = SyncView { available, error, devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover_on = match state {
         "idle" => Some(Action::Record),
@@ -346,7 +362,7 @@ fn sample_devices(state: &str) -> Vec<Device> {
             .enumerate()
             .map(|(i, name)| live(&i.to_string(), name, if i % 2 == 0 { Presence::Connected } else { Presence::Away }, false, None))
             .collect(),
-        "unpaired" | "no-sync" | "setup-no-sync" => Vec::new(),
+        "unpaired" | "no-sync" | "sync-error" | "setup-no-sync" => Vec::new(),
         _ => vec![Device::paired("a", "Pixel 9"), Device::paired("b", "COLEPCWIN")],
     }
 }
@@ -1099,6 +1115,18 @@ impl App {
             self.dirty = true;
         }
         let available = pairing::available();
+        // It's set up by the installer and every update, so missing means it
+        // got stopped or never came up: start it rather than send anyone off
+        // to reinstall. Once a run, in the background, so the tab doesn't wait.
+        if !available && !self.sync.started {
+            self.sync.started = true;
+            std::thread::spawn(crate::setup::start_sync);
+        }
+        let error = if available { None } else { pairing::start_error() };
+        if error != self.sync.error {
+            self.sync.error = error;
+            self.dirty = true;
+        }
         let pairing::Paired { devices, update } = pairing::paired();
         if let Some(new) = devices.iter().find(|d| !self.sync.devices.iter().any(|old| old.id == d.id)) {
             self.note = Some((format!("Paired {}", new.name), true));
@@ -1151,6 +1179,7 @@ impl App {
         };
         let sync = SyncView {
             available: self.sync.available,
+            error: self.sync.error.as_deref(),
             devices: &self.sync.devices,
             page: self.sync.page,
             pairing: self.sync.pairing.as_ref().map(|p| p.as_ref().map_err(|e| e.as_str())),

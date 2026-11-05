@@ -93,6 +93,7 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
     let x = r.x + 24.0;
     let list = m.sync.devices;
     let heading = match (m.sync.available, list.len()) {
+        (false, _) if m.sync.error.is_some() => "SYNC · COULDN'T START".to_string(),
         (false, _) => "SYNC · NOT RUNNING".to_string(),
         (true, 0) => "SYNC · NOT PAIRED".to_string(),
         (true, 1) => "SYNC · 1 DEVICE".to_string(),
@@ -110,7 +111,10 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
 
     if list.is_empty() {
         if !m.sync.available {
-            for (i, line) in SYNC_FIX.iter().enumerate() {
+            // The heading already says what's wrong.
+            let (_, fix) = sync_problem(m);
+            let lines = super::report::wrap(f, Face::Body, 16.0, &fix.join(" "), r.w - 48.0);
+            for (i, line) in lines.iter().take(4).enumerate() {
                 c.text(f, Face::Body, 16.0, x, r.y + 80.0 + i as f32 * 24.0, line, SUBTEXT0, 1.0);
             }
         }

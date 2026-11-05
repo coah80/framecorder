@@ -18,7 +18,7 @@ mod update;
 mod watch;
 
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
@@ -59,10 +59,21 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let state = args.state.clone().or_else(|| Paths::from_env().ok().map(|p| p.state));
     if let Err(e) = run(args) {
         log::error!("{e}");
+        if let Some(state) = state {
+            let paths = Paths::new(Path::new(""), &state);
+            let _ = std::fs::create_dir_all(&state);
+            let _ = std::fs::write(paths.start_error(), e.to_string());
+        }
         std::process::exit(1);
     }
+}
+
+/// Says what it was doing when it failed, since the tab shows this to people.
+fn doing(what: &'static str) -> impl Fn(std::io::Error) -> std::io::Error {
+    move |e| std::io::Error::new(e.kind(), format!("{what}: {e}"))
 }
 
 fn run(args: Args) -> std::io::Result<()> {
@@ -71,30 +82,31 @@ fn run(args: Args) -> std::io::Result<()> {
         power: defaults.power.clone(),
         ..Paths::new(args.videos.as_deref().unwrap_or(&defaults.videos), args.state.as_deref().unwrap_or(&defaults.state))
     };
-    watch::ensure_dirs(&paths)?;
+    watch::ensure_dirs(&paths).map_err(doing("making the videos folder"))?;
     let settings = Settings::load(&paths);
     let name = config::device_name(&settings);
-    let identity = config::identity(&paths.state)?;
-    let tls = config::tls_config(&identity)?;
+    let identity = config::identity(&paths.state).map_err(doing("making its certificate"))?;
+    let tls = config::tls_config(&identity).map_err(doing("loading its certificate"))?;
 
     let library = Arc::new(library::Library::new(&paths));
     let hub = Arc::new(events::Hub::default());
     let devices = Arc::new(devices::Devices::load(&paths.devices()));
-    let watcher = watch::Watcher::new(&paths, library.clone(), hub.clone(), devices.clone())?;
+    let watcher = watch::Watcher::new(&paths, library.clone(), hub.clone(), devices.clone()).map_err(doing("watching the videos folder"))?;
 
     let port = args.port.or(settings.port).unwrap_or(DEFAULT_PORT);
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             log::warn!("port {port} is taken, picking another one");
-            TcpListener::bind(("0.0.0.0", 0))?
+            TcpListener::bind(("0.0.0.0", 0)).map_err(doing("opening a port"))?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(doing("opening a port")(e)),
     };
     let port = listener.local_addr()?.port();
 
     let info = Info { name: &name, port, fingerprint: &identity.fingerprint, version: PROTOCOL_VERSION };
     config::write_atomic(&paths.info(), &serde_json::to_vec_pretty(&info).unwrap_or_default())?;
+    let _ = std::fs::remove_file(paths.start_error());
 
     let _mdns = if args.mdns {
         match mdns::advertise(&name, &identity.fingerprint, port) {
