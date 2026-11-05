@@ -116,9 +116,51 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let at = |i: f32| Rect::new(inner.x, inner.y + 22.0 + i * 108.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
     toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
+    let mut row = 2.0;
+    if let Some(options) = mic_options(m) {
+        let picker = Rect::new(inner.x, inner.y + 22.0 + row * 108.0, inner.w, 98.0);
+        let labels: Vec<String> = options.iter().map(|(label, _)| fit(f, label, (inner.w - 8.0) / options.len() as f32 - 28.0)).collect();
+        let choices: Vec<(&str, Action, bool)> =
+            options.iter().zip(&labels).enumerate().map(|(i, ((_, on), label))| (label.as_str(), Action::MicSource(i), *on)).collect();
+        choice(c, f, m, hits, picker, "Mic", "", &choices, locked || !s.mic);
+        row += 1.0;
+    }
     // splitting needs something to split
     let both = s.game_audio && s.mic;
-    toggle_row(c, f, m, hits, at(2.0), "Split tracks", Action::SplitAudio, both && s.split_audio, locked || !both);
+    // a picker's 6 px taller than a switch's row, keep the gap even under it
+    let split = at(row);
+    let split = if row > 2.0 { Rect::new(split.x, split.y + 6.0, split.w, split.h) } else { split };
+    toggle_row(c, f, m, hits, split, "Split tracks", Action::SplitAudio, both && s.split_audio, locked || !both);
+}
+
+/// The mics to pick from, and which one's in use, once there's a choice:
+/// another mic plugged in, or the picked one gone.
+fn mic_options(m: &Model) -> Option<Vec<(String, bool)>> {
+    let picked = &m.settings.mic_source;
+    let gone = !picked.is_empty() && !m.mics.iter().any(|mic| &mic.name == picked);
+    if m.mics.len() < 2 && !gone {
+        return None;
+    }
+    let mut options: Vec<(String, bool)> =
+        m.mics.iter().map(|mic| (mic.label.clone(), if picked.is_empty() { mic.default } else { &mic.name == picked })).collect();
+    options.truncate(if gone { 3 } else { 4 });
+    // the picked one isn't plugged in: the default's recorded meanwhile
+    if gone {
+        options.push(("Not connected".into(), true));
+    }
+    Some(options)
+}
+
+/// `text` cut down with an ellipsis to fit `width` at the segment's size.
+fn fit(f: &mut Fonts, text: &str, width: f32) -> String {
+    if f.measure(Face::BodyMedium, 18.0, text) <= width {
+        return text.to_string();
+    }
+    let mut cut: String = text.to_string();
+    while !cut.is_empty() && f.measure(Face::BodyMedium, 18.0, &format!("{cut}…")) > width {
+        cut.pop();
+    }
+    format!("{}…", cut.trim_end())
 }
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

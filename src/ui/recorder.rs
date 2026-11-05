@@ -296,7 +296,7 @@ mod tests {
         let mut observed = Vec::new();
         for paused in [true, false] {
             let settings = Settings { onboarded: true, ..Settings::default() };
-            let mut app = super::super::App::new(settings, false, false);
+            let mut app = super::super::App::new(settings.clone(), false, false);
             let (mut recorder, events) = test_recorder(&settings);
             recorder.paused = paused;
             app.recorder = Some(recorder);
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn live_keeps_capture_until_the_last_viewer_leaves() {
         let settings = Settings { onboarded: true, clips: false, ..Settings::default() };
-        let mut app = super::super::App::new(settings, false, false);
+        let mut app = super::super::App::new(settings.clone(), false, false);
         let (recorder, _events) = test_recorder(&settings);
         app.recorder = Some(recorder);
         app.live_viewers = 1;
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn remote_record_retries_until_the_old_recorder_has_stopped() {
         let settings = Settings { onboarded: true, ..Settings::default() };
-        let mut app = super::super::App::new(settings, false, false);
+        let mut app = super::super::App::new(settings.clone(), false, false);
         let (mut recorder, _) = test_recorder(&settings);
         recorder.args = vec!["previous settings".into()];
         app.recorder = Some(recorder);

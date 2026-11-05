@@ -85,6 +85,8 @@ pub enum Action {
     Fps(FrameRate),
     GameAudio,
     Mic,
+    /// One of the mics in the model's list.
+    MicSource(usize),
     SplitAudio,
     /// Replay buffer length.
     ClipLength(u32),
@@ -131,6 +133,8 @@ pub struct SyncView<'a> {
 
 pub struct Model<'a> {
     pub settings: &'a Settings,
+    /// The mics there are, looked up while the audio settings are open.
+    pub mics: &'a [crate::mics::Mic],
     pub screen: Screen,
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.

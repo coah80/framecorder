@@ -37,14 +37,15 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn start(sources: Vec<Source>, tx: Sender<Msg>) -> Result<Self> {
+    /// `mic` is the mic's PipeWire node name, None for the default one.
+    pub fn start(sources: Vec<Source>, mic: Option<String>, tx: Sender<Msg>) -> Result<Self> {
         let (stop, stop_rx) = pw::channel::channel::<Terminate>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<()>>();
 
         let thread = std::thread::Builder::new()
             .name("audio".into())
             .spawn(move || {
-                let result = run(sources, tx, stop_rx, &ready_tx);
+                let result = run(sources, mic, tx, stop_rx, &ready_tx);
                 if let Err(e) = result {
                     let _ = ready_tx.send(Err(e));
                 }
@@ -69,6 +70,7 @@ const RECONNECT_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
 
 fn run(
     sources: Vec<Source>,
+    mic: Option<String>,
     tx: Sender<Msg>,
     stop_rx: pw::channel::Receiver<Terminate>,
     ready: &std::sync::mpsc::Sender<Result<()>>,
@@ -92,7 +94,7 @@ fn run(
     // capture until the connection's lost, and connect again, until stopped.
     let mut first = true;
     loop {
-        match capture(&mainloop, &sources, &tx, first.then_some(ready)) {
+        match capture(&mainloop, &sources, mic.as_deref(), &tx, first.then_some(ready)) {
             Ok(()) => {}
             Err(e) if first => return Err(e),
             Err(e) => log::warn!("audio: {e:#}, trying again"),
@@ -118,6 +120,7 @@ fn run(
 fn capture(
     mainloop: &pw::main_loop::MainLoopRc,
     sources: &[Source],
+    mic: Option<&str>,
     tx: &Sender<Msg>,
     ready: Option<&std::sync::mpsc::Sender<Result<()>>>,
 ) -> Result<()> {
@@ -138,7 +141,8 @@ fn capture(
 
     let mut streams = Vec::new();
     for &source in sources {
-        streams.push(open_stream(&core, source, tx.clone(), mainloop.clone())?);
+        let target = mic.filter(|_| source == Source::Mic);
+        streams.push(open_stream(&core, source, target, tx.clone(), mainloop.clone())?);
         log::info!("audio: capturing {source:?}");
     }
     if let Some(ready) = ready {
@@ -151,7 +155,13 @@ fn capture(
 
 type Stream<'c> = (pw::stream::StreamBox<'c>, pw::stream::StreamListener<()>);
 
-fn open_stream(core: &pw::core::CoreRc, source: Source, tx: Sender<Msg>, mainloop: pw::main_loop::MainLoopRc) -> Result<Stream<'_>> {
+fn open_stream<'c>(
+    core: &'c pw::core::CoreRc,
+    source: Source,
+    target: Option<&str>,
+    tx: Sender<Msg>,
+    mainloop: pw::main_loop::MainLoopRc,
+) -> Result<Stream<'c>> {
     let mut props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
@@ -166,6 +176,10 @@ fn open_stream(core: &pw::core::CoreRc, source: Source, tx: Sender<Msg>, mainloo
         props.insert("stream.capture.sink", "true");
         // Listening in shouldn't keep the speakers awake when nothing plays.
         props.insert("node.passive", "true");
+    }
+    // a picked mic. while it isn't there WirePlumber links the default one
+    if let Some(target) = target {
+        props.insert("target.object", target.to_string());
     }
 
     let stream = pw::stream::StreamBox::new(core, "framecorder", props).context("creating audio stream")?;

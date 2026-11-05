@@ -51,6 +51,8 @@ const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
 /// How often to look for settings a phone changed.
 const SETTINGS_EVERY: Duration = Duration::from_secs(1);
+/// How often to look for mics coming and going, while someone's picking.
+const MICS_EVERY: Duration = Duration::from_secs(2);
 const SERVER_POLL: Duration = Duration::from_secs(2);
 /// Shortest time between two clips, however they're asked for.
 const CLIP_COOLDOWN: Duration = Duration::from_secs(1);
@@ -174,8 +176,18 @@ impl Recording {
     }
 }
 
+/// The mics there are, looked up off the tab's thread while the audio
+/// settings are on screen (pw-dump takes ~30 ms).
+#[derive(Default)]
+struct Mics {
+    list: Vec<crate::mics::Mic>,
+    checked: Option<Instant>,
+    looking: Option<std::sync::mpsc::Receiver<Vec<crate::mics::Mic>>>,
+}
+
 struct App {
     settings: Settings,
+    mics: Mics,
     /// What phones ask for, through framecorder-sync.
     remote: Remote,
     live_viewers: usize,
@@ -243,7 +255,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     };
     let screen = match state {
         "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
-        "audio" => Screen::Settings(Section::Audio),
+        "audio" | "audio-mics" | "audio-mic-gone" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
         "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
@@ -258,6 +270,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let settings = match state {
         "setup-both-eyes" => Settings { shape: settings::Shape::BothEyes, ..settings },
         "video-both" => Settings { eye: settings::Eye::Both, ..settings },
+        "audio-mic-gone" => Settings { mic_source: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), ..settings },
         _ => settings,
     };
     let sample = Pairing::sample()?;
@@ -288,8 +301,10 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     };
     let summary = sample_summary();
     let report = sample_report(state, &summary);
+    let mics = sample_mics(state);
     let model = Model {
         settings: &settings,
+        mics: &mics,
         screen,
         sync,
         live_viewers,
@@ -311,6 +326,16 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     }
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
+}
+
+/// The Frame's mic, and a USB one for the previews that need two.
+pub(crate) fn sample_mics(state: &str) -> Vec<crate::mics::Mic> {
+    let mic = |name: &str, label: &str, default| crate::mics::Mic { name: name.into(), label: label.into(), default };
+    let frame = mic("alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source", "Frame", true);
+    match state {
+        "audio-mics" => vec![frame, mic("alsa_input.usb-Blue_Yeti-00.analog-stereo", "Yeti Stereo Microphone", false)],
+        _ => vec![frame],
+    }
 }
 
 /// What a report's summary looks like on a healthy headset.
@@ -469,6 +494,7 @@ pub fn run() -> Result<()> {
         }
         if tab_visible {
             app.check_sync(true);
+            app.check_mics();
         } else if app.sync.pairing.as_ref().is_some_and(|p| p.is_ok()) {
             // A code that's out keeps working with the tab closed, since the
             // headset's usually off by the time someone types it on a phone.
@@ -555,8 +581,11 @@ fn replaced() -> bool {
 
 impl App {
     fn new(settings: Settings, unlocked: bool, relocked: bool) -> Self {
+        // The first time round the setup comes before anything else.
+        let screen = if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Shape) };
         Self {
             settings,
+            mics: Mics::default(),
             remote: Remote::new(),
             live_viewers: 0,
             settings_at: Settings::changed_at(),
@@ -574,8 +603,7 @@ impl App {
             toast: None,
             toast_until: None,
             buzz: false,
-            // The first time round the setup comes before anything else.
-            screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Shape) },
+            screen,
             sync: Sync::look(),
             clipped_at: None,
             unlocked,
@@ -674,6 +702,10 @@ impl App {
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
+            Action::MicSource(i) => {
+                let Some(mic) = self.mics.list.get(i) else { return };
+                s.mic_source = mic.name.clone();
+            }
             Action::Clips => {
                 s.clips = !s.clips;
                 self.retry_at = None;
@@ -779,7 +811,7 @@ impl App {
     /// The setup's over, finished or skipped: on to the record button, and
     /// from here on the recorder may run.
     fn finish_setup(&mut self) {
-        self.settings = Settings { onboarded: true, ..self.settings };
+        self.settings.onboarded = true;
         if !self.save_settings() {
             self.note = Some(("Couldn't save your settings, so the setup will show again next time".into(), false));
         }
@@ -1154,6 +1186,35 @@ impl App {
         }
     }
 
+    fn check_mics(&mut self) {
+        if self.screen != Screen::Settings(Section::Audio) {
+            self.mics.looking = None;
+            return;
+        }
+        if let Some(looking) = &self.mics.looking {
+            match looking.try_recv() {
+                Ok(list) => {
+                    if list != self.mics.list {
+                        self.mics.list = list;
+                        self.dirty = true;
+                    }
+                    self.mics.looking = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.mics.looking = None,
+            }
+        }
+        if self.mics.checked.is_some_and(|t| t.elapsed() < MICS_EVERY) {
+            return;
+        }
+        self.mics.checked = Some(Instant::now());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::mics::list());
+        });
+        self.mics.looking = Some(rx);
+    }
+
     fn needs_redraw(&mut self) -> bool {
         // The clip button comes back once it's cooled down.
         if self.clipped_at.is_some_and(|t| t.elapsed() >= CLIP_COOLDOWN) {
@@ -1195,6 +1256,7 @@ impl App {
         Model {
             live_viewers: self.live_viewers,
             settings: &self.settings,
+            mics: &self.mics.list,
             screen: self.screen,
             sync,
             clip_cooling: self.clipped_at.is_some(),

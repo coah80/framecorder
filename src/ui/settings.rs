@@ -33,7 +33,7 @@ pub enum FrameRate {
     Thirty,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub shape: Shape,
     pub eye: Eye,
@@ -41,6 +41,8 @@ pub struct Settings {
     pub fps: FrameRate,
     pub game_audio: bool,
     pub mic: bool,
+    /// Which mic, by PipeWire node name. Empty is the one SteamOS uses.
+    pub mic_source: String,
     /// Also keep the game and the mic on their own tracks, for editing.
     pub split_audio: bool,
     /// Keep a replay buffer for clips.
@@ -63,6 +65,7 @@ impl Default for Settings {
             fps: FrameRate::Auto,
             game_audio: true,
             mic: true,
+            mic_source: String::new(),
             split_audio: true,
             clips: true,
             clip_secs: 30,
@@ -118,6 +121,7 @@ impl Settings {
                 ("game_audio", v) => s.game_audio = v == "true",
                 ("mic", v) => s.mic = v == "true",
                 ("split_audio", v) => s.split_audio = v == "true",
+                ("mic_source", v) if v.is_empty() || crate::mics::valid_name(v) => s.mic_source = v.to_string(),
                 ("clips", v) => s.clips = v == "true",
                 ("onboarded", v) => s.onboarded = v == "true",
                 // Older configs turned clips off with the length.
@@ -154,7 +158,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\nquality={}\nfps={}\ngame_audio={}\nmic={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\nquality={}\nfps={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -178,6 +182,7 @@ impl Settings {
             },
             self.game_audio,
             self.mic,
+            self.mic_source,
             self.split_audio,
             self.clips,
             self.clip_secs,
@@ -229,6 +234,9 @@ impl Settings {
         }
         if self.mic {
             args.push("--mic".into());
+            if !self.mic_source.is_empty() {
+                args.extend(["--mic-source".into(), self.mic_source.clone()]);
+            }
         }
         if self.splits_audio() {
             args.push("--mic-track".into());
@@ -266,7 +274,7 @@ mod tests {
     fn blended_eye_round_trips_and_falls_back_without_panels() {
         for shape in [Shape::Wide, Shape::Square, Shape::Tall] {
             let settings = Settings { eye: Eye::Both, shape, ..Settings::default() };
-            assert_eq!(Settings::parse(&settings.text()), Settings { onboarded: false, ..settings });
+            assert_eq!(Settings::parse(&settings.text()), Settings { onboarded: false, ..settings.clone() });
             assert!(settings.recorder_args(true).join(" ").contains("--eye both"));
             assert_eq!(settings.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic --mic-track");
         }
@@ -282,7 +290,7 @@ mod tests {
         let s = Settings { clip_secs: 60, ..Settings::default() };
         s.save();
         assert_eq!(Settings::load().clipping(), Some(60));
-        Settings { clips: false, ..s }.save();
+        Settings { clips: false, ..s.clone() }.save();
         let off = Settings::load();
         assert_eq!(off.clipping(), None);
         // The length sticks around for when they're turned back on.
@@ -291,7 +299,7 @@ mod tests {
         assert_eq!(Settings::load().clipping(), None);
         let initial = Settings { onboarded: true, ..s };
         initial.save();
-        let mut app = super::super::App::new(initial, false, false);
+        let mut app = super::super::App::new(initial.clone(), false, false);
         let changed = Settings { mic: false, quality: Quality::Standard, ..initial };
         changed.save();
         assert!(app.prepare_recording().is_ok());

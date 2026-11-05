@@ -42,7 +42,7 @@ the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at
 
 ## audio
 
-game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it, and while you talk the game drops under your voice, so a loud game never drowns you out. with split tracks on (the default, under audio in settings), the game and the mic also get a track each for editing (`--mic-track` on the command line). the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent.
+game audio is on by default, and the tab records the mic too (toggle it off in the tab, or `--mic` on the command line). the mic gets mixed into the main track so every player plays it, and while you talk the game drops under your voice, so a loud game never drowns you out. with split tracks on (the default, under audio in settings), the game and the mic also get a track each for editing (`--mic-track` on the command line). the frame mutes its own mic whenever the headset's off your head, so tests on the desk come out silent. plug in a usb mic or connect a bluetooth headset and a mic picker shows up under audio, so you can record from it instead of the frame's own (`--mic-source` on the command line). left alone, framecorder records whichever mic steamos uses.
 
 ## clips
 

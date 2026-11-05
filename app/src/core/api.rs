@@ -84,6 +84,22 @@ pub struct Recording {
     pub split_audio: Option<bool>,
     #[serde(default)]
     pub panels: Option<bool>,
+    /// Which mic, by PipeWire node name, empty for the one SteamOS uses.
+    /// Older headsets can't pick.
+    #[serde(default)]
+    pub mic_source: Option<String>,
+    /// The mics the headset has right now, its own first.
+    #[serde(default)]
+    pub mics: Option<Vec<Mic>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mic {
+    pub name: String,
+    pub label: String,
+    /// What SteamOS records from when nothing's picked.
+    #[serde(default)]
+    pub default: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -106,6 +122,8 @@ pub struct RecordingPatch {
     pub eye: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split_audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic_source: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

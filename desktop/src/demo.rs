@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use framecorder_app_lib::core::api::{About, Battery, Recording, Remote, Storage, UpdateStatus};
+use framecorder_app_lib::core::api::{About, Battery, Mic, Recording, Remote, Storage, UpdateStatus};
 use framecorder_app_lib::core::discover::Found;
 use framecorder_app_lib::core::engine::{Progress, State, Status};
 use framecorder_app_lib::core::live::{LivePhase, LiveStatus};
@@ -144,6 +144,11 @@ fn recording() -> Recording {
         eye: Some("left".into()),
         panels: Some(true),
         split_audio: Some(true),
+        mic_source: Some(String::new()),
+        mics: Some(vec![
+            Mic { name: "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source".into(), label: "Frame".into(), default: true },
+            Mic { name: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), label: "Yeti Stereo Microphone".into(), default: false },
+        ]),
     }
 }
 

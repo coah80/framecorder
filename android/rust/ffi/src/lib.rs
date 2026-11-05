@@ -246,6 +246,19 @@ pub struct RecordingSettings {
     pub panels: Option<bool>,
     /// The game and the mic on their own tracks too. Older headsets can't.
     pub split_audio: Option<bool>,
+    /// Which mic, by PipeWire node name, empty for the one SteamOS uses.
+    /// Older headsets can't pick.
+    pub mic_source: Option<String>,
+    /// The mics the headset has right now, its own first.
+    pub mics: Option<Vec<MicChoice>>,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MicChoice {
+    pub name: String,
+    pub label: String,
+    /// What SteamOS records from when nothing's picked.
+    pub default: bool,
 }
 
 impl From<api::Recording> for RecordingSettings {
@@ -261,6 +274,8 @@ impl From<api::Recording> for RecordingSettings {
             eye: r.eye,
             panels: r.panels,
             split_audio: r.split_audio,
+            mic_source: r.mic_source,
+            mics: r.mics.map(|mics| mics.into_iter().map(|m| MicChoice { name: m.name, label: m.label, default: m.default }).collect()),
         }
     }
 }
@@ -285,6 +300,8 @@ pub struct RecordingPatch {
     pub eye: Option<String>,
     #[uniffi(default = None)]
     pub split_audio: Option<bool>,
+    #[uniffi(default = None)]
+    pub mic_source: Option<String>,
 }
 
 impl From<RecordingPatch> for api::RecordingPatch {
@@ -299,6 +316,7 @@ impl From<RecordingPatch> for api::RecordingPatch {
             clip: r.clip_secs,
             eye: r.eye,
             split_audio: r.split_audio,
+            mic_source: r.mic_source,
         }
     }
 }

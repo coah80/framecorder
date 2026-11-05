@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod grab;
 pub mod input;
+pub mod mics;
 pub mod openvr;
 pub mod overlay;
 pub mod setup;

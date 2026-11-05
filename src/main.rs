@@ -159,6 +159,11 @@ struct Args {
     #[arg(long)]
     mic: bool,
 
+    /// Which mic, by its PipeWire node name (`pw-dump` lists them). Without
+    /// it, or while it isn't plugged in, the one SteamOS uses.
+    #[arg(long, requires = "mic")]
+    mic_source: Option<String>,
+
     /// Don't record game audio.
     #[arg(long)]
     no_audio: bool,
@@ -329,8 +334,8 @@ fn run(args: Args) -> Result<()> {
     };
 
     // Tracks the file gets. The mic goes into the main track so every
-    // player plays it; a separate mic track costs another encoder, so it's
-    // opt-in.
+    // player plays it; the separate game and mic tracks cost two more
+    // encoders, so they're asked for.
     let tracks = audio_tracks(!args.no_audio, args.mic, args.mic_track);
     let mut sources = Vec::new();
     if !args.no_audio {
@@ -376,7 +381,7 @@ fn run(args: Args) -> Result<()> {
     let capture = if sources.is_empty() {
         None
     } else {
-        match audio::Capture::start(sources, tx.clone()) {
+        match audio::Capture::start(sources, args.mic_source.clone(), tx.clone()) {
             Ok(c) => Some(c),
             Err(e) => {
                 drop(tx);
