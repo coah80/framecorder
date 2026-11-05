@@ -22,13 +22,7 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, pane: Rect, hits: &mut Vec
     match m.sync.pairing {
         Some(pairing) => pair(c, f, m, inner, pairing, hits),
         None => {
-            label(c, f, inner.x, inner.y + 16.0, "PAIR A DEVICE");
-            c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 62.0, "Get clips on your phone or computer", TEXT, 1.0);
-            let lines = ["Get the framecorder app on the other device, then pair it here.", "Clips show up there on their own from then on."];
-            for (i, line) in lines.iter().enumerate() {
-                c.text(f, Face::Body, 17.0, inner.x, inner.y + 96.0 + i as f32 * 26.0, line, SUBTEXT0, 1.0);
-            }
-            let r = Rect::new(inner.x, inner.y + inner.h - BUTTON_H, 200.0, BUTTON_H);
+            let r = Rect::new(inner.x, inner.y + 8.0, 200.0, BUTTON_H);
             button(c, f, m, hits, r, "Pair a device", Action::Pair, true);
         }
     }
@@ -77,18 +71,13 @@ fn devices(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<Hit
         pager(c, f, m, Rect::new(x, r.y + 56.0 + SHOWN as f32 * 70.0, r.w - 40.0, 44.0), page, pages, hits);
     }
 
-    let note: Vec<String> = match list.iter().find(|d| d.old_app) {
-        Some(d) => {
-            let tail = f.measure(Face::Body, 15.0, " has the old app.");
-            let name = f.fit(Face::Body, 15.0, &d.name, r.w - 48.0 - tail);
-            vec![format!("{name} has the old app."), "It can't update itself: get the new one".into(), "at framecorder.coah80.com".into()]
-        }
-        None => vec!["Paired devices get every new clip on".into(), "their own. Removing one stops that.".into()],
-    };
-    let color = if list.iter().any(|d| d.old_app) { YELLOW } else { OVERLAY2 };
+    let Some(old) = list.iter().find(|d| d.old_app) else { return };
+    let tail = f.measure(Face::Body, 15.0, " has the old app.");
+    let name = f.fit(Face::Body, 15.0, &old.name, r.w - 48.0 - tail);
+    let note = [format!("{name} has the old app."), "It can't update itself: get the new one".into(), "at framecorder.coah80.com".into()];
     let top = r.y + r.h - 24.0 - note.len() as f32 * 24.0;
     for (i, line) in note.iter().enumerate() {
-        c.text(f, Face::Body, 15.0, x + 4.0, top + i as f32 * 24.0, line, color, 1.0);
+        c.text(f, Face::Body, 15.0, x + 4.0, top + i as f32 * 24.0, line, YELLOW, 1.0);
     }
 }
 
