@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <!-- the window behind the dmg's two icons. finder draws framecorder.app centered at (165,190) and
+       applications at (495,190), 128pt each, with their names under them around y 262-280, black in
+       light mode and white in dark mode. the name tags under each spot are a mid tone so both read. -->
+  <style>
+    @font-face { font-family: "Montserrat"; font-weight: 800; src: url("../../assets/fonts/Montserrat-Bold.ttf"); }
+    @font-face { font-family: "Poppins"; font-weight: 400; src: url("../../assets/fonts/Poppins-Regular.ttf"); }
+    @font-face { font-family: "Poppins"; font-weight: 500; src: url("../../assets/fonts/Poppins-Medium.ttf"); }
+    .word { font: 800 30px "Montserrat", sans-serif; letter-spacing: -0.9px; fill: #cdd6f4; }
+    .word tspan { fill: #cba6f7; }
+    .lead { font: 400 16px "Poppins", sans-serif; fill: #a6adc8; }
+    .note { font: 400 12px "Poppins", sans-serif; fill: #7f849c; }
+  </style>
+  <defs>
+    <radialGradient id="glow" cx="330" cy="190" r="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cba6f7" stop-opacity="0.11"/>
+      <stop offset="0.55" stop-color="#cba6f7" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#cba6f7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="660" height="400" fill="#1e1e2e"/>
+  <rect width="660" height="400" fill="url(#glow)"/>
+
+  <!-- the viewfinder corners from the icon, framing the window -->
+  <g fill="none" stroke="#313244" stroke-width="4" stroke-linecap="round">
+    <path d="M28 64 V36 a8 8 0 0 1 8 -8 H64"/>
+    <path d="M596 28 H624 a8 8 0 0 1 8 8 V64"/>
+    <path d="M632 336 V364 a8 8 0 0 1 -8 8 H596"/>
+    <path d="M64 372 H36 a8 8 0 0 1 -8 -8 V336"/>
+  </g>
+
+  <text class="word" x="330" y="72" text-anchor="middle">framecorder<tspan>.</tspan></text>
+  <text class="lead" x="330" y="98" text-anchor="middle">drag it into applications to install</text>
+
+  <!-- from the app to the folder -->
+  <g fill="none" stroke="#cba6f7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M254 190 H398" stroke-dasharray="1 11"/>
+    <path d="M386 174 L404 190 L386 206"/>
+  </g>
+  <circle cx="248" cy="190" r="4.5" fill="#cba6f7"/>
+
+  <!-- name tags: mid mauve-grey so finder's label reads in black and in white -->
+  <g fill="#766a94">
+    <rect x="85" y="254" width="160" height="34" rx="17"/>
+    <rect x="415" y="254" width="160" height="34" rx="17"/>
+  </g>
+
+  <text class="note" x="330" y="346" text-anchor="middle">macos blocks the first open. hit done, then privacy &amp; security, open anyway.</text>
+</svg>

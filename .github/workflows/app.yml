@@ -137,8 +137,10 @@ jobs:
           sed "s/VERSION/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
           cp ../assets/icons/icon.icns "$app/Contents/Resources/icon.icns"
           codesign --force --deep --sign - "$app"
-          ln -s /Applications dmg/Applications
-          hdiutil create -volname framecorder -srcfolder dmg -ov -format UDZO "../${{ matrix.file }}"
+          # the dmg opens on a drag-to-applications window (macos/dmg.py)
+          tiffutil -cathidpicheck macos/dmg-background.png macos/dmg-background@2x.png -out dmg-background.tiff
+          pipx run --spec dmgbuild==1.6.7 dmgbuild -s macos/dmg.py -D app="$app" -D background=dmg-background.tiff \
+            -D icon=../assets/icons/icon.icns framecorder "../${{ matrix.file }}"
 
       - uses: actions/upload-artifact@v4
         with:
