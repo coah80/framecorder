@@ -103,12 +103,15 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .gap(px(10.))
                 .child(label("next recording"))
                 .child(next_recording(&s, settings.as_ref(), connected, can_blend, cx))
-                .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child(match (&settings, connected, asked) {
-                    (_, false, _) => format!("connect to {} to change these.", s.name),
-                    (Some(_), _, _) => "these take effect from the frame's next recording.".to_string(),
-                    (None, _, true) => format!("these can be changed from here once {} has the latest framecorder.", s.name),
-                    (None, _, false) => "asking the frame what it's set to...".to_string(),
-                })),
+                .when_some(
+                    match (&settings, connected, asked) {
+                        (_, false, _) => Some(format!("connect to {} to change these.", s.name)),
+                        (Some(_), _, _) => None,
+                        (None, _, true) => Some(format!("these can be changed from here once {} has the latest framecorder.", s.name)),
+                        (None, _, false) => Some("asking the frame what it's set to...".to_string()),
+                    },
+                    |d, note| d.child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child(note)),
+                ),
         )
         .child(
             // side by side, under each other once the window's too narrow for both
@@ -369,7 +372,7 @@ fn now(
                 .when(recording, |d| d.child(clock(elapsed, remote.is_some_and(|r| r.running))))
                 .when_some(syncing.filter(|_| !recording), |d, p| d.child(syncing_pill(p))),
         )
-        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note))
+        .when(!note.is_empty(), |d| d.child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note)))
         // three buttons don't fit a narrow window on one line
         .child(div().flex().flex_wrap().items_center().gap(px(10.)).children(match s.state {
             State::Connected => {
@@ -658,7 +661,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
             )))
         })
         .when(locked, |d| d.child(locked_note(eye.is_some())))
-        .child(setting(false, "clips", Some("the last moments, saved on demand".into())).child(choices(
+        .child(setting(false, "clips", None).child(choices(
             &fp,
             "clips",
             &lengths,
@@ -699,7 +702,6 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                         &fp,
                         "game-audio",
                         "game audio",
-                        "what you hear in the headset",
                         r.game_audio,
                         enabled,
                         with(|r, _| Recording { game_audio: !r.game_audio, ..r.clone() }),
@@ -709,7 +711,6 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                         &fp,
                         "mic",
                         "mic",
-                        "your voice, mixed in",
                         r.mic,
                         enabled,
                         with(|r, _| Recording { mic: !r.mic, ..r.clone() }),
@@ -821,7 +822,7 @@ fn shape_glyph(shape: &str, ink: u32) -> Div {
 
 /// a switch with its name and what it's for, half a row wide
 #[allow(clippy::too_many_arguments)]
-fn toggle(fp: &str, id: &str, name: &str, sub: &str, on: bool, enabled: bool, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
+fn toggle(fp: &str, id: &str, name: &str, on: bool, enabled: bool, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
     let fp = fp.to_string();
     div()
         .flex_1()
@@ -829,15 +830,7 @@ fn toggle(fp: &str, id: &str, name: &str, sub: &str, on: bool, enabled: bool, pi
         .flex()
         .items_center()
         .gap(px(12.))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(div().text_size(px(13.)).child(name.to_string()))
-                .child(div().text_size(px(11.)).text_color(c(theme::OVERLAY2)).truncate().child(sub.to_string())),
-        )
+        .child(div().flex_1().min_w_0().text_size(px(13.)).child(name.to_string()))
         .child(
             switch(SharedString::from(format!("switch-{id}")), on)
                 .when(enabled, |d| d.on_click(cx.listener(move |app, _, _, cx| app.change_settings(&fp, pick(0), cx)))),
