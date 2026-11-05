@@ -139,7 +139,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
             "frames",
             card().flex().flex_col().children(frames).child(
                 row(first_other)
-                    .child(text("another frame?", "you can pair more than one"))
+                    .child(name("another frame?"))
                     .child(
                         outline("pair-another", "pair a frame")
                             .child(icon("plus", 16., c(theme::TEXT)))

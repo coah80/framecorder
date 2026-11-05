@@ -108,15 +108,7 @@ fn header(app: &FrameApp, found: &[&Clip], searching: bool, cx: &mut Context<Fra
         .px(px(28.))
         .pt(px(26.))
         .pb(px(18.))
-        .child(div().flex().flex_col().gap(px(10.)).child(title("clips", 26.)).child(if app.clips.is_empty() {
-            div()
-                .text_size(px(13.))
-                .text_color(c(theme::SUBTEXT0))
-                .child("everything from your frame, newest first")
-                .into_any_element()
-        } else {
-            search_box(app, searching, cx).into_any_element()
-        }))
+        .child(div().flex().flex_col().gap(px(10.)).child(title("clips", 26.)).when(!app.clips.is_empty(), |d| d.child(search_box(app, searching, cx))))
         .child(
             div()
                 .flex()

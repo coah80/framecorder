@@ -190,7 +190,7 @@ fn here(clips: &[Clip], fingerprint: &str) -> Div {
 /// the rows about this frame: live view when it can, the connection check, a retry, and unpairing
 fn this_frame(fingerprint: &str, can_live: bool, cx: &mut Context<FrameApp>) -> Div {
     let fp = fingerprint.to_string();
-    let row = |id: &str, icon_name: &str, head: &str, sub: &str, red: bool| {
+    let row = |id: &str, icon_name: &str, head: &str, red: bool| {
         let ink = if red { theme::RED } else { theme::TEXT };
         div()
             .id(SharedString::from(format!("this-{id}")))
@@ -202,15 +202,7 @@ fn this_frame(fingerprint: &str, can_live: bool, cx: &mut Context<FrameApp>) -> 
             .cursor_pointer()
             .hover(|s| s.bg(a(theme::TEXT, 0.04)))
             .child(icon(icon_name, 16., c(if red { theme::RED } else { theme::SUBTEXT0 })))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c(ink)).child(head.to_string()))
-                    .child(div().text_size(px(11.)).text_color(c(theme::OVERLAY2)).truncate().child(sub.to_string())),
-            )
+            .child(div().flex_1().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(c(ink)).child(head.to_string()))
     };
     let (watch, check, unpair) = (fp.clone(), fp.clone(), fp);
     card()
@@ -222,19 +214,19 @@ fn this_frame(fingerprint: &str, can_live: bool, cx: &mut Context<FrameApp>) -> 
         .child(div().px(px(14.)).pt(px(12.)).pb(px(4.)).child(label("this frame")))
         .when(can_live, |d| {
             d.child(
-                row("live", "live", "watch it live", "here, or record it in obs", false)
+                row("live", "live", "watch it live", false)
                     .on_click(cx.listener(move |app, _, _, cx| app.pick_frame_on(watch.clone(), Page::Live, cx))),
             )
         })
         .child(
-            row("check", "wifi", "check the connection", "see what's getting in the way", false)
+            row("check", "wifi", "check the connection", false)
                 .on_click(cx.listener(move |app, _, _, cx| app.open_check(check.clone(), cx))),
         )
         .child(
-            row("retry", "retry", "try again now", "instead of waiting for the next look", false)
+            row("retry", "retry", "try again now", false)
                 .on_click(cx.listener(move |app, _, _, cx| app.retry(cx))),
         )
-        .child(row("unpair", "unlink", "unpair", "what's already here stays", true).on_click(cx.listener(
+        .child(row("unpair", "unlink", "unpair", true).on_click(cx.listener(
             move |app, _, window, cx| {
                 app.go(Page::Settings, cx);
                 app.ask_unpair(unpair.clone(), window, cx);
@@ -627,7 +619,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
         .map(|&(v, l)| Choice { label: l, glyph: None, off: locked || both || (v == "both" && !can_blend) })
         .collect();
     let eye_hint = if both {
-        Some("both are in the video".to_string())
+        None
     } else if !can_blend {
         Some("blending needs the frame's next update".to_string())
     } else {
