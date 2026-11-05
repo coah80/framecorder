@@ -319,7 +319,6 @@ fn sample_summary() -> Summary {
         framecorder: "0.2.0 · panels unlocked".into(),
         os: "SteamOS 3.7.8 · build 20251001.1".into(),
         steamvr: "2.12.5 · public".into(),
-        steam_name: Some("coah80".into()),
         errors: 12,
         logs: ["recorder", "framecorder-ui", "framecorder-sync", "framecorder-update", "vrserver", "vrcompositor"].map(String::from).to_vec(),
     }

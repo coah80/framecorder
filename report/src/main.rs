@@ -1,3 +1,6 @@
+// hide_names is for the apps and the headset, which know the names
+#[allow(dead_code)]
+mod shared;
 mod github;
 mod issue;
 mod privacy;

@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::net::IpAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -126,13 +125,15 @@ fn truncate_end(text: &mut String, limit: usize) {
     }
 }
 
+#[path = "../../../report/src/shared.rs"]
+mod shared;
+
 pub fn redact(text: &str) -> String {
-    static PATTERNS: OnceLock<(Regex, Regex, Regex, Regex)> = OnceLock::new();
-    let (secret, home, mac, address) = PATTERNS.get_or_init(|| (
+    static PATTERNS: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
+    let (secret, home, mac) = PATTERNS.get_or_init(|| (
         Regex::new(r"(?i)token|bearer|password|pairing.?code|certificate|private.?key|serial|LHR-[A-Z0-9]+|-----BEGIN|\b[0-9]{6}\b|\b[a-f0-9]{32,}\b|^[A-Za-z0-9+/=]{64,}$").expect("secret pattern"),
         Regex::new(r"(?i)(?:/home/|/Users/|[A-Z]:[\\/]Users[\\/])[^/\\\s]+|/root\b|/data/user/\d+/[^/\s]+").expect("home pattern"),
         Regex::new(r"(?i)\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b").expect("mac pattern"),
-        Regex::new(r"(?i)\b(?:\d{1,3}\.){3}\d{1,3}\b|[0-9a-f]*:[0-9a-f:]*:[0-9a-f:]+").expect("ip pattern"),
     ));
     static HOME: OnceLock<Option<String>> = OnceLock::new();
     static USERS: OnceLock<Vec<Regex>> = OnceLock::new();
@@ -160,15 +161,7 @@ pub fn redact(text: &str) -> String {
             line = pattern.replace_all(&line, "<user>").into_owned();
         }
         line = mac.replace_all(&line, "<mac>").into_owned();
-        line = address
-            .replace_all(&line, |c: &regex::Captures<'_>| match c[0].parse::<IpAddr>() {
-                Ok(IpAddr::V4(ip)) if ip.is_private() || ip.is_loopback() || ip.is_link_local() => c[0].to_string(),
-                Ok(IpAddr::V6(ip)) if ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local() => c[0].to_string(),
-                Ok(_) => "<ip>".into(),
-                Err(_) => c[0].to_string(),
-            })
-            .into_owned();
-        out.push(line);
+        out.push(shared::hide(&line));
     }
     out.join("\n")
 }
@@ -228,6 +221,10 @@ pub async fn preview_with_client(description: &str, app: AppInfo, client: Option
     };
     if let Some(h) = &mut headset {
         scrub(h);
+        // older headsets send the Steam name, it doesn't go on a public issue
+        if let Some(steam) = h.get_mut("steam").and_then(Value::as_object_mut) {
+            steam.remove("name");
+        }
     }
     let text = LINES
         .lock()
@@ -283,8 +280,30 @@ impl Engine {
             name: "sync-state.json".into(),
             text: json!({"paired": self.hosts().len(), "headsets": status, "downloads_free_bytes": self.report_free_space()}).to_string(),
         });
+        // what this device is called and what it paired with can carry
+        // someone's name ("Cole's S25 Ultra")
+        let names: Vec<String> = self.hosts().into_iter().map(|h| h.name).chain([self.device_name.clone(), super::device_name()]).collect();
+        hide_names(&mut report, &names);
         report
     }
+}
+
+fn hide_names(report: &mut Report, names: &[String]) {
+    fn walk(value: &mut Value, names: &[String]) {
+        match value {
+            Value::String(s) => *s = shared::hide_names(s, names),
+            Value::Array(values) => values.iter_mut().for_each(|v| walk(v, names)),
+            Value::Object(map) => map.values_mut().for_each(|v| walk(v, names)),
+            _ => {}
+        }
+    }
+    if let Some(h) = &mut report.headset {
+        walk(h, names);
+    }
+    for log in &mut report.app_logs {
+        log.text = shared::hide_names(&log.text, names);
+    }
+    report.app.device = shared::hide_names(&report.app.device, names);
 }
 
 pub async fn send(report: &Report) -> Result<Sent, ReportError> {

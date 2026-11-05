@@ -1,5 +1,5 @@
 use regex::{Captures, Regex};
-use std::{net::IpAddr, sync::LazyLock};
+use std::sync::LazyLock;
 
 fn pattern(s: &str) -> Regex {
     Regex::new(s).expect("valid redaction pattern")
@@ -26,9 +26,6 @@ pub fn scrub(input: &str) -> String {
             r#"\b(?:[A-Fa-f0-9]{32,}|[A-Za-z0-9_+/=-]{40,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b"#,
         )
     });
-    static IPV4: LazyLock<Regex> =
-        LazyLock::new(|| pattern(r#"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"#));
-    static IPV6: LazyLock<Regex> = LazyLock::new(|| pattern(r#"[0-9A-Fa-f:]*:[0-9A-Fa-f:.%]+"#));
     let mut out = PEM.replace_all(input, "<secret>").into_owned();
     let users: Vec<String> = HOME
         .find_iter(&out)
@@ -49,30 +46,14 @@ pub fn scrub(input: &str) -> String {
     out = MAC.replace_all(&out, "<mac>").into_owned();
     out = SERIAL.replace_all(&out, "<serial>").into_owned();
     out = SECRET.replace_all(&out, "<secret>").into_owned();
-    for re in [&*IPV4, &*IPV6] {
-        out = re
-            .replace_all(&out, |c: &Captures<'_>| match c[0].parse::<IpAddr>() {
-                Ok(IpAddr::V4(ip)) if ip.is_private() || ip.is_loopback() || ip.is_link_local() => {
-                    c[0].to_owned()
-                }
-                Ok(IpAddr::V6(ip))
-                    if ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local() =>
-                {
-                    c[0].to_owned()
-                }
-                Ok(_) => "<ip>".to_owned(),
-                Err(_) => c[0].to_owned(),
-            })
-            .into_owned();
-    }
-    out
+    crate::shared::hide(&out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn private_data_is_removed_but_lan_and_persona_stay() {
+    fn private_data_is_removed_and_the_rest_stays_readable() {
         for (input, expected) in [
             ("/home/alice/log alice", "~/log <user>"),
             ("/home/steamos/log on steamos", "~/log on steamos"),
@@ -80,9 +61,9 @@ mod tests {
             ("/Users/alice/log", "~/log"),
             (
                 "8.8.8.8 192.168.1.2 172.31.1.2 172.32.1.2 10.1.2.3",
-                "<ip> 192.168.1.2 172.31.1.2 <ip> 10.1.2.3",
+                "<ip> <ip> <ip> <ip> <ip>",
             ),
-            ("2001:4860:4860::8888 ::1 fd00::1", "<ip> ::1 fd00::1"),
+            ("2001:4860:4860::8888 ::1 fd00::1", "<ip> ::1 <ip>"),
             ("aa:bb:cc:dd:ee:ff AA-BB-CC-DD-EE-FF", "<mac> <mac>"),
             (
                 "token=short serial: ABC123 login=alice",
@@ -103,7 +84,6 @@ mod tests {
                 "<secret>",
             ),
             ("0123456789abcdef0123456789abcdef", "<secret>"),
-            ("Steam name: Moon Walker", "Steam name: Moon Walker"),
         ] {
             assert_eq!(scrub(input), expected, "{input}");
         }

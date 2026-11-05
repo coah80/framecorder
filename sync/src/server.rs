@@ -355,7 +355,8 @@ fn pair(req: &Request, w: &mut impl Write, state: &State) -> io::Result<()> {
     };
     match state.pairing.pair(&body.code, &body.device_name, &state.devices) {
         Ok(p) => {
-            log::info!("paired {:?} as {}", body.device_name, p.device_id);
+            // not the name, it goes in reports and can be someone's ("Cole's phone")
+            log::info!("paired a device as {}", p.device_id);
             let out = serde_json::json!({ "token": p.token, "device_id": p.device_id });
             write_json(w, 200, &out.to_string(), keep)
         }

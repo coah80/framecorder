@@ -30,7 +30,6 @@ pub struct Summary {
     pub os: String,
     /// "2.12.5 · public"
     pub steamvr: String,
-    pub steam_name: Option<String>,
     pub errors: usize,
     /// The names of the logs that go along, without their extension.
     pub logs: Vec<String>,
@@ -74,7 +73,6 @@ impl Summary {
             framecorder,
             os,
             steamvr,
-            steam_name: text(&steam["name"]),
             errors: d["recent_errors"].as_array().map_or(0, Vec::len),
             logs,
         }
@@ -248,7 +246,7 @@ mod tests {
         let full = json!({
             "framecorder": {"version": "0.2.0", "channel": "dev", "unlocked": true},
             "os": {"name": "SteamOS", "version": "3.7.8", "build_id": "20251001.1", "branch": "beta"},
-            "steam": {"name": "coah80", "steamvr_version": "2.12.5", "steamvr_branch": "public"},
+            "steam": {"steamvr_version": "2.12.5", "steamvr_branch": "public"},
             "recent_errors": ["a", "b", "c"],
             "logs": [{"name": "recorder.log", "text": ""}, {"name": "vrserver.txt", "text": ""}]
         });
@@ -256,7 +254,6 @@ mod tests {
         assert_eq!(s.framecorder, "0.2.0 · dev build · panels unlocked");
         assert_eq!(s.os, "SteamOS 3.7.8 · build 20251001.1 · beta");
         assert_eq!(s.steamvr, "2.12.5 · public");
-        assert_eq!(s.steam_name.as_deref(), Some("coah80"));
         assert_eq!(s.errors, 3);
         assert_eq!(s.logs, ["recorder", "vrserver"]);
 
@@ -266,7 +263,6 @@ mod tests {
         assert_eq!(s.framecorder, "unknown version · SteamVR's view");
         assert_eq!(s.os, "SteamOS");
         assert_eq!(s.steamvr, "not found");
-        assert_eq!(s.steam_name, None);
         assert_eq!((s.errors, s.logs.len()), (0, 0));
     }
 

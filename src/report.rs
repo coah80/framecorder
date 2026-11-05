@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
@@ -204,9 +203,11 @@ fn steamvr(manifest: &Value) -> Value {
     json!({"steamvr_version": app["buildid"], "steamvr_branch": app.is_object().then_some(branch.filter(|s| !s.is_empty()).unwrap_or("public"))})
 }
 
+#[path = "../report/src/shared.rs"]
+mod shared;
+
 static MAC: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b").expect("mac regex"));
-static IPS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-fA-F:.%]+").expect("ip regex"));
 static SERIAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(?:LHR|LHB|HMD|WM|FPR)-[a-z0-9-]+\b|(?i:serial(?:number| number|_number)?)[\s\"':=]+[^\s,;\"']+"#).expect("serial regex")
 });
@@ -252,35 +253,7 @@ fn redact(text: &str, home: &str, user: &str, accounts: &[String]) -> String {
     }
     text = MAC.replace_all(&text, "<mac>").into_owned();
     text = SERIAL.replace_all(&text, "<serial>").into_owned();
-    IPS.replace_all(&text, |caps: &regex::Captures<'_>| {
-        let candidate = &caps[0];
-        let address = candidate.trim_matches('.');
-        let address = address.split('%').next().unwrap_or(address);
-        let ip = address
-            .parse::<IpAddr>()
-            .or_else(|_| address.parse::<std::net::SocketAddr>().map(|a| a.ip()));
-        let public = match ip {
-            Ok(IpAddr::V4(ip)) => {
-                !ip.is_private() && !ip.is_loopback() && !ip.is_link_local() && !ip.is_unspecified()
-            }
-            Ok(IpAddr::V6(ip)) => match ip.to_ipv4_mapped() {
-                Some(ip) => !ip.is_private() && !ip.is_loopback() && !ip.is_link_local(),
-                None => {
-                    !ip.is_loopback()
-                        && !ip.is_unspecified()
-                        && !ip.is_unique_local()
-                        && !ip.is_unicast_link_local()
-                }
-            },
-            Err(_) => false,
-        };
-        if public {
-            "<ip>".to_owned()
-        } else {
-            candidate.to_owned()
-        }
-    })
-    .into_owned()
+    shared::hide(&text)
 }
 
 fn scrub(value: &mut Value, home: &str, user: &str, accounts: &[String]) {
@@ -422,7 +395,6 @@ pub fn collect() -> Value {
         .and_then(|s| vdf(&s))
         .unwrap_or_default();
     let mut steam_info = steamvr(&manifest);
-    steam_info["name"] = persona(&users);
     if let Some(version) = read(steam.join("steamapps/common/SteamVR/bin/version.txt")) {
         steam_info["steamvr_version"] = json!(version);
     } else if let Some(version) = read("/opt/steamvr/bin/version.txt") {
@@ -486,6 +458,20 @@ pub fn collect() -> Value {
     }
     let clients =
         read(config.join("sync/clients.json")).and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    // what this headset and the devices paired with it are called can carry
+    // someone's name ("Cole's S25 Ultra"), and so can the Steam name
+    let mut names: Vec<String> = clients
+        .iter()
+        .flat_map(|c| c["devices"].as_array().into_iter().flatten())
+        .filter_map(|d| d["name"].as_str().map(String::from))
+        .collect();
+    names.extend(
+        read(config.join("sync/settings.json"))
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v["name"].as_str().map(String::from)),
+    );
+    names.extend(read("/etc/hostname"));
+    names.extend(persona(&users).as_str().map(String::from));
     let sync = clients.as_ref().and_then(|c| c["devices"].as_array()).map(|devices| json!({"paired": devices.len(), "apps": devices.iter().filter_map(|d| d["app"].as_str()).collect::<Vec<_>>()}));
     let mut logs = Vec::new();
     for (name, path) in [
@@ -566,6 +552,7 @@ pub fn collect() -> Value {
         &std::env::var("USER").unwrap_or_default(),
         &accounts,
     );
+    hide_names(&mut result, &names);
     if let Some(logs) = result["logs"].as_array_mut() {
         for log in logs {
             if let Some(text) = log["text"].as_str() {
@@ -577,8 +564,16 @@ pub fn collect() -> Value {
             }
         }
     }
-    result["steam"]["name"] = persona(&users);
     result
+}
+
+fn hide_names(value: &mut Value, names: &[String]) {
+    match value {
+        Value::String(s) => *s = shared::hide_names(s, names),
+        Value::Array(a) => a.iter_mut().for_each(|v| hide_names(v, names)),
+        Value::Object(o) => o.values_mut().for_each(|v| hide_names(v, names)),
+        _ => (),
+    }
 }
 
 pub fn send(description: &str, diagnostics: &Value) -> Result<Sent> {
@@ -716,15 +711,17 @@ mod tests {
     }
 
     #[test]
-    fn public_reports_redact_private_details_and_keep_lan_addresses() {
+    fn public_reports_redact_private_details() {
         for (input, expected) in [
             ("/home/player/Videos/framecorder/2026.mp4 player", "~/Videos/framecorder/2026.mp4 <user>"),
-            ("8.8.8.8 192.168.1.2 172.16.0.1 172.31.1.1 172.32.0.1 10.0.0.2", "<ip> 192.168.1.2 172.16.0.1 172.31.1.1 <ip> 10.0.0.2"),
-            ("[2001:4860:4860::8888] ::1 fe80::1", "[<ip>] ::1 fe80::1"),
+            ("8.8.8.8 192.168.1.2 172.16.0.1 10.0.0.2 127.0.0.1", "<ip> <ip> <ip> <ip> 127.0.0.1"),
+            ("[2001:4860:4860::8888] ::1 fe80::1", "[<ip>] ::1 <ip>"),
+            // what the old address pattern mangled
+            ("framecorder_sync::server] trackpad.position", "framecorder_sync::server] trackpad.position"),
             ("device aa:bb:cc:dd:ee:ff LHR-1234ABCD serial=F12345", "device <mac> <serial> <serial>"),
             ("Authorization: Bearer fake\nwarn pairing_code=123456\nfailed token=synthetic\nsafe", "<redacted>\n<redacted>\n<redacted>\nsafe"),
             ("private_login signed in", "<user> signed in"),
-            ("8.8.8.8:443 1.1.1.1.", "<ip> <ip>"),
+            ("8.8.8.8:443 1.1.1.1.", "<ip>:443 <ip>."),
             ("-----BEGIN PRIVATE KEY-----\nsynthetic-key-data\n-----END PRIVATE KEY-----\nsafe", "<redacted>\n<redacted>\n<redacted>\nsafe"),
         ] { assert_eq!(redact(input, "/home/player", "player", &["private_login".into()]), expected); }
         assert_eq!(

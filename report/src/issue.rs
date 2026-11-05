@@ -160,7 +160,6 @@ pub fn build(report: &Report) -> (String, String) {
                 field(h, "/steam/steamvr_branch")
             ),
         ),
-        ("Steam name", field(h, "/steam/name")),
         (
             "Device",
             format!(
@@ -333,7 +332,7 @@ mod tests {
 
     #[test]
     fn hostile_markdown_and_budget_keep_diagnostics_readable() {
-        let r = parse(&serde_json::to_vec(&json!({"source":"headset","version":1,"description":"@someone #42\n</blockquote><script>oops</script>","headset":{"steam":{"name":"a|b\n<img>"},"recent_errors":["recorder: failed to encode"],"logs":[{"name":"</summary><img>","text":format!("{}\n```\n</details>\n@evil #12\nEND", "older".repeat(20000))}]},"app_logs":[{"name":"app","text":"z".repeat(100000)}]})).unwrap()).unwrap();
+        let r = parse(&serde_json::to_vec(&json!({"source":"headset","version":1,"description":"@someone #42\n</blockquote><script>oops</script>","headset":{"device":{"model":"a|b\n<img>"},"recent_errors":["recorder: failed to encode"],"logs":[{"name":"</summary><img>","text":format!("{}\n```\n</details>\n@evil #12\nEND", "older".repeat(20000))}]},"app_logs":[{"name":"app","text":"z".repeat(100000)}]})).unwrap()).unwrap();
         let (title, body) = build(&r);
         assert!(title.chars().count() <= 80);
         assert!(body.chars().count() <= BODY_LIMIT);
@@ -341,6 +340,7 @@ mod tests {
         assert!(!body.contains("#42"));
         assert!(body.contains("&lt;script&gt;"));
         assert!(body.contains("a&#124;b &lt;img&gt;"));
+        assert!(!body.contains("Steam name"));
         assert!(body.contains("recorder: failed to encode"));
         assert!(body.contains("ˋˋˋ\n</details>"));
         assert!(body.contains("\nEND\n```"));

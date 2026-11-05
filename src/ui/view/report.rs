@@ -137,7 +137,6 @@ fn details(c: &mut Canvas, f: &mut Fonts, m: &Model) {
         c.text(f, Face::Body, 16.0, x, r.y + 108.0, "Versions, logs and recent errors. A few seconds.", SUBTEXT0, 1.0);
         return;
     };
-    let name = s.steam_name.clone().unwrap_or_else(|| "Not signed in to Steam".into());
     let errors = match s.errors {
         0 => "None from the last 2 days".to_string(),
         1 => "1 line from the last 2 days".to_string(),
@@ -148,7 +147,6 @@ fn details(c: &mut Canvas, f: &mut Fonts, m: &Model) {
         ("FRAMECORDER", s.framecorder.as_str()),
         ("STEAMOS", s.os.as_str()),
         ("STEAMVR", s.steamvr.as_str()),
-        ("STEAM NAME", name.as_str()),
         ("RECENT ERRORS", errors.as_str()),
         ("LOGS", logs.as_str()),
     ];
