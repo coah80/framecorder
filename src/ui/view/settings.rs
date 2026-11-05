@@ -76,12 +76,11 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         ("9:16", Action::Shape(Shape::Tall), shape == Shape::Tall),
         ("Both eyes", Action::Shape(Shape::BothEyes), shape == Shape::BothEyes),
     ];
-    let meaning = match s.shape {
-        _ if !m.unlocked => "SteamVR's view, 1920 × 1080 · the others need the recorder unlocked",
-        Shape::Wide => "Widescreen · 1920 × 1080",
-        Shape::Square => "Square · 1440 × 1440",
-        Shape::Tall => "Vertical · 1080 × 1920",
-        Shape::BothEyes => "Both panels, just as the headset shows them",
+    let meaning = match shape {
+        Shape::Wide => "1920 × 1080",
+        Shape::Square => "1440 × 1440",
+        Shape::Tall => "1080 × 1920",
+        Shape::BothEyes => "",
     };
     choice(c, f, m, hits, shape_row, "Shape", meaning, &shapes, locked || !m.unlocked);
 
@@ -90,13 +89,9 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         ("Right eye", Action::Eye(Eye::Right), eye == Eye::Right),
         ("Both eyes blended", Action::Eye(Eye::Both), eye == Eye::Both),
     ];
-    let (meaning, fixed) = match shape {
-        _ if !m.unlocked => ("SteamVR's view is always the left eye", true),
-        Shape::BothEyes => ("Both eyes are in the video", true),
-        _ if eye == Eye::Both => ("One level view from both eyes, like SteamVR's own", false),
-        _ => ("The eye whose view gets recorded", false),
-    };
-    choice(c, f, m, hits, eye_row, "Eye", meaning, &eyes, locked || fixed);
+    // SteamVR's view is always the left eye, and both-eyes shape already has both.
+    let fixed = !m.unlocked || shape == Shape::BothEyes;
+    choice(c, f, m, hits, eye_row, "Eye", "", &eyes, locked || fixed);
 
     let qualities = [
         ("Standard", Action::Quality(Quality::Standard), s.quality == Quality::Standard),
@@ -112,61 +107,36 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         ("60 fps", Action::Fps(FrameRate::Sixty), s.fps == FrameRate::Sixty),
         ("30 fps", Action::Fps(FrameRate::Thirty), s.fps == FrameRate::Thirty),
     ];
-    let meaning = match s.fps {
-        FrameRate::Auto => "Every frame the headset shows · smoothest",
-        FrameRate::Sixty => "Can stutter a little when the headset runs at 72",
-        FrameRate::Thirty => "Smaller files, less smooth",
-    };
-    choice(c, f, m, hits, fps_row, "Frame rate", meaning, &rates, locked);
+    choice(c, f, m, hits, fps_row, "Frame rate", "", &rates, locked);
 }
 
 fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
     let at = |i: f32| Rect::new(inner.x, inner.y + 22.0 + i * 108.0, inner.w, 92.0);
-    toggle_row(c, f, m, hits, at(0.0), "Game audio", "Everything you hear from the game", Action::GameAudio, s.game_audio, locked);
-    let mic = if s.game_audio { "Your voice, mixed in with the game" } else { "Your voice" };
-    toggle_row(c, f, m, hits, at(1.0), "Microphone", mic, Action::Mic, s.mic, locked);
-
-    let y = inner.y + 22.0 + 2.0 * 108.0 + 36.0;
-    label(c, f, inner.x, y, "GOOD TO KNOW");
-    let notes = ["The headset mutes its microphone whenever it's off your head.", "Audio is saved as AAC, 192 kbit/s."];
-    for (i, note) in notes.iter().enumerate() {
-        c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);
-    }
+    toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
+    toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
 }
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
-    let meaning = if m.autostart {
-        "framecorder starts when SteamVR does"
-    } else {
-        "Off · open framecorder from the dashboard when you want it"
-    };
-    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", meaning, Action::Autostart, m.autostart, false);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", Action::Autostart, m.autostart, false);
 }
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
-    let meaning = if s.clips {
-        format!("Keeps the last {} ready to save, the whole time you play", length(s.clip_secs))
-    } else {
-        "Nothing is kept, so there's nothing to clip".to_string()
-    };
-    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Clips", &meaning, Action::Clips, s.clips, locked);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Clips", Action::Clips, s.clips, locked);
 
     let lengths: Vec<(String, Action, bool)> = CLIP_LENGTHS.iter().map(|&n| (length(n), Action::ClipLength(n), s.clip_secs == n)).collect();
     let options: Vec<(&str, Action, bool)> = lengths.iter().map(|(t, a, on)| (t.as_str(), *a, *on)).collect();
-    let meaning = format!("A clip is the last {} you played", length(s.clip_secs));
     let r = Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, ROW_H);
-    choice(c, f, m, hits, r, "Length", &meaning, &options, locked || !s.clips);
+    choice(c, f, m, hits, r, "Length", "", &options, locked || !s.clips);
 
     let y = r.y + ROW_H + 32.0;
     label(c, f, inner.x, y, "HOW TO CLIP");
     let notes = [
         "Hold the left thumbstick down, or press Clip now on the main screen.",
         "Change the button in SteamVR's controller settings, under framecorder.",
-        "Recording turns clips off until you stop, the recording has it all.",
     ];
     for (i, note) in notes.iter().enumerate() {
         c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);

@@ -215,9 +215,8 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let s = m.settings;
     question(c, f, inner, "What should they sound like?", "Turn off anything you don't want in the video.");
     let at = |i: f32| Rect::new(inner.x, inner.y + CONTROLS_Y + i * 108.0, inner.w, 92.0);
-    toggle_row(c, f, m, hits, at(0.0), "Game audio", "Everything you hear from the game", Action::GameAudio, s.game_audio, false);
-    let mic = if s.game_audio { "Your voice, mixed in with the game" } else { "Your voice" };
-    toggle_row(c, f, m, hits, at(1.0), "Microphone", mic, Action::Mic, s.mic, false);
+    toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, false);
+    toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, false);
 }
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
@@ -229,8 +228,7 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     };
     question(c, f, inner, "Clip what just happened", &meaning);
     let y = inner.y + CONTROLS_Y;
-    let kept = "Keeps the last bit ready to save, the whole time you play";
-    toggle_row(c, f, m, hits, Rect::new(inner.x, y, inner.w, 92.0), "Clips", kept, Action::Clips, s.clips, false);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, y, inner.w, 92.0), "Clips", Action::Clips, s.clips, false);
 
     label(c, f, inner.x, y + 92.0 + 40.0, "HOW MUCH A CLIP KEEPS");
     let lengths: Vec<(String, Action, bool)> = CLIP_LENGTHS.iter().map(|&n| (length(n), Action::ClipLength(n), s.clip_secs == n)).collect();
