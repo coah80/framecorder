@@ -36,7 +36,8 @@ pub fn scrub(input: &str) -> String {
         .collect();
     out = HOME.replace_all(&out, "~").into_owned();
     for user in users {
-        if !user.is_empty() {
+        // steamos's own user names are on every headset, they identify nobody
+        if !user.is_empty() && !["steamos", "deck"].contains(&user.as_str()) {
             out = pattern(&format!(r"\b{}\b", regex::escape(&user)))
                 .replace_all(&out, "<user>")
                 .into_owned();
@@ -74,6 +75,7 @@ mod tests {
     fn private_data_is_removed_but_lan_and_persona_stay() {
         for (input, expected) in [
             ("/home/alice/log alice", "~/log <user>"),
+            ("/home/steamos/log on steamos", "~/log on steamos"),
             (r"C:\Users\alice\log", r"~\log"),
             ("/Users/alice/log", "~/log"),
             (
