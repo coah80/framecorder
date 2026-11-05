@@ -15,8 +15,8 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, pane: Rect, hits: &mut Vec
     card(c, left);
     let inner = Rect::new(left.x + INSET, left.y + 28.0, left.w - 2.0 * INSET, left.h - 56.0);
     if !m.sync.available {
-        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, "The sync service isn't running on this headset", RED, 1.0);
-        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, "Run the installer again to set it up.", SUBTEXT0, 1.0);
+        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, SYNC_MISSING, RED, 1.0);
+        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, &SYNC_FIX.join(" "), SUBTEXT0, 1.0);
         return;
     }
     match m.sync.pairing {
