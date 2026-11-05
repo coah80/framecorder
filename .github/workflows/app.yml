@@ -44,7 +44,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev nasm
 
       # the live preview test decodes a real stream with the ffmpeg cli, like the app does
       - uses: FedericoCarboni/setup-ffmpeg@v3
@@ -56,6 +56,32 @@ jobs:
 
       - name: test
         run: cargo test --release
+
+      # the small ffmpeg the app ships next to itself for thumbnails and the
+      # live picture (see ffmpeg.sh), built once per version of that script
+      - id: ffcache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-bin
+          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('desktop/ffmpeg.sh', 'packaging/ffmpeg.sh') }}
+      - name: ffmpeg for the app (linux)
+        if: startsWith(matrix.os, 'ubuntu') && steps.ffcache.outputs.cache-hit != 'true'
+        run: ./ffmpeg.sh ../ffmpeg-bin
+      - name: ffmpeg for the app (macos)
+        if: startsWith(matrix.os, 'macos') && steps.ffcache.outputs.cache-hit != 'true'
+        run: |
+          brew install nasm
+          ./ffmpeg.sh ../ffmpeg-bin/arm64
+          ./ffmpeg.sh ../ffmpeg-bin/x86_64 x86_64
+      - uses: msys2/setup-msys2@v2
+        if: startsWith(matrix.os, 'windows') && steps.ffcache.outputs.cache-hit != 'true'
+        with:
+          msystem: UCRT64
+          install: make diffutils curl tar mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm
+      - name: ffmpeg for the app (windows)
+        if: startsWith(matrix.os, 'windows') && steps.ffcache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: ./ffmpeg.sh ../ffmpeg-bin
 
       # an AppImage, built on the oldest ubuntu ci has so it runs on most
       # distros. linuxdeploy bundles the libraries a distro might not have and
@@ -75,6 +101,7 @@ jobs:
             --desktop-file linux/com.framecorder.desktop.desktop \
             --icon-file ../assets/icons/128x128@2x.png --icon-filename framecorder \
             --exclude-library 'libxkbcommon*' --exclude-library 'libxcb-xkb*'
+          install -m755 ../ffmpeg-bin/ffmpeg AppDir/usr/bin/ffmpeg
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir "../${{ matrix.file }}"
 
       # windows gets an installer, see windows/installer.iss
@@ -90,7 +117,7 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
-          & $iscc /Q "/DVersion=$version" "/DExe=$PWD\target\release\framecorder-desktop.exe" "/DOutDir=$PWD\.." windows\installer.iss
+          & $iscc /Q "/DVersion=$version" "/DExe=$PWD\target\release\framecorder-desktop.exe" "/DFfmpeg=$PWD\..\ffmpeg-bin\ffmpeg.exe" "/DOutDir=$PWD\.." windows\installer.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # a mac app has to be a bundle: one binary for apple silicon and intel,
@@ -105,6 +132,7 @@ jobs:
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           lipo -create -output "$app/Contents/MacOS/framecorder-desktop" \
             target/aarch64-apple-darwin/release/framecorder-desktop target/x86_64-apple-darwin/release/framecorder-desktop
+          lipo -create -output "$app/Contents/MacOS/ffmpeg" ../ffmpeg-bin/arm64/ffmpeg ../ffmpeg-bin/x86_64/ffmpeg
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           sed "s/VERSION/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
           cp ../assets/icons/icon.icns "$app/Contents/Resources/icon.icns"

@@ -4,13 +4,16 @@
 ; menu and desktop shortcuts, and it's listed in installed apps to remove.
 ; the app's own updater runs it with /VERYSILENT, and it starts the app again.
 ;
-; iscc /DVersion=0.1.1 /DExe=<framecorder-desktop.exe> /DOutDir=<dir> installer.iss
+; iscc /DVersion=0.1.1 /DExe=<framecorder-desktop.exe> /DFfmpeg=<ffmpeg.exe> /DOutDir=<dir> installer.iss
 
 #ifndef Version
   #error pass the version, /DVersion=x.y.z
 #endif
 #ifndef Exe
   #error pass the built app, /DExe=path\to\framecorder-desktop.exe
+#endif
+#ifndef Ffmpeg
+  #error pass the small ffmpeg from desktop/ffmpeg.sh, /DFfmpeg=path\to\ffmpeg.exe
 #endif
 #ifndef OutDir
   #define OutDir "."
@@ -45,6 +48,8 @@ SolidCompression=yes
 
 [Files]
 Source: "{#Exe}"; DestDir: "{app}"; DestName: "framecorder.exe"; Flags: ignoreversion
+; thumbnails and the live picture, the app looks next to itself first
+Source: "{#Ffmpeg}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; the same id the app gives itself at startup, so its notifications are its own
