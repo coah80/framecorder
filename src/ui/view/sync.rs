@@ -67,7 +67,7 @@ fn devices(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<Hit
             c.fill_rect(Rect::new(track.x, track.y, track.w * t.percent() as f32 / 100.0, track.h), MAUVE, 0.9);
         }
 
-        let hovered = m.hover == Some(Action::RemoveDevice(i));
+        let hovered = m.over(remove);
         c.stroke_rrect(remove, 12.0, 1.5, if hovered { RED } else { SURFACE1 }, if hovered { 0.9 } else { 0.6 });
         let (rx, ry) = remove.center();
         c.text_centered(f, Face::Body, 15.0, rx, ry + 5.5, "Remove", if hovered { RED } else { SUBTEXT0 }, 1.0);
@@ -105,7 +105,7 @@ fn pager(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, page: usize, pages: 
             continue;
         };
         let action = Action::DevicePage(to);
-        let hovered = m.hover == Some(action);
+        let hovered = m.over(b);
         c.fill_rrect(b, 12.0, if hovered { MAUVE } else { SURFACE0 }, if hovered { 0.12 } else { 0.4 });
         c.stroke_rrect(b, 12.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, 0.6);
         c.text_centered(f, Face::Body, 26.0, b.x + b.w / 2.0, r.y + r.h / 2.0 + 9.0, glyph, if hovered { MAUVE } else { TEXT }, 1.0);

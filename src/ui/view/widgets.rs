@@ -11,7 +11,7 @@ pub fn card(c: &mut Canvas, r: Rect) {
 /// A button: mauve filled when it's the main thing to do, outlined otherwise.
 #[allow(clippy::too_many_arguments)]
 pub fn button(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, label: &str, action: Action, primary: bool) {
-    let hovered = m.hover == Some(action);
+    let hovered = m.over(r);
     let (cx, cy) = r.center();
     if primary {
         c.fill_rrect(r, 14.0, MAUVE, if hovered { 1.0 } else { 0.9 });
@@ -33,7 +33,7 @@ pub fn segmented(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, 
     let w = (track.w - 8.0) / options.len() as f32;
     for (i, &(text, action, selected)) in options.iter().enumerate() {
         let seg = Rect::new(track.x + 4.0 + i as f32 * w, track.y + 4.0, w, track.h - 8.0);
-        let hovered = !locked && m.hover == Some(action);
+        let hovered = !locked && m.over(seg);
         if selected {
             c.fill_rrect(seg, 11.0, MAUVE, alpha);
         } else if hovered {
@@ -93,7 +93,7 @@ fn switch(c: &mut Canvas, r: Rect, on: bool, alpha: f32) {
 #[allow(clippy::too_many_arguments)]
 pub fn toggle(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, name: &str, action: Action, on: bool, locked: bool) {
     let alpha = if locked { 0.4 } else { 1.0 };
-    let hovered = !locked && m.hover == Some(action);
+    let hovered = !locked && m.over(r);
     c.fill_rrect(r, 14.0, SURFACE0, 0.40 * alpha);
     c.stroke_rrect(r, 14.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, if hovered { 0.6 } else { 0.5 } * alpha);
     c.text(f, Face::BodyMedium, 18.0, r.x + 18.0, r.y + r.h / 2.0 + 6.5, name, if on { TEXT } else { SUBTEXT0 }, alpha);
@@ -118,7 +118,7 @@ pub fn toggle_row(
     locked: bool,
 ) {
     let alpha = if locked { 0.4 } else { 1.0 };
-    let hovered = !locked && m.hover == Some(action);
+    let hovered = !locked && m.over(r);
     c.fill_rrect(r, 16.0, SURFACE0, 0.40 * alpha);
     c.stroke_rrect(r, 16.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, if hovered { 0.6 } else { 0.5 } * alpha);
     c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 - 4.0, name, TEXT, alpha);

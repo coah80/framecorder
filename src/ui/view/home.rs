@@ -70,7 +70,7 @@ fn settings_rows(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut V
     for (i, (name, value, section)) in rows.into_iter().enumerate() {
         let row = Rect::new(r.x + 10.0, r.y + 8.0 + i as f32 * ROW_H, r.w - 20.0, ROW_H);
         let action = Action::Open(section);
-        let hovered = !locked && m.hover == Some(action);
+        let hovered = !locked && m.over(row);
         if hovered {
             c.fill_rrect(row, 14.0, MAUVE, 0.08);
         }
@@ -104,7 +104,7 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
     let text = if m.sync.available { "Pair a device" } else { "Details" };
     let w = f.measure(Face::BodyMedium, 15.0, text);
     let link = Rect::new(r.x + r.w - 24.0 - w - 20.0, r.y + 14.0, w + 20.0, 44.0);
-    let hovered = m.hover == Some(action);
+    let hovered = m.over(link);
     c.text(f, Face::BodyMedium, 15.0, link.x + 10.0, r.y + 36.0, text, MAUVE, if hovered { 1.0 } else { 0.8 });
     hits.push(Hit { rect: link, action });
 
@@ -139,7 +139,7 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
         // The section has them all, a page at a time.
         let more = format!("and {} more", list.len() - shown);
         let row = Rect::new(x, r.y + 56.0 + shown as f32 * 52.0, r.w - 48.0, 44.0);
-        let hovered = m.hover == Some(action);
+        let hovered = m.over(row);
         c.text(f, Face::Body, 15.0, row.x + 12.0, row.y + row.h / 2.0 + 5.5, &more, if hovered { MAUVE } else { OVERLAY1 }, 1.0);
         hits.push(Hit { rect: row, action });
     }
@@ -147,7 +147,6 @@ fn sync_card(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut Vec<H
 
 fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
     let r = Rect::new(PAD, CONTENT_Y, LEFT_W, CONTENT_H);
-    let hovered = m.hover == Some(Action::Record);
     let recording = m.locked();
     let accent = if recording { RED } else { MAUVE };
     c.fill_rrect(r, 24.0, SURFACE0, 0.40);
@@ -155,6 +154,7 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
 
     let (cx, cy) = (r.x + r.w / 2.0, r.y + 160.0);
     let button = Rect::new(cx - 132.0, cy - 132.0, 264.0, 264.0);
+    let hovered = m.over(button);
     c.fill_circle(cx, cy, 130.0, accent, if hovered { 0.14 } else { 0.08 });
     c.ring(cx, cy, 132.0, 5.0, accent, if hovered { 1.0 } else { 0.7 });
     if recording {
@@ -194,7 +194,7 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
 
     let pill = Rect::new(r.x + inset + w + 14.0, row_y, w, 52.0);
     let can_clip = s.clips && !recording && !m.clip_cooling;
-    let hovered = can_clip && m.hover == Some(Action::ClipNow);
+    let hovered = can_clip && m.over(pill);
     let alpha = if can_clip { 1.0 } else { 0.4 };
     c.fill_rrect(pill, 14.0, MAUVE, if hovered { 0.22 } else { 0.12 } * alpha);
     c.stroke_rrect(pill, 14.0, 1.5, MAUVE, if hovered { 0.9 } else { 0.5 } * alpha);

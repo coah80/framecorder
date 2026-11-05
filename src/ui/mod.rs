@@ -172,7 +172,9 @@ struct App {
     recorder: Option<Recorder>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
-    hover: Option<Action>,
+    pointer: Option<(f32, f32)>,
+    /// Which hit the pointer's over, to redraw only when that changes.
+    over: Option<usize>,
     hits: Vec<Hit>,
     dirty: bool,
     shown_second: u64,
@@ -257,7 +259,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let page = usize::from(state == "many-2");
     let sync = SyncView { available: state != "setup-no-sync", devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
-    let hover = match state {
+    let hover_on = match state {
         "idle" => Some(Action::Record),
         "report-written" => Some(Action::Send),
         _ => None,
@@ -279,14 +281,19 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         clip_cooling: false,
         unlocked,
         status,
-        hover,
+        pointer: None,
         note,
         relocked: state == "relocked",
         free,
         report,
         autostart: state != "general-off",
     };
-    view::draw(&mut canvas, &mut fonts, &model);
+    let hits = view::draw(&mut canvas, &mut fonts, &model);
+    // a hover state: the pointer in the middle of that control, drawn again
+    if let Some(h) = hover_on.and_then(|a| hits.iter().find(|h| h.action == a)) {
+        let model = Model { pointer: Some((h.rect.x + h.rect.w / 2.0, h.rect.y + h.rect.h / 2.0)), ..model };
+        view::draw(&mut canvas, &mut fonts, &model);
+    }
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
 }
@@ -542,7 +549,8 @@ impl App {
             recorder: None,
             recording: None,
             note: None,
-            hover: None,
+            pointer: None,
+            over: None,
             hits: Vec::new(),
             dirty: true,
             shown_second: u64::MAX,
@@ -580,9 +588,10 @@ impl App {
     fn handle(&mut self, event: Event) -> bool {
         match event {
             Event::MouseMove { x, y } => {
-                let hover = self.hit(x, y);
-                if hover != self.hover {
-                    self.hover = hover;
+                self.pointer = Some((x, y));
+                let over = self.hits.iter().position(|h| h.rect.contains(x, y));
+                if over != self.over {
+                    self.over = over;
                     self.dirty = true;
                 }
             }
@@ -1059,7 +1068,7 @@ impl App {
             self.report.open();
         }
         self.screen = screen;
-        self.hover = None;
+        self.over = None;
         self.dirty = true;
     }
 
@@ -1162,7 +1171,7 @@ impl App {
             clip_cooling: self.clipped_at.is_some(),
             unlocked: self.unlocked,
             status,
-            hover: self.hover,
+            pointer: self.pointer,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: self.relocked,
             free: self.free,

@@ -61,7 +61,7 @@ fn description(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
 
     let report = &m.report;
     let b = Rect::new(x, r.y + 56.0, r.w - 2.0 * INSET, BOX_H);
-    let hovered = report.editable() && m.hover == Some(Action::Type);
+    let hovered = report.editable() && m.over(b);
     c.fill_rrect(b, 16.0, BASE, 0.6);
     let (stroke, alpha, width) = match (report.typing, hovered) {
         (true, _) => (MAUVE, 0.9, 2.0),
