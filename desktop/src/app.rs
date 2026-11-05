@@ -262,7 +262,7 @@ impl FrameApp {
             thumbs: HashMap::new(),
             ffmpeg: false,
             report: report::State::new(cx.focus_handle()),
-            live_view: live::View::new(),
+            live_view: live::View::new(cx.focus_handle()),
             toast_task: None,
             _tasks: tasks,
         };
@@ -1067,7 +1067,9 @@ pub fn narrow(window: &Window) -> bool {
 
 impl Render for FrameApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if self.page == Page::Pair {
+        let body = if self.page == Page::Live && self.showing_fullscreen(window, cx) {
+            live::fullscreen(self, window, cx)
+        } else if self.page == Page::Pair {
             pair::render(self, window, cx).into_any_element()
         } else {
             div()

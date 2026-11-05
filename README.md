@@ -75,7 +75,7 @@ on the desktop app, "live" in the sidebar. start it and it plays right there, an
 2. uncheck "local file"
 3. paste that address into input, and ok
 
-obs plays it like any other source, so record, stream or crop it from there. anything else that opens a url works the same (vlc, ffmpeg). on android, "live" in the app plays it on the phone. from a terminal, `framecorder-app live` prints the address and waits.
+obs plays it like any other source, so record, stream or crop it from there. anything else that opens a url works the same (vlc, ffmpeg). on android, "live" in the app plays it on the phone. both apps go fullscreen with it (the button on the picture), with sound, so you can cast or airplay the screen to a tv. from a terminal, `framecorder-app live` prints the address and waits.
 
 a few things to know: the tab says when someone's watching. while the framecorder tab itself is on screen the stream holds its last frame, the same as recordings, so the controls never end up on it. a headset on an older framecorder doesn't have live yet, the app tells you to update it.
 

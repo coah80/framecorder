@@ -42,6 +42,7 @@ pub const SCREENS: &[&str] = &[
     "live",
     "live-connecting",
     "live-on",
+    "live-fullscreen",
     "live-error",
     "live-old",
     "live-no-ffmpeg",
@@ -304,6 +305,10 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
         "live" => seed_live(app, None, false),
         "live-connecting" => seed_live(app, Some(LivePhase::Connecting), false),
         "live-on" => seed_live(app, Some(LivePhase::Live), true),
+        "live-fullscreen" => {
+            seed_live(app, Some(LivePhase::Live), true);
+            app.live_view.full = true;
+        }
         "live-error" => seed_live(app, Some(LivePhase::Error), false),
         "live-old" => {
             seed_live(app, None, false);

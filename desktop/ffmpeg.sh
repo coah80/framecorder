@@ -1,9 +1,10 @@
 #!/bin/sh
 # builds the small ffmpeg the desktop app ships next to itself, for the grid's
-# thumbnails and the live page's picture. most people don't have ffmpeg, and a
-# mac app couldn't use brew's anyway: apps don't get the shell's PATH. lgpl,
-# and only what those two need: reading mp4, mkv and the live stream,
-# decoding h.264 and hevc, scaling, and writing a jpeg or raw frames.
+# thumbnails and the live page's picture and sound. most people don't have
+# ffmpeg, and a mac app couldn't use brew's anyway: apps don't get the shell's
+# PATH. lgpl, and only what those need: reading mp4, mkv and the live stream,
+# decoding h.264, hevc and aac, scaling and resampling, and writing a jpeg,
+# raw frames or raw samples.
 # same pinned source as packaging/ffmpeg.sh.
 #
 #   desktop/ffmpeg.sh OUT          for this machine, ffmpeg (or ffmpeg.exe) lands in OUT
@@ -37,10 +38,10 @@ if [ -n "$ARCH" ]; then
     set -- "$@" --enable-cross-compile --arch="$ARCH" --target-os=darwin --cc="clang -arch $ARCH" --extra-ldflags="-arch $ARCH"
 fi
 ./configure "$@" --disable-autodetect --disable-doc --disable-debug --enable-small \
-    --disable-everything --disable-ffplay --disable-ffprobe --disable-avdevice --disable-swresample --disable-postproc \
-    --enable-protocol=file,pipe,http,tcp --enable-demuxer=mov,matroska,mpegts --enable-parser=h264,hevc \
-    --enable-decoder=h264,hevc --enable-filter=scale,fps,format,pad,null \
-    --enable-encoder=mjpeg,rawvideo --enable-muxer=image2,rawvideo >/dev/null ||
+    --disable-everything --disable-ffplay --disable-ffprobe --disable-avdevice --disable-postproc \
+    --enable-protocol=file,pipe,http,tcp --enable-demuxer=mov,matroska,mpegts --enable-parser=h264,hevc,aac \
+    --enable-decoder=h264,hevc,aac --enable-filter=scale,fps,format,pad,null,aresample,aformat,anull \
+    --enable-encoder=mjpeg,rawvideo,pcm_f32le --enable-muxer=image2,rawvideo,pcm_f32le >/dev/null ||
     { tail -n 20 ffbuild/config.log; exit 1; }
 make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)" >/dev/null
 for bin in ffmpeg ffmpeg.exe; do
