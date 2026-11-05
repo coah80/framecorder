@@ -205,8 +205,10 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 /// Pairing is the one step that's fine to leave for later.
 fn pair(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     if !m.sync.available {
-        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, SYNC_MISSING, RED, 1.0);
-        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, &SYNC_FIX.join(" "), SUBTEXT0, 1.0);
+        let (what, fix) = sync_problem(m);
+        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, what, RED, 1.0);
+        let fix = f.fit(Face::Body, 17.0, &fix.join(" "), inner.w);
+        c.text(f, Face::Body, 17.0, inner.x, inner.y + 58.0, &fix, SUBTEXT0, 1.0);
         return;
     }
     // The code looks the same as in settings.

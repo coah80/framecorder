@@ -299,6 +299,12 @@ pub fn available() -> bool {
     read_json("info.json").is_some()
 }
 
+/// Why the sync service's last start failed, as it wrote it down.
+pub fn start_error() -> Option<String> {
+    let text = std::fs::read_to_string(dir()?.join("start-error.txt")).ok()?;
+    Some(text.trim().to_string()).filter(|t| !t.is_empty())
+}
+
 /// Takes the code back so nobody can use it after pairing's been closed.
 pub fn end() {
     if let Some(d) = dir() {

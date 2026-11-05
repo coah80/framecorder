@@ -74,6 +74,12 @@ pub fn relocked() -> bool {
     home().is_ok_and(|h| h.join(RELOCK).exists())
 }
 
+/// Starts the sync service, for when it isn't running. It's a user service,
+/// so this needs no password.
+pub fn start_sync() -> bool {
+    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])
+}
+
 /// Whether the tab starts with SteamVR.
 pub fn autostart() -> bool {
     quiet("systemctl", &["--user", "is-enabled", "--quiet", "framecorder-ui.service"])

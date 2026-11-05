@@ -118,6 +118,8 @@ pub enum Status {
 /// and the code on show while pairing.
 pub struct SyncView<'a> {
     pub available: bool,
+    /// Why the sync service couldn't start, when it said.
+    pub error: Option<&'a str>,
     pub devices: &'a [Device],
     /// Which page of the list the sync section is on.
     pub page: usize,
@@ -301,10 +303,20 @@ fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
 /// A report is a GitHub issue anyone can read.
 const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with your Steam name and framecorder's logs. Nothing from your videos.";
 
-/// The sync service writes its info when it first starts, so without it
-/// the service never ran here. The install command sets it up again.
-const SYNC_MISSING: &str = "Sync isn't running on this headset";
-const SYNC_FIX: [&str; 2] = ["Run the install command from", "framecorder.coah80.com again."];
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
+/// What's wrong when sync isn't up: the reason the service gave, or, when it
+/// never got to say (the tab starts it itself, so then it's missing), the
+/// install command that puts it back.
+fn sync_problem(m: &Model) -> (&'static str, Vec<String>) {
+    match m.sync.error {
+        Some(why) => ("Sync couldn't start", vec![capitalized(why)]),
+        None => ("Sync isn't running on this headset", vec!["Run the install command from".into(), "framecorder.coah80.com again.".into()]),
+    }
+}
 
 /// An update replaced the recorder, which drops its permission.
 const RELOCKED: &str = "Updated. Recording SteamVR's view until the installer unlocks the panels again.";

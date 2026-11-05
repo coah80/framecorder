@@ -229,6 +229,7 @@ impl Mock {
             screen: self.screen,
             sync: SyncView {
                 available: self.sync_available,
+                error: None,
                 devices: &self.devices,
                 page: self.page,
                 pairing: self.pairing.as_ref().map(Ok),

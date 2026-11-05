@@ -53,6 +53,10 @@ impl Paths {
     pub fn info(&self) -> PathBuf {
         self.state.join("info.json")
     }
+    /// Why the last start failed, for the tab to show instead of guessing.
+    pub fn start_error(&self) -> PathBuf {
+        self.state.join("start-error.txt")
+    }
     pub fn pairing(&self) -> PathBuf {
         self.state.join("pairing.json")
     }
