@@ -203,10 +203,11 @@ struct App {
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
 /// the look without a headset on. `state` is idle, recording, saved or toast,
-/// a settings section, or a step of the setup (setup-welcome and so on).
+/// a settings section, or a step of the setup (setup-shape and so on).
 /// For what sync shows: live and sync-live (a download, a device away, one
 /// on the old app), updating, update-failed, low-space, long-name, many and
-/// many-2 (the second page), each with -home for the home screen's card.
+/// many-2 (the second page), each with -home for the home screen's card,
+/// and unpaired and no-sync for the home screen with nothing paired.
 /// watching and watching-2 are the home screen with apps on the live view,
 /// video-both the video section with both eyes blended, and reporting an
 /// issue is report, report-gathering, report-typing, report-written,
@@ -232,13 +233,11 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "clips" => Screen::Settings(Section::Clips),
         "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
-        "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
-        "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
+        "setup-shape" | "setup-locked-out" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
         "setup-quality" => Screen::Onboarding(Step::Quality),
         "setup-audio" => Screen::Onboarding(Step::Audio),
         "setup-clips" | "setup-no-sync" => Screen::Onboarding(Step::Clips),
         "setup-sync" | "setup-pair" => Screen::Onboarding(Step::Sync),
-        "setup-done" => Screen::Onboarding(Step::Done),
         s if s.starts_with("report") => Screen::Report,
         _ => Screen::Home,
     };
@@ -257,7 +256,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         _ => Update::Idle,
     };
     let page = usize::from(state == "many-2");
-    let sync = SyncView { available: state != "setup-no-sync", devices: &devices, page, pairing, update: &update };
+    let sync = SyncView { available: !matches!(state, "setup-no-sync" | "no-sync"), devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover_on = match state {
         "idle" => Some(Action::Record),
@@ -347,6 +346,7 @@ fn sample_devices(state: &str) -> Vec<Device> {
             .enumerate()
             .map(|(i, name)| live(&i.to_string(), name, if i % 2 == 0 { Presence::Connected } else { Presence::Away }, false, None))
             .collect(),
+        "unpaired" | "no-sync" | "setup-no-sync" => Vec::new(),
         _ => vec![Device::paired("a", "Pixel 9"), Device::paired("b", "COLEPCWIN")],
     }
 }
@@ -560,7 +560,7 @@ impl App {
             toast_until: None,
             buzz: false,
             // The first time round the setup comes before anything else.
-            screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Welcome) },
+            screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Shape) },
             sync: Sync::look(),
             clipped_at: None,
             unlocked,

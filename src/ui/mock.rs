@@ -72,7 +72,7 @@ impl Mock {
         };
         Self {
             settings: Settings { onboarded: start != "setup", ..Settings::default() },
-            screen: if start == "setup" { Screen::Onboarding(Step::Welcome) } else { Screen::Home },
+            screen: if start == "setup" { Screen::Onboarding(Step::Shape) } else { Screen::Home },
             recording: None,
             clipped_at: None,
             note: None,
