@@ -105,7 +105,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .look { margin: var(--gap) 0 0; display: grid; grid-template-columns: 1fr 22%; gap: 32px; align-items: end; }
 .look img { width: 100%; border-radius: 20px; border: 1px solid var(--surface0); }
 
-.get, .give { margin-top: var(--gap); display: grid; gap: 24px; justify-items: start; }
+/* one column that can shrink, or the long install command widens the whole section past a phone screen */
+.get, .give { margin-top: var(--gap); display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; justify-items: start; }
 .get h2, .give h2 { font-size: clamp(36px, 5vw, 64px); }
 .get p, .give p { color: var(--subtext0); max-width: 52ch; text-wrap: pretty; }
 .get p code { font: 500 .95em var(--data); color: var(--text); }
