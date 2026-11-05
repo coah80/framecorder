@@ -312,34 +312,33 @@ impl FrameApp {
     pub fn delete_selected(&mut self, cx: &mut Context<Self>) {
         let picked = self.selected();
         self.selection.asking = false;
-        let said = what(&picked);
         if self.demo {
+            let said = what(&picked);
             self.clips = self.clips.iter().filter(|c| !self.selection.picked.contains(&c.key)).cloned().collect();
             self.clear_selection(cx);
             self.toast(format!("moved {said} to {}", bin()), cx);
             return;
         }
-        let (there, gone): (Vec<&Clip>, Vec<&Clip>) = picked.iter().partition(|c| c.location.exists());
+        let there: Vec<Clip> = picked.into_iter().filter(|c| c.location.exists()).collect();
+        self.drop_gone(cx);
+        if there.is_empty() {
+            self.clear_selection(cx);
+            return;
+        }
+        let said = what(&there);
         let keys: Vec<String> = there.iter().map(|c| c.key.clone()).collect();
         let paths: Vec<_> = there.iter().map(|c| c.location.clone()).collect();
-        let missing = gone.len();
         cx.spawn(async move |this, cx| {
             let res = cx
                 .background_executor()
-                .spawn(async move {
-                    if paths.is_empty() {
-                        return Ok(());
-                    }
-                    trash::delete_all(&paths).map_err(|e| e.to_string())
-                })
+                .spawn(async move { trash::delete_all(&paths).map_err(|e| e.to_string()) })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 match res {
                     Ok(()) => {
                         app.clips = app.clips.iter().filter(|c| !keys.contains(&c.key)).cloned().collect();
                         app.clear_selection(cx);
-                        let note = if missing > 0 { format!(", {missing} had already been moved or deleted") } else { String::new() };
-                        app.toast(format!("moved {said} to {}{note}", bin()), cx);
+                        app.toast(format!("moved {said} to {}", bin()), cx);
                     }
                     Err(e) => app.toast(format!("couldn't delete them: {e}"), cx),
                 }
@@ -359,7 +358,7 @@ impl FrameApp {
     pub fn reveal_selected(&mut self, cx: &mut Context<Self>) {
         match self.selected().iter().find(|c| c.location.exists()) {
             Some(clip) => cx.reveal_path(&clip.location),
-            None => self.toast("those files have been moved or deleted", cx),
+            None => self.drop_gone(cx),
         }
     }
 }
