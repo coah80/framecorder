@@ -34,6 +34,8 @@ object FcIcons {
     val Down = stroke("down", "M12 5v14M6 13l6 6 6-6")
     val Qr = stroke("qr", "M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3", rrect(8f, 8f, 8f, 8f, 1.5f))
     val Keyboard = stroke("keyboard", rrect(3f, 6f, 18f, 12f, 3f), "M7 10h.01M11 10h.01M15 10h.01M8 14h8")
+    val Fullscreen = stroke("fullscreen", "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5")
+    val FullscreenExit = stroke("exit fullscreen", "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5")
     val Link = stroke("link", "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1")
     val Game = stroke("game", rrect(2.5f, 7f, 19f, 11f, 5.5f), "M7 11v3M5.5 12.5h3M15.5 12h.01M18 14h.01")
     val Shield = stroke("shield", "M12 3L5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z", "M9 12l2 2 4-4")

@@ -44,7 +44,7 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev nasm
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev libasound2-dev nasm
 
       # the live preview test decodes a real stream with the ffmpeg cli, like the app does
       - uses: FedericoCarboni/setup-ffmpeg@v3

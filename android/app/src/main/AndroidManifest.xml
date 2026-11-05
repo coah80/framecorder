@@ -29,10 +29,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Framecorder">
 
+        <!-- compose redraws on a turn by itself. recreating the activity would
+             drop the live player, and with it live view -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

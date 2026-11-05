@@ -2,9 +2,14 @@ package com.framecorder.app.ui.live
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.pm.ActivityInfo
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -46,11 +52,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -86,6 +100,9 @@ private const val LOOK_EVERY_MS = 500L
 
 /** How long after the player loses the stream before it opens the URL again. */
 private const val REOPEN_AFTER_MS = 1000L
+
+/** How long the exit button stays up in fullscreen after a tap. */
+private const val CONTROLS_FOR_MS = 3000L
 
 /**
  * Live view: what the headset shows, played here a moment behind. It runs
@@ -181,6 +198,18 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
     val statusColors = LocalStatusColors.current
     val phase = status?.phase?.takeIf { wanted }
     val live = phase == LivePhase.LIVE
+    // fullscreen lasts as long as live view does, through reconnects
+    var full by rememberSaveable { mutableStateOf(false) }
+    if (!wanted) full = false
+    // the screen stays on while it plays, or a cast goes dark
+    val view = LocalView.current
+    DisposableEffect(live) {
+        view.keepScreenOn = live
+        onDispose { view.keepScreenOn = false }
+    }
+    if (full) {
+        FullscreenLive(player, live, phase, status?.error, onExit = { full = false })
+    }
     Box(Modifier.fillMaxSize().background(scheme.surface)) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 140.dp),
@@ -226,9 +255,15 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
                     .background(scheme.surfaceContainerHighest),
                 contentAlignment = Alignment.Center,
             ) {
-                if (live) {
+                if (live && !full) {
                     ContentFrame(player = player, surfaceType = SURFACE_TYPE_TEXTURE_VIEW, modifier = Modifier.fillMaxSize())
-                } else {
+                    IconButton(
+                        onClick = { full = true },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+                    ) {
+                        Icon(FcIcons.Fullscreen, contentDescription = "fullscreen", tint = Color.White)
+                    }
+                } else if (!live) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (phase == LivePhase.CONNECTING) {
                             LoadingIndicator(Modifier.size(40.dp))
@@ -335,6 +370,71 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
                     colors = ButtonDefaults.filledTonalButtonColors(),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                 ) { Text("open the frame tab") }
+            }
+        }
+    }
+}
+
+/**
+ * The live picture on its own: black around it, no system bars, turned to fit
+ * it, so the phone's screen can be cast or mirrored to a TV. Back, or the
+ * button a tap brings up, leaves it.
+ */
+@Composable
+private fun FullscreenLive(player: ExoPlayer, live: Boolean, phase: LivePhase?, error: String?, onExit: () -> Unit) {
+    val activity = LocalActivity.current
+    DisposableEffect(Unit) {
+        val before = activity?.requestedOrientation
+        val size = player.videoSize
+        activity?.requestedOrientation = if (size.height > size.width) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        onDispose { if (before != null) activity.requestedOrientation = before }
+    }
+    Dialog(
+        onDismissRequest = onExit,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        val view = LocalView.current
+        DisposableEffect(view) {
+            val window = (view.parent as? DialogWindowProvider)?.window
+            val bars = window?.let { WindowCompat.getInsetsController(it, view) }
+            bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars?.hide(WindowInsetsCompat.Type.systemBars())
+            view.keepScreenOn = true
+            onDispose { view.keepScreenOn = false }
+        }
+        BackHandler(onBack = onExit)
+        var tapped by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        var controls by remember { mutableStateOf(true) }
+        LaunchedEffect(tapped) {
+            controls = true
+            delay(CONTROLS_FOR_MS)
+            controls = false
+        }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { tapped = System.currentTimeMillis() },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (live) {
+                ContentFrame(player = player, surfaceType = SURFACE_TYPE_TEXTURE_VIEW, modifier = Modifier.fillMaxSize())
+            } else if (phase == LivePhase.ERROR) {
+                Text(error ?: "live view stopped", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            } else {
+                LoadingIndicator(Modifier.size(40.dp))
+            }
+            if (controls) {
+                IconButton(
+                    onClick = onExit,
+                    modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(12.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.45f)),
+                ) {
+                    Icon(FcIcons.FullscreenExit, contentDescription = "exit fullscreen", tint = Color.White)
+                }
             }
         }
     }

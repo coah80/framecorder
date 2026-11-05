@@ -32,6 +32,8 @@ trash = "5"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 # the live preview hands gpui frames the way its image cache holds them
 smallvec = "1"
+# fullscreen live view plays the stream's sound, gpui has no audio of its own
+cpal = "0.18"
 
 # finding and closing the old app, see oldapp.rs
 [target.'cfg(unix)'.dependencies]

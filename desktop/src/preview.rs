@@ -30,18 +30,46 @@ pub enum Note {
     Gone,
 }
 
+/// the biggest fullscreen picture, so a 4k screen doesn't mean copying 4k
+/// frames: casting goes out at 1080p anyway
+pub const FULL_MAX: (u32, u32) = (1920, 1080);
+
+/// how big and how often the pictures come
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+    /// None is every frame the stream has
+    pub fps: Option<u32>,
+}
+
+/// the small picture on the page
+pub const SMALL: Size = Size { width: WIDTH, height: HEIGHT, fps: Some(FPS) };
+
+/// a screen's pixels, shrunk to fit `FULL_MAX` (turned to match a portrait
+/// screen), even sized for the scaler
+pub fn full(width: u32, height: u32) -> Size {
+    let (max_w, max_h) = if height > width { (FULL_MAX.1, FULL_MAX.0) } else { FULL_MAX };
+    let scale = (max_w as f32 / width.max(1) as f32).min(max_h as f32 / height.max(1) as f32).min(1.0);
+    let even = |n: f32| ((n as u32) & !1).max(2);
+    Size { width: even(width as f32 * scale), height: even(height as f32 * scale), fps: None }
+}
+
 /// one ffmpeg, reading the stream until it's dropped
 pub struct Decoder {
     child: Child,
+    pub size: Size,
 }
 
 impl Decoder {
-    /// starts decoding `url`, handing each frame to `deliver` on a thread of
-    /// its own. `deliver` returning false stops it. the first frame takes a
-    /// moment: ffmpeg waits for a keyframe
-    pub fn start(url: &str, deliver: impl Fn(Arc<RenderImage>) -> bool + Send + 'static) -> std::io::Result<Self> {
+    /// starts decoding `url` into pictures of `size`, handing each to
+    /// `deliver` on a thread of its own. `deliver` returning false stops it.
+    /// the first frame takes a moment: ffmpeg waits for a keyframe
+    pub fn start(url: &str, size: Size, deliver: impl Fn(Arc<RenderImage>) -> bool + Send + 'static) -> std::io::Result<Self> {
+        let Size { width, height, fps } = size;
+        let rate = fps.map(|f| format!("fps={f},")).unwrap_or_default();
         let filter = format!(
-            "fps={FPS},scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,format=bgra,pad={WIDTH}:{HEIGHT}:-1:-1:color=black@0"
+            "{rate}scale={width}:{height}:force_original_aspect_ratio=decrease,format=bgra,pad={width}:{height}:-1:-1:color=black@0"
         );
         let mut child = thumbs::ffmpeg()
             .args(["-loglevel", "error", "-nostdin", "-fflags", "nobuffer", "-flags", "low_delay", "-an", "-i", url])
@@ -53,15 +81,15 @@ impl Decoder {
             return Err(std::io::Error::other("ffmpeg has no output"));
         };
         std::thread::Builder::new().name("live preview".into()).spawn(move || {
-            let mut buf = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+            let mut buf = vec![0u8; (width * height * 4) as usize];
             while out.read_exact(&mut buf).is_ok() {
-                let Some(frame) = frame(&buf) else { break };
+                let Some(frame) = frame(&buf, width, height) else { break };
                 if !deliver(frame) {
                     break;
                 }
             }
         })?;
-        Ok(Self { child })
+        Ok(Self { child, size })
     }
 }
 
@@ -73,8 +101,8 @@ impl Drop for Decoder {
 }
 
 /// one decoded picture, bgra as gpui keeps them
-fn frame(bgra: &[u8]) -> Option<Arc<RenderImage>> {
-    let image = RgbaImage::from_raw(WIDTH, HEIGHT, bgra.to_vec())?;
+fn frame(bgra: &[u8], width: u32, height: u32) -> Option<Arc<RenderImage>> {
+    let image = RgbaImage::from_raw(width, height, bgra.to_vec())?;
     Some(Arc::new(RenderImage::new(SmallVec::from_elem(Frame::new(image), 1))))
 }
 
@@ -121,7 +149,7 @@ mod tests {
             .expect("ffmpeg makes the fixture");
         assert!(made.success());
         let (tx, rx) = mpsc::channel();
-        let decoder = Decoder::start(tall.to_str().unwrap(), move |f| tx.send(f).is_ok()).unwrap();
+        let decoder = Decoder::start(tall.to_str().unwrap(), SMALL, move |f| tx.send(f).is_ok()).unwrap();
         let frame = rx.recv_timeout(Duration::from_secs(20)).expect("a frame within 20 s");
         let bytes = frame.as_bytes(0).unwrap();
         assert_eq!(bytes.len(), (WIDTH * HEIGHT * 4) as usize);
@@ -133,5 +161,16 @@ mod tests {
         assert_eq!(px(WIDTH - 10, HEIGHT / 2)[3], 0);
         drop(decoder);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// fullscreen pictures fit the screen but never go past 1080p, either way up
+    #[test]
+    fn fullscreen_size_fits_the_screen_up_to_1080p() {
+        let size = |w, h| (full(w, h).width, full(w, h).height);
+        assert_eq!(size(3840, 2160), (1920, 1080));
+        assert_eq!(size(2880, 1800), (1728, 1080));
+        assert_eq!(size(1366, 768), (1366, 768));
+        assert_eq!(size(1080, 2400), (864, 1920));
+        assert_eq!(full(1280, 720).fps, None);
     }
 }

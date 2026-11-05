@@ -99,7 +99,7 @@ docker build -t framecorder-dev tools/dev
 docker run --rm -v "$PWD":/src -v framecorder-target:/src/target -v framecorder-cargo:/root/.cargo/registry framecorder-dev sh -c 'packaging/ffmpeg.sh --for-tests && cargo test'
 ```
 
-The sync service (`sync/`) and the sync client (`app/`) build anywhere. The desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails and live picture use the small ffmpeg the release ships next to the app (`desktop/ffmpeg.sh`, built in `app.yml`); a dev build falls back to an installed `ffmpeg`, and without one the grid shows plain tiles.
+The sync service (`sync/`) and the sync client (`app/`) build anywhere. The desktop app (`desktop/`) needs `libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libasound2-dev` and a Vulkan driver on Linux, nothing extra on macOS or Windows. Its thumbnails, live picture and fullscreen live sound use the small ffmpeg the release ships next to the app (`desktop/ffmpeg.sh`, built in `app.yml`); a dev build falls back to an installed `ffmpeg`, and without one the grid shows plain tiles.
 
 **The installer** (`installer/`, Bun and OpenTUI). `--cpu='*' --os='*'` pulls every platform's native package, so it cross-compiles for the headset from x86:
 

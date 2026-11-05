@@ -3,16 +3,18 @@
 //! any player) can record it, and a small picture of it sits on the page.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use framecorder_app_lib::core::engine::{State, Status};
 use framecorder_app_lib::core::live::{LivePhase, LiveStatus};
 use gpui::{
-    div, img, prelude::*, px, AnyElement, ClipboardItem, Context, Div, FontWeight, ObjectFit, RenderImage, SharedString,
-    Task, Window,
+    div, img, prelude::*, px, AnyElement, ClickEvent, ClipboardItem, Context, Div, FocusHandle, FontWeight, KeyDownEvent,
+    ObjectFit, RenderImage, SharedString, Task, Window,
 };
 
 use crate::app::{narrow, FrameApp, Page};
 use crate::preview::{self, Decoder, Note};
+use crate::sound::Sound;
 use crate::theme::{self, a, c};
 use crate::widgets::{card, danger, data, dot, icon, label, outline, primary, spinner, title};
 use crate::{format, frame};
@@ -27,14 +29,45 @@ pub struct View {
     pub picture: Option<Arc<RenderImage>>,
     pub note: Note,
     decoder: Option<Decoder>,
+    /// which decoder the pictures coming in are from, so an old one's
+    /// leftovers don't land after a switch
+    generation: u64,
     tasks: Vec<Task<()>>,
+    /// the picture fills the screen, with sound, for casting it
+    pub full: bool,
+    /// the window has gone fullscreen since, so leaving it means leaving this
+    seen_full: bool,
+    /// the mouse last moved, the exit button shows for a moment after
+    moved: Instant,
+    sound: Option<Sound>,
+    /// the sound couldn't start, said once and not tried again until next time
+    no_sound: bool,
+    focus: FocusHandle,
 }
 
 impl View {
-    pub fn new() -> Self {
-        Self { frame: None, starting: false, demo_status: None, picture: None, note: Note::Waiting, decoder: None, tasks: Vec::new() }
+    pub fn new(focus: FocusHandle) -> Self {
+        Self {
+            frame: None,
+            starting: false,
+            demo_status: None,
+            picture: None,
+            note: Note::Waiting,
+            decoder: None,
+            generation: 0,
+            tasks: Vec::new(),
+            full: false,
+            seen_full: false,
+            moved: Instant::now(),
+            sound: None,
+            no_sound: false,
+            focus,
+        }
     }
 }
+
+/// how long the exit button stays after the mouse stops
+const CONTROLS_FOR: Duration = Duration::from_secs(3);
 
 /// the three obs steps, in order
 const OBS_STEPS: [&str; 3] = [
@@ -124,19 +157,27 @@ impl FrameApp {
 
     /// keeps the picture in step with the stream: decoding while it's live and
     /// the page is up, not otherwise. the page calls this as it draws
-    fn sync_preview(&mut self, cx: &mut Context<Self>) {
+    fn sync_preview(&mut self, window: &Window, cx: &mut Context<Self>) {
         let live = self.live_status().filter(|s| s.phase == LivePhase::Live && self.live_view.frame.is_some());
         let Some(status) = live else {
-            if self.live_view.decoder.is_some() || self.live_view.picture.is_some() {
+            if self.live_view.decoder.is_some() || self.live_view.picture.is_some() || self.live_view.sound.is_some() {
                 self.stop_preview(cx);
             }
             return;
         };
+        self.sync_sound(&status.url, cx);
+        let size = if self.live_view.full { full_size(window, cx) } else { preview::SMALL };
+        if self.live_view.decoder.as_ref().is_some_and(|d| d.size != size) {
+            self.live_view.decoder = None;
+            self.live_view.note = Note::Waiting;
+        }
         if self.demo || !self.ffmpeg || self.live_view.decoder.is_some() || self.live_view.note == Note::Gone {
             return;
         }
+        self.live_view.generation += 1;
+        let generation = self.live_view.generation;
         let (tx, rx) = async_channel::bounded::<Arc<RenderImage>>(1);
-        match Decoder::start(&status.url, move |frame| {
+        match Decoder::start(&status.url, size, move |frame| {
             // a frame the page hasn't drawn yet gets replaced, never queued
             let _ = tx.try_send(frame);
             !tx.is_closed()
@@ -151,6 +192,10 @@ impl FrameApp {
         self.live_view.tasks.push(cx.spawn(async move |this, cx| {
             while let Ok(frame) = rx.recv().await {
                 let alive = this.update(cx, |app, cx| {
+                    if app.live_view.generation != generation {
+                        cx.drop_image(frame, None);
+                        return;
+                    }
                     if let Some(old) = app.live_view.picture.replace(frame) {
                         cx.drop_image(old, None);
                     }
@@ -163,7 +208,7 @@ impl FrameApp {
             }
             // ffmpeg stopped on its own: the stream ended, or it couldn't read it
             let _ = this.update(cx, |app, cx| {
-                if app.live_view.decoder.take().is_some() {
+                if app.live_view.generation == generation && app.live_view.decoder.take().is_some() {
                     app.live_view.note = Note::Gone;
                 }
                 cx.notify();
@@ -171,7 +216,63 @@ impl FrameApp {
         }));
     }
 
+    /// sound plays only fullscreen
+    fn sync_sound(&mut self, url: &str, cx: &mut Context<Self>) {
+        if !self.live_view.full {
+            self.live_view.sound = None;
+            self.live_view.no_sound = false;
+            return;
+        }
+        if self.live_view.sound.is_some() || self.live_view.no_sound || self.demo || !self.ffmpeg {
+            return;
+        }
+        match Sound::start(url) {
+            Ok(sound) => self.live_view.sound = Some(sound),
+            Err(e) => {
+                log::warn!("no live sound: {e}");
+                self.live_view.no_sound = true;
+                self.toast(format!("no sound: {e}"), cx);
+            }
+        }
+    }
+
+    pub fn enter_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.live_view.full = true;
+        self.live_view.seen_full = false;
+        self.live_view.moved = Instant::now();
+        if !window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
+        self.live_view.focus.focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn exit_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.live_view.full = false;
+        if window.is_fullscreen() {
+            window.toggle_fullscreen();
+        }
+        cx.notify();
+    }
+
+    /// whether to draw the fullscreen picture. it ends with live view, or when
+    /// the window leaves fullscreen some other way (the system's own button)
+    pub fn showing_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.live_view.full {
+            return false;
+        }
+        if window.is_fullscreen() {
+            self.live_view.seen_full = true;
+        }
+        if !self.live_on() || (self.live_view.seen_full && !window.is_fullscreen()) {
+            self.exit_fullscreen(window, cx);
+            return false;
+        }
+        true
+    }
+
     pub fn stop_preview(&mut self, cx: &mut Context<Self>) {
+        self.live_view.sound = None;
         self.live_view.decoder = None;
         if let Some(old) = self.live_view.picture.take() {
             cx.drop_image(old, None);
@@ -193,7 +294,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
     let Some(s) = app.picked().cloned() else {
         return nothing(cx).into_any_element();
     };
-    app.sync_preview(cx);
+    app.sync_preview(window, cx);
     let narrow = narrow(window);
     let connected = s.state == State::Connected;
     let remote = app.live(&s.fingerprint).and_then(|l| l.remote.clone()).filter(|_| connected);
@@ -233,7 +334,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .child(now(&s, connected, can, on && mine, app.live_view.starting, status.as_ref(), cx).flex_1().min_w(px(300.)))
                 .child(watching(connected, can, watching_frame, players, narrow)),
         )
-        .child(picture(app, status.as_ref(), on && mine))
+        .child(picture(app, status.as_ref(), on && mine, cx))
         .child(obs(url.as_deref(), cx))
         .into_any_element()
 }
@@ -340,8 +441,9 @@ fn watching(connected: bool, can: bool, on_frame: Option<u32>, players: Option<u
 }
 
 /// the small picture, or why there isn't one
-fn picture(app: &FrameApp, status: Option<&LiveStatus>, on: bool) -> Div {
+fn picture(app: &FrameApp, status: Option<&LiveStatus>, on: bool, cx: &mut Context<FrameApp>) -> Div {
     let live = on && status.is_some_and(|st| st.phase == LivePhase::Live);
+    let can_full = live && (app.ffmpeg || app.demo);
     let body: AnyElement = match (&app.live_view.picture, live) {
         (Some(frame), _) => img(frame.clone()).size_full().object_fit(ObjectFit::Contain).into_any_element(),
         (None, false) => placeholder(icon("live", 22., c(theme::OVERLAY2)).into_any_element(), "start live view and it shows up here."),
@@ -356,7 +458,20 @@ fn picture(app: &FrameApp, status: Option<&LiveStatus>, on: bool) -> Div {
         .flex_col()
         .gap(px(10.))
         .p(px(16.))
-        .child(label("the picture"))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(label("the picture"))
+                .when(can_full, |d| {
+                    d.child(
+                        outline("live-fullscreen", "fullscreen")
+                            .child(icon("fullscreen", 14., c(theme::TEXT)))
+                            .on_click(cx.listener(|app, _, window, cx| app.enter_fullscreen(window, cx))),
+                    )
+                }),
+        )
         .child(
             div()
                 .w_full()
@@ -421,4 +536,56 @@ fn obs(url: Option<&str>, cx: &mut Context<FrameApp>) -> Div {
                 ),
         )
         .child(div().flex().flex_col().gap(px(8.)).children(OBS_STEPS.iter().enumerate().map(|(i, t)| step(i, t))))
+}
+
+/// the picture on its own, filling the screen, for casting the window
+pub fn fullscreen(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> AnyElement {
+    app.sync_preview(window, cx);
+    app.arm_tick(cx);
+    let controls = app.live_view.moved.elapsed() < CONTROLS_FOR;
+    let body: AnyElement = match (&app.live_view.picture, app.live_view.note) {
+        (Some(frame), _) => img(frame.clone()).size_full().object_fit(ObjectFit::Contain).into_any_element(),
+        (None, Note::Gone) => placeholder(icon("x", 18., c(theme::PEACH)).into_any_element(), "couldn't decode the stream here."),
+        (None, _) => placeholder(spinner("live-full-first", 18., c(theme::MAUVE)).into_any_element(), "waiting for the picture..."),
+    };
+    div()
+        .id("live-full")
+        .size_full()
+        .relative()
+        .bg(gpui::black())
+        .track_focus(&app.live_view.focus)
+        .on_key_down(cx.listener(|app, ev: &KeyDownEvent, window, cx| {
+            if matches!(ev.keystroke.key.as_str(), "escape" | "f") {
+                app.exit_fullscreen(window, cx);
+                cx.stop_propagation();
+            }
+        }))
+        .on_mouse_move(cx.listener(|app, _, _, cx| {
+            app.live_view.moved = Instant::now();
+            cx.notify();
+        }))
+        .on_click(cx.listener(|app, ev: &ClickEvent, window, cx| {
+            if ev.click_count() >= 2 {
+                app.exit_fullscreen(window, cx);
+            }
+        }))
+        .child(body)
+        .when(controls, |d| {
+            d.child(
+                div().absolute().top(px(20.)).right(px(20.)).child(
+                    outline("live-exit-fullscreen", "exit fullscreen")
+                        .bg(a(theme::CRUST, 0.8))
+                        .child(icon("exit-fullscreen", 14., c(theme::TEXT)))
+                        .on_click(cx.listener(|app, _, window, cx| app.exit_fullscreen(window, cx))),
+                ),
+            )
+        })
+        .into_any_element()
+}
+
+/// the screen the window's on, in pixels, as big as the picture should get
+fn full_size(window: &Window, cx: &gpui::App) -> preview::Size {
+    let logical = window.display(cx).map(|d| d.bounds().size).unwrap_or_else(|| window.viewport_size());
+    let scale = window.scale_factor();
+    preview::full((f32::from(logical.width) * scale) as u32, (f32::from(logical.height) * scale) as u32)
 }
