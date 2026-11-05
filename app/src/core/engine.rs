@@ -124,7 +124,7 @@ pub struct Engine {
     index: Mutex<Index>,
     sink: Arc<dyn Sink>,
     listener: Arc<dyn Listener>,
-    device_name: String,
+    pub(crate) device_name: String,
     app: String,
     running: Mutex<HashMap<String, Running>>,
     transfers: Mutex<HashMap<String, (u64, Progress)>>,

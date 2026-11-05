@@ -52,7 +52,9 @@ async fn diagnostics_preview_uses_authenticated_pinned_http_and_handles_old_head
             assert_eq!(preview.headset.unwrap()["frame"]["battery"]["percent"], 50);
         } else {
             assert!(preview.headset_unavailable.is_none());
-            assert_eq!(preview.headset.unwrap()["steam"]["name"], "Persona");
+            // a Steam name an older headset sends doesn't go on a public issue
+            assert!(preview.headset.unwrap()["steam"].get("name").is_none());
+            assert!(!body.contains("Persona"));
         }
     }
 }
@@ -71,7 +73,7 @@ async fn disconnected_and_unpaired_apps_can_still_preview_a_report() {
 }
 
 #[test]
-fn private_data_is_removed_without_losing_lan_addresses_or_persona() {
+fn private_data_is_removed_and_only_loopback_addresses_stay() {
     for text in [
         "/home/someone/test",
         r"C:\Users\someone\test",
@@ -89,6 +91,8 @@ fn private_data_is_removed_without_losing_lan_addresses_or_persona() {
         assert!(!redacted.contains("123456"), "{redacted}");
         assert_ne!(redacted, text, "{text}");
     }
-    let lan = "192.168.1.2:38619 10.0.0.1 172.16.0.2 127.0.0.1 ::1 fd00::1 Persona";
-    assert_eq!(report::redact(lan), lan);
+    assert_eq!(
+        report::redact("192.168.1.2:38619 10.0.0.1 172.16.0.2 127.0.0.1 ::1 fd00::1 framecorder_sync::server"),
+        "<ip>:38619 <ip> <ip> 127.0.0.1 ::1 <ip> framecorder_sync::server"
+    );
 }

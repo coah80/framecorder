@@ -13,7 +13,7 @@ const val DESCRIPTION_LIMIT = 4000
 data class ReportSummary(
     /** "framecorder android 0.2.0 · Android 16 (SDK 36) · Google Pixel 8". */
     val app: String,
-    /** The headset's framecorder, SteamOS, SteamVR and Steam name, or null when they couldn't be read. */
+    /** The headset's framecorder, SteamOS and SteamVR, or null when they couldn't be read. */
     val headset: String?,
     /** Why the headset's details are missing, in the core's words. */
     val headsetUnavailable: String?,
@@ -55,7 +55,6 @@ data class ReportSummary(
                         framecorder?.text("version")?.let { v -> "framecorder $v" + (framecorder.text("channel")?.let { c -> " ($c)" } ?: "") },
                         os?.let { o -> listOfNotNull(o.text("name"), o.text("version")).joinToString(" ").ifBlank { null } },
                         steam?.text("steamvr_version")?.let { v -> "SteamVR $v" },
-                        steam?.text("name")?.let { n -> "steam name $n" },
                     ).joinToString(" · ").ifBlank { "its details, without versions" }
                 },
                 headsetUnavailable = report.text("headset_unavailable"),

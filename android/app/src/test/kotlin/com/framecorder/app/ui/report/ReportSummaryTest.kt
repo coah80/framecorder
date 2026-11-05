@@ -20,7 +20,7 @@ class ReportSummaryTest {
             """,
         )
         assertEquals("framecorder android 0.2.0 · Android 16 (SDK 36) · Google Pixel 8", s.app)
-        assertEquals("framecorder 0.2.0 (dev) · SteamOS 3.7.14 · SteamVR 2.14.3 · steam name coah", s.headset)
+        assertEquals("framecorder 0.2.0 (dev) · SteamOS 3.7.14 · SteamVR 2.14.3", s.headset)
         assertEquals(3, s.recentErrors)
         assertEquals(listOf("recorder.log", "vrcompositor.txt"), s.headsetLogs)
         assertEquals(listOf("framecorder-android.log"), s.appLogs)

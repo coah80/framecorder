@@ -301,7 +301,7 @@ fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
 }
 
 /// A report is a GitHub issue anyone can read.
-const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with your Steam name and framecorder's logs. Nothing from your videos.";
+const PUBLIC_NOTE: &str = "This goes on a public GitHub issue anyone can read, with framecorder's logs. Nothing from your videos.";
 
 fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
