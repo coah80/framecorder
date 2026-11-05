@@ -9,6 +9,11 @@ fn main() {
         Some(i) if args.len() > i + 2 => {
             framecorder::ui::preview(args[i + 1].as_ref(), &args[i + 2])
         }
+        Some(_) => Err(anyhow::anyhow!("--preview needs a file and a state")),
+        _ if args.iter().any(|a| a == "--demo") => {
+            let port = args.iter().position(|a| a == "--demo").and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok());
+            framecorder::ui::demo(port.unwrap_or(4796))
+        }
         _ if args.iter().any(|a| a == "--diagnostics") => {
             println!("{}", framecorder::report::collect());
             Ok(())

@@ -5,6 +5,7 @@
 //! and something changed, and it mostly sleeps otherwise. Recording pauses
 //! while this tab is showing, so the controls never end up in the video.
 
+mod mock;
 mod pairing;
 mod paint;
 mod recorder;
@@ -208,6 +209,8 @@ struct App {
 /// video-both the video section with both eyes blended, and reporting an
 /// issue is report, report-gathering, report-typing, report-written,
 /// report-sending, report-sent and report-failed.
+pub use mock::serve as demo;
+
 pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut fonts = Fonts::load()?;
     if state == "toast" {
