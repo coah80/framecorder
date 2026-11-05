@@ -103,7 +103,7 @@ pub fn toggle(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: 
     }
 }
 
-/// An on/off setting with a line saying what it does.
+/// A full width on/off setting.
 #[allow(clippy::too_many_arguments)]
 pub fn toggle_row(
     c: &mut Canvas,
@@ -112,7 +112,6 @@ pub fn toggle_row(
     hits: &mut Vec<Hit>,
     r: Rect,
     name: &str,
-    meaning: &str,
     action: Action,
     on: bool,
     locked: bool,
@@ -121,8 +120,7 @@ pub fn toggle_row(
     let hovered = !locked && m.over(r);
     c.fill_rrect(r, 16.0, SURFACE0, 0.40 * alpha);
     c.stroke_rrect(r, 16.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, if hovered { 0.6 } else { 0.5 } * alpha);
-    c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 - 4.0, name, TEXT, alpha);
-    c.text(f, Face::Body, 16.0, r.x + 24.0, r.y + r.h / 2.0 + 22.0, meaning, OVERLAY1, alpha);
+    c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, name, TEXT, alpha);
     switch(c, r, on, alpha);
     if !locked {
         hits.push(Hit { rect: r, action });
