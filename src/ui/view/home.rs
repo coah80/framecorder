@@ -55,6 +55,7 @@ fn settings_rows(c: &mut Canvas, f: &mut Fonts, m: &Model, r: Rect, hits: &mut V
     };
     let quality = format!("{quality} · {} Mbit/s · {fps}", s.quality.mbps());
     let audio = match (s.game_audio, s.mic) {
+        (true, true) if s.split_audio => "Game + mic · split tracks",
         (true, true) => "Game + mic",
         (true, false) => "Game only",
         (false, true) => "Mic only",

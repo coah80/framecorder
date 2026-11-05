@@ -673,6 +673,7 @@ impl App {
             Action::Fps(fps) => s.fps = fps,
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
+            Action::SplitAudio => s.split_audio = !s.split_audio,
             Action::Clips => {
                 s.clips = !s.clips;
                 self.retry_at = None;

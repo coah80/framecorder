@@ -41,6 +41,8 @@ pub struct Settings {
     pub fps: FrameRate,
     pub game_audio: bool,
     pub mic: bool,
+    /// Also keep the game and the mic on their own tracks, for editing.
+    pub split_audio: bool,
     /// Keep a replay buffer for clips.
     pub clips: bool,
     /// How much of it, in seconds; remembered while clips are off.
@@ -61,6 +63,7 @@ impl Default for Settings {
             fps: FrameRate::Auto,
             game_audio: true,
             mic: true,
+            split_audio: true,
             clips: true,
             clip_secs: 30,
             onboarded: false,
@@ -114,6 +117,7 @@ impl Settings {
                 ("fps", "30") => s.fps = FrameRate::Thirty,
                 ("game_audio", v) => s.game_audio = v == "true",
                 ("mic", v) => s.mic = v == "true",
+                ("split_audio", v) => s.split_audio = v == "true",
                 ("clips", v) => s.clips = v == "true",
                 ("onboarded", v) => s.onboarded = v == "true",
                 // Older configs turned clips off with the length.
@@ -150,7 +154,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\nquality={}\nfps={}\ngame_audio={}\nmic={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\nquality={}\nfps={}\ngame_audio={}\nmic={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -174,6 +178,7 @@ impl Settings {
             },
             self.game_audio,
             self.mic,
+            self.split_audio,
             self.clips,
             self.clip_secs,
             self.onboarded
@@ -183,6 +188,11 @@ impl Settings {
     /// When the file last changed. A phone changes it through framecorder-sync.
     pub fn changed_at() -> Option<SystemTime> {
         config_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
+    }
+
+    /// Splitting needs both the game and the mic.
+    pub fn splits_audio(&self) -> bool {
+        self.game_audio && self.mic && self.split_audio
     }
 
     pub fn clipping(&self) -> Option<u32> {
@@ -220,6 +230,9 @@ impl Settings {
         if self.mic {
             args.push("--mic".into());
         }
+        if self.splits_audio() {
+            args.push("--mic-track".into());
+        }
         args
     }
 }
@@ -231,13 +244,16 @@ mod tests {
     #[test]
     fn args_for_defaults() {
         let args = Settings::default().recorder_args(true).join(" ");
-        assert_eq!(args, "--view eye --aspect 16:9 --eye left --bitrate 40 --mic");
+        assert_eq!(args, "--view eye --aspect 16:9 --eye left --bitrate 40 --mic --mic-track");
+        let mixed = Settings { split_audio: false, ..Settings::default() };
+        assert_eq!(mixed.recorder_args(true).join(" "), "--view eye --aspect 16:9 --eye left --bitrate 40 --mic");
+        assert_eq!(Settings::parse(&mixed.text()), mixed);
     }
 
     #[test]
     fn args_without_the_panel() {
         let s = Settings { shape: Shape::Tall, ..Settings::default() };
-        assert_eq!(s.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic");
+        assert_eq!(s.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic --mic-track");
     }
 
     #[test]
@@ -252,7 +268,7 @@ mod tests {
             let settings = Settings { eye: Eye::Both, shape, ..Settings::default() };
             assert_eq!(Settings::parse(&settings.text()), Settings { onboarded: false, ..settings });
             assert!(settings.recorder_args(true).join(" ").contains("--eye both"));
-            assert_eq!(settings.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic");
+            assert_eq!(settings.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic --mic-track");
         }
     }
 

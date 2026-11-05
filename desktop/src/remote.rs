@@ -317,6 +317,7 @@ fn recording_patch(old: &Recording, new: &Recording) -> RecordingPatch {
         clips: (old.clips != new.clips).then_some(new.clips),
         clip: (old.clip != new.clip).then_some(new.clip),
         eye: new.eye.clone().filter(|_| old.eye != new.eye),
+        split_audio: new.split_audio.filter(|_| old.split_audio != new.split_audio),
     }
 }
 

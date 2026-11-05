@@ -246,6 +246,8 @@ impl Writer {
         (*st).time_base = ff::AVRational { num: 1, den: RATE as i32 };
         let title = CString::new(title)?;
         ff::av_dict_set(&mut (*st).metadata, c"title".as_ptr(), title.as_ptr(), 0);
+        // mp4 keeps no title, editors show a track's handler name instead
+        ff::av_dict_set(&mut (*st).metadata, c"handler_name".as_ptr(), title.as_ptr(), 0);
         // The first track plays by default, others are there for editing.
         (*st).disposition = if default { ff::AV_DISPOSITION_DEFAULT } else { 0 };
         Ok(())

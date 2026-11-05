@@ -244,6 +244,8 @@ pub struct RecordingSettings {
     pub clip_secs: u32,
     pub eye: Option<String>,
     pub panels: Option<bool>,
+    /// The game and the mic on their own tracks too. Older headsets can't.
+    pub split_audio: Option<bool>,
 }
 
 impl From<api::Recording> for RecordingSettings {
@@ -258,6 +260,7 @@ impl From<api::Recording> for RecordingSettings {
             clip_secs: r.clip,
             eye: r.eye,
             panels: r.panels,
+            split_audio: r.split_audio,
         }
     }
 }
@@ -280,6 +283,8 @@ pub struct RecordingPatch {
     pub clip_secs: Option<u32>,
     #[uniffi(default = None)]
     pub eye: Option<String>,
+    #[uniffi(default = None)]
+    pub split_audio: Option<bool>,
 }
 
 impl From<RecordingPatch> for api::RecordingPatch {
@@ -293,6 +298,7 @@ impl From<RecordingPatch> for api::RecordingPatch {
             clips: r.clips,
             clip: r.clip_secs,
             eye: r.eye,
+            split_audio: r.split_audio,
         }
     }
 }

@@ -64,7 +64,7 @@ private val Qualities = listOf("standard" to "standard", "high" to "high", "max"
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -73,6 +73,7 @@ private fun mbps(quality: String) = when (quality) {
 }
 
 private fun audio(s: RecordingSettings) = when {
+    s.gameAudio && s.mic && s.splitAudio == true -> "game + mic · split tracks"
     s.gameAudio && s.mic -> "game + mic"
     s.gameAudio -> "game audio"
     s.mic -> "mic only"
@@ -156,15 +157,14 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 Column(
                     Modifier.fillMaxWidth().clip(segmentShape(2, 3, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
                 ) {
-                    Toggle("game audio", "what you hear in the headset", settings.gameAudio) { onChange(RecordingPatch(gameAudio = it)) }
-                    Toggle("mic", "your voice, mixed in", settings.mic) { onChange(RecordingPatch(mic = it)) }
+                    Toggle("game audio", settings.gameAudio) { onChange(RecordingPatch(gameAudio = it)) }
+                    Toggle("mic", settings.mic) { onChange(RecordingPatch(mic = it)) }
+                    // older headsets can't split, and splitting needs both
+                    settings.splitAudio?.let { split ->
+                        val both = settings.gameAudio && settings.mic
+                        Toggle("split tracks", both && split, enabled = both) { onChange(RecordingPatch(splitAudio = it)) }
+                    }
                 }
-                Text(
-                    "these take effect from the frame's next recording.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp, top = 12.dp),
-                )
             }
         }
     }
@@ -251,18 +251,16 @@ private fun Outline(width: Int, height: Int) {
 }
 
 @Composable
-private fun Toggle(title: String, subtitle: String, on: Boolean, onChange: (Boolean) -> Unit) {
+private fun Toggle(title: String, on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp))
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        Text(title, style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp), modifier = Modifier.weight(1f))
         Spacer(Modifier.size(12.dp))
         Switch(
             checked = on,
+            enabled = enabled,
             onCheckedChange = onChange,
             thumbContent = if (on) ({ Icon(FcIcons.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }) else null,
         )
