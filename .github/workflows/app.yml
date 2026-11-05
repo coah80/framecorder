@@ -46,6 +46,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libfreetype-dev libwayland-dev libxcb1-dev
 
+      # the live preview test decodes a real stream with the ffmpeg cli, like the app does
+      - uses: FedericoCarboni/setup-ffmpeg@v3
+
       - name: test
         run: cargo test --release
 
