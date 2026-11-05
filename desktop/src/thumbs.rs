@@ -1,9 +1,10 @@
 //! a frame from each video for the grid. gpui can't decode video, so this
-//! asks ffmpeg for one when it's installed, and the grid shows a plain tile
-//! when it isn't.
+//! asks ffmpeg for one, the small one the app ships with, and the grid shows
+//! a plain tile if there's none.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 pub fn dir() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("com.framecorder.app").join("thumbs")
@@ -14,8 +15,21 @@ pub fn path_for(dir: &Path, key: &str) -> PathBuf {
     dir.join(format!("{safe}.jpg"))
 }
 
+/// the one the app ships next to itself (desktop/ffmpeg.sh), then an installed
+/// one. a mac app doesn't get the shell's PATH, so brew's is looked for by place
+fn program() -> &'static Path {
+    static FOUND: OnceLock<PathBuf> = OnceLock::new();
+    FOUND.get_or_init(|| {
+        let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join(name)));
+        let brew = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].map(PathBuf::from);
+        let brew = if cfg!(target_os = "macos") { &brew[..] } else { &[] };
+        beside.into_iter().chain(brew.iter().cloned()).find(|p| p.is_file()).unwrap_or_else(|| name.into())
+    })
+}
+
 pub(crate) fn ffmpeg() -> Command {
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(program());
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     #[cfg(windows)]
     {

@@ -1,0 +1,2 @@
+# the ci runners on windows check out with crlf, and sh scripts break on it
+*.sh text eol=lf
