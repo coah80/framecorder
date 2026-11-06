@@ -109,6 +109,7 @@ pub enum Action {
     Send,
     /// Whether the tab starts with SteamVR.
     Autostart,
+    AutoUpdate,
 }
 
 pub enum Status {
@@ -155,6 +156,7 @@ pub struct Model<'a> {
     pub free: Option<u64>,
     /// Whether the tab starts with SteamVR.
     pub autostart: bool,
+    pub auto_update: bool,
 }
 
 impl Model<'_> {
