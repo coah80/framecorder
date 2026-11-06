@@ -222,8 +222,10 @@ struct App {
     /// An issue being reported, or the last one sent.
     report: Report,
     keyboard: Option<Keyboard>,
-    /// Whether the tab starts with SteamVR, looked up when settings open.
+    /// Whether the tab starts with SteamVR, and whether framecorder updates
+    /// on its own, looked up when settings open.
     autostart: bool,
+    auto_update: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -317,6 +319,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         free,
         report,
         autostart: state != "general-off",
+        auto_update: state != "general-off",
     };
     let hits = view::draw(&mut canvas, &mut fonts, &model);
     // a hover state: the pointer in the middle of that control, drawn again
@@ -612,6 +615,7 @@ impl App {
             report: Report::new(),
             keyboard: None,
             autostart: true,
+            auto_update: true,
         }
     }
 
@@ -666,6 +670,15 @@ impl App {
                 let want = !self.autostart;
                 if crate::setup::set_autostart(want) {
                     self.autostart = want;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
+            Action::AutoUpdate => {
+                let want = !self.auto_update;
+                if crate::setup::set_auto_update(want) {
+                    self.auto_update = want;
                 } else {
                     self.note = Some(("Couldn't change that, try again".into(), false));
                 }
@@ -1096,6 +1109,7 @@ impl App {
         }
         if screen == Screen::Settings(Section::General) {
             self.autostart = crate::setup::autostart();
+            self.auto_update = crate::setup::auto_update();
         }
         if screen == Screen::Home {
             self.free = storage::free_for_recordings();
@@ -1268,6 +1282,7 @@ impl App {
             free: self.free,
             report,
             autostart: self.autostart,
+            auto_update: self.auto_update,
         }
     }
 }

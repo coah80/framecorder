@@ -165,6 +165,7 @@ fn fit(f: &mut Fonts, text: &str, width: f32) -> String {
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", Action::Autostart, m.autostart, false);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, 92.0), "Automatic updates", Action::AutoUpdate, m.auto_update, false);
 }
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

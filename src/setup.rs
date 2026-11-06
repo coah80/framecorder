@@ -18,6 +18,8 @@ const RELEASE_URL: &str = "https://framecorder.coah80.com/dl/framecorder-arm64.t
 /// builds): the folder the installer downloaded from. Updates come from
 /// there too. Installing from the normal place takes it away again.
 const SOURCE: &str = ".local/share/framecorder/source";
+/// What runs `--update` every few hours.
+const UPDATE_TIMER: &str = "framecorder-update.timer";
 /// The checksum of the release that's installed, under the home folder.
 const INSTALLED: &str = ".local/share/framecorder/installed.sha256";
 /// Left by an update that replaced an unlocked recorder, which drops its
@@ -89,6 +91,23 @@ pub fn autostart() -> bool {
 /// that's running.
 pub fn set_autostart(on: bool) -> bool {
     quiet("systemctl", &["--user", if on { "enable" } else { "disable" }, "framecorder-ui.service"])
+}
+
+/// Whether framecorder updates itself every few hours.
+pub fn auto_update() -> bool {
+    quiet("systemctl", &["--user", "is-enabled", "--quiet", UPDATE_TIMER])
+}
+
+/// Turns updating on its own on or off. Updating from an app or the
+/// installer works either way.
+pub fn set_auto_update(on: bool) -> bool {
+    if !on {
+        return quiet("systemctl", &["--user", "disable", "--now", UPDATE_TIMER]);
+    }
+    // a restarted timer forgets when it last ran and never comes due again
+    // (it counts from that), so it checks now and counts from there
+    quiet("systemctl", &["--user", "enable", "--now", UPDATE_TIMER])
+        && quiet("systemctl", &["--user", "start", "--no-block", "framecorder-update.service"])
 }
 
 /// Where the recorder gets installed.
@@ -207,8 +226,10 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         let _ = std::fs::remove_file(home.join(SOURCE));
     }
     let was_unlocked = panels_unlocked();
-    // An update leaves the tab's start with SteamVR as the user set it.
+    // An update leaves the tab's start with SteamVR, and updating on its
+    // own, as the user set them.
     let fresh = !home.join(".config/systemd/user/framecorder-ui.service").exists();
+    let auto_update = fresh || self::auto_update();
     let updated = install(&release, &home)?;
     desktop_entry(&home)?;
     // Run by hand, right after the installer asked for the password (sudo
@@ -229,7 +250,10 @@ pub fn run(restart_ui: bool) -> Result<Report> {
 
     // These have to work, or nothing runs, so they're not quiet about it.
     output("systemctl", &["--user", "daemon-reload"])?;
-    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service", "framecorder-update.timer"])?;
+    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])?;
+    if auto_update {
+        output("systemctl", &["--user", "enable", "--now", UPDATE_TIMER])?;
+    }
     if updated.iter().any(|u| u == "framecorder-sync") {
         quiet("systemctl", &["--user", "try-restart", "framecorder-sync.service"]);
     }

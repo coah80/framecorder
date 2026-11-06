@@ -45,6 +45,7 @@ struct Mock {
     unlocked: bool,
     free: u64,
     autostart: bool,
+    auto_update: bool,
     text: String,
     typing: bool,
     report: Report,
@@ -89,6 +90,7 @@ impl Mock {
             unlocked: start != "locked-out",
             free: if start == "low-space" { 1_400_000_000 } else { 128_400_000_000 },
             autostart: true,
+            auto_update: true,
             text: String::new(),
             typing: false,
             report: Report::Writing,
@@ -133,6 +135,7 @@ impl Mock {
             }
             Action::Send => self.report = Report::Sending(Instant::now()),
             Action::Autostart => self.autostart = !self.autostart,
+            Action::AutoUpdate => self.auto_update = !self.auto_update,
             Action::Record if s.onboarded => match self.recording.take() {
                 Some(at) => {
                     let secs = at.elapsed().as_secs();
@@ -257,6 +260,7 @@ impl Mock {
             relocked: false,
             free: Some(self.free),
             autostart: self.autostart,
+            auto_update: self.auto_update,
         };
         self.hits = view::draw(&mut canvas, fonts, &model);
         canvas.pixels
