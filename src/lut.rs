@@ -96,11 +96,11 @@ const EDGE_SAMPLES: usize = 64;
 const AUTO_FOV_MARGIN: f64 = 0.97;
 /// Resolution of the hidden area mask, per side.
 const MASK_SIZE: usize = 512;
-/// How far off straight ahead the automatic view may center itself. Zero:
-/// a few extra degrees aren't worth the middle of the video not being where
-/// you looked.
+/// How far off the middle of the view (see `EyeModel::middle`) the automatic
+/// view may center itself. Zero: a few extra degrees aren't worth the
+/// middle of the video not being where you looked.
 const MAX_CENTER_SHIFT_DEG: f64 = 0.0;
-/// Candidate centers per direction on each side of straight ahead.
+/// Candidate centers per direction on each side of the middle.
 const CENTER_STEPS: i32 = 5;
 
 /// Everything we know about how one eye maps to the panel.
@@ -220,6 +220,16 @@ impl EyeModel {
     /// horizontal half-angle tangent plus a center offset (also tangents).
     /// The center may drift a few degrees off straight ahead when that buys
     /// a noticeably wider view, since the lens isn't symmetric.
+    /// Where the middle of the video goes: the middle of what the eye sees
+    /// vertically, which on the Frame is about 16° above its straight ahead
+    /// (the lens shows ~60° up, ~49° down). It's also where SteamVR's own
+    /// headset view is centered. Straight ahead sideways: the eyes' views
+    /// are lopsided sideways too, but toward the nose and out, which is
+    /// fine.
+    fn middle(&self) -> (f64, f64) {
+        (0.0, (self.t + self.b) / 2.0)
+    }
+
     fn widest(&self, aspect: f64) -> (f64, f64, f64) {
         let fits = |tan_h: f64, cx: f64, cy: f64| {
             let tan_v = tan_h * aspect;
@@ -252,13 +262,14 @@ impl EyeModel {
             lo
         };
 
-        let centered = search(0.0, 0.0);
+        let (bx, by) = self.middle();
+        let centered = search(bx, by);
         let max_shift = MAX_CENTER_SHIFT_DEG.to_radians().tan();
-        let mut best = (centered, 0.0, 0.0);
+        let mut best = (centered, bx, by);
         for i in -CENTER_STEPS..=CENTER_STEPS {
             for j in -CENTER_STEPS..=CENTER_STEPS {
-                let cx = max_shift * i as f64 / CENTER_STEPS as f64;
-                let cy = max_shift * j as f64 / CENTER_STEPS as f64;
+                let cx = bx + max_shift * i as f64 / CENTER_STEPS as f64;
+                let cy = by + max_shift * j as f64 / CENTER_STEPS as f64;
                 let w = search(cx, cy);
                 if w > best.0 {
                     best = (w, cx, cy);
@@ -267,7 +278,7 @@ impl EyeModel {
         }
         // Only move off center when it's worth it.
         if best.0 < centered * 1.02 {
-            best = (centered, 0.0, 0.0);
+            best = (centered, bx, by);
         }
         best
     }
@@ -386,7 +397,7 @@ pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, ou
         bail!("couldn't find any clean part of the view, SteamVR's lens data looks off");
     }
     log::info!(
-        "widest clean view at this aspect ratio: {:.1}° x {:.1}°, centered {:.1}° right and {:.1}° down",
+        "widest clean view at this aspect ratio: {:.1}° x {:.1}°, centered {:.1}° right and {:.1}° down from straight ahead",
         2.0 * widest.atan().to_degrees(),
         2.0 * (widest * aspect).atan().to_degrees(),
         wide_cx.atan().to_degrees(),
@@ -398,7 +409,8 @@ pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, ou
             if wanted > widest {
                 log::warn!("a {fov}° view reaches past what the lens shows, the edges will be black");
             }
-            (wanted, 0.0, 0.0)
+            let (mx, my) = model.middle();
+            (wanted, mx, my)
         }
         None => (widest * AUTO_FOV_MARGIN, wide_cx, wide_cy),
     };
