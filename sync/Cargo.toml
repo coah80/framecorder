@@ -1,6 +1,6 @@
 [package]
 name = "framecorder-sync"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Serves framecorder's clips to paired devices over Wi-Fi"
 license = "MIT"
