@@ -97,7 +97,6 @@ import com.framecorder.app.ui.common.size
 import com.framecorder.app.ui.common.stateColor
 import com.framecorder.app.ui.common.stateText
 import com.framecorder.app.ui.pair.Pairing
-import com.framecorder.app.ui.player.span
 import com.framecorder.app.ui.theme.DataStyle
 import com.framecorder.app.ui.theme.LocalStatusColors
 import com.framecorder.core.Clip
@@ -468,7 +467,7 @@ private fun Remote(
                 !state.ready -> "finish setting up framecorder on the headset first."
                 recording && !state.running -> "paused while the tab is open"
                 recording -> null
-                state.clipReady -> "keeping the last ${span((state.clipSecs ?: 30u).toLong() * 1000)}"
+                state.clipReady -> null
                 state.clipSecs == null -> "clips are off"
                 else -> "clips are starting up..."
             }
