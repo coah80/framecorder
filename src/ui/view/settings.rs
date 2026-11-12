@@ -29,13 +29,14 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, section: Section, hits: &m
         Section::Video => video(c, f, m, inner, hits),
         Section::Audio => audio(c, f, m, inner, hits),
         Section::Clips => clips(c, f, m, inner, hits),
+        Section::Files => files(c, f, m, inner, hits),
         Section::General => general(c, f, m, inner, hits),
         Section::Sync => unreachable!(),
     }
 }
 
 fn pills(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
-    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Sync, "Sync"), (Section::General, "General")];
+    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Files, "Files"), (Section::Sync, "Sync"), (Section::General, "General")];
     let mut x = PAD;
     for (section, name) in sections {
         let w = f.measure(Face::BodyMedium, 18.0, name) + 52.0;
@@ -178,6 +179,16 @@ fn fit(f: &mut Fonts, text: &str, width: f32) -> String {
         cut.pop();
     }
     format!("{}…", cut.trim_end())
+}
+
+fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
+    let s = m.settings;
+    let locked = m.locked();
+    let formats = [("Hybrid MP4", Action::Format(Format::Mp4), s.format == Format::Mp4), ("MKV", Action::Format(Format::Mkv), s.format == Format::Mkv)];
+    choice(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, ROW_H), "Format", "", &formats, locked);
+    let mkv = s.format == Format::Mkv;
+    let r = Rect::new(inner.x, inner.y + 22.0 + ROW_H + 16.0, inner.w, 92.0);
+    toggle_row(c, f, m, hits, r, "Remux recordings to MP4", Action::Remux, mkv && s.remux, locked || !mkv);
 }
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

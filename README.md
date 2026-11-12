@@ -24,7 +24,7 @@ pixels never touch the cpu.
 2. import that buffer into vulkan as-is (zero copy, compressed ubwc tiling and all)
 3. one small compute shader crops it, undoes the lens distortion and color fringing (using steamvr's own lens data), scales it and converts it to nv12, writing straight into a buffer the encoder reads
 4. the hardware encoder (qcom iris, v4l2) makes hevc or h264
-5. a separate thread muxes that with aac audio from pipewire into an mp4
+5. a separate thread muxes that with aac audio from pipewire into a hybrid mp4 (or an mkv)
 
 so it's what's on the panels, passthrough, overlays, dashboard and all, NOT steamvr's mirror window.
 
@@ -119,7 +119,7 @@ run the installer again and pick remove, or over ssh, `framecorder-ui --uninstal
 
 ## using it
 
-open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and a list of what's set up (video, quality, audio, clips) with what's paired under it. tap a row or "settings" to change things, one section at a time. the chip next to the title says whether it's recording the panels or steamvr's view. videos are hevc, or h.264 for players and sites that can't take hevc (settings, video, codec). hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
+open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and a list of what's set up (video, quality, audio, clips) with what's paired under it. tap a row or "settings" to change things, one section at a time. the chip next to the title says whether it's recording the panels or steamvr's view. videos are hevc, or h.264 for players and sites that can't take hevc (settings, video, codec). files are hybrid mp4, like obs's: if the headset dies mid-recording, everything up to the last couple of seconds is still there. mkv is under settings, files, with a switch to remux recordings to mp4 once they stop (clips stay mkv). hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
 
 (it goes by the tab and not the whole dashboard because on the frame the steam menu counts as open the whole time you're in home)
 

@@ -147,6 +147,8 @@ fn recording() -> Recording {
         split_audio: Some(true),
         mic_source: Some(String::new()),
         codec: Some("hevc".into()),
+        format: Some("mp4".into()),
+        remux: Some(false),
         mics: Some(vec![
             Mic { name: "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source".into(), label: "Frame".into(), default: true },
             Mic { name: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), label: "Yeti Stereo Microphone".into(), default: false },

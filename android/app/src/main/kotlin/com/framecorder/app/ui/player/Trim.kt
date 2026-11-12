@@ -88,7 +88,7 @@ suspend fun exportTrim(context: Context, uri: Uri, key: String, name: String, st
     withContext(Dispatchers.Main) {
         val trims = File(context.cacheDir, "trims")
         val dir = File(trims, "${key.replace(Regex("[^A-Za-z0-9._-]"), "_")}-$startMs-$endMs")
-        val out = File(dir, "${name.removeSuffix(".mp4")}-trim.mp4")
+        val out = File(dir, "${name.substringBeforeLast('.')}-trim.mp4")
         if (out.length() > 0) return@withContext out
         // only the latest one is kept around
         trims.listFiles()?.forEach { it.deleteRecursively() }

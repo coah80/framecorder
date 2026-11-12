@@ -115,7 +115,7 @@ pub struct Streams {
     pub fps: u32,
     /// VPS/SPS/PPS (or SPS/PPS), Annex B.
     pub video_params: Vec<u8>,
-    pub audio: Vec<(&'static str, Params)>,
+    pub audio: Vec<(String, Params)>,
 }
 
 pub struct Saved {
@@ -149,6 +149,8 @@ struct Writer {
     file: Option<std::fs::File>,
     /// How far into the file is on disk and out of memory.
     flushed: i64,
+    /// Remux into an .mp4 next to it once it's finished.
+    remux: bool,
 }
 
 // Owned by exactly one thread at a time.
@@ -175,6 +177,7 @@ impl Writer {
             bytes: 0,
             file: None,
             flushed: 0,
+            remux: false,
         };
         unsafe {
             // The container comes from the real name, the .part one means nothing to FFmpeg.
@@ -194,8 +197,16 @@ impl Writer {
             w.file = std::fs::File::open(&w.part).ok();
             // No faststart: moving the index to the front means rewriting the
             // whole file when the recording stops, which is a lot of I/O on a
-            // long recording.
-            check(ff::avformat_write_header(w.fmt, ptr::null_mut()), "writing the file header")?;
+            // long recording. Hybrid: fragmented while it's written, so a
+            // file the headset died in the middle of still plays up to the
+            // last couple of seconds, and a regular MP4 once it's finished.
+            let mut opts = ptr::null_mut();
+            if w.is_mp4() {
+                ff::av_dict_set(&mut opts, c"movflags".as_ptr(), c"hybrid_fragmented".as_ptr(), 0);
+            }
+            let header = ff::avformat_write_header(w.fmt, &mut opts);
+            ff::av_dict_free(&mut opts);
+            check(header, "writing the file header")?;
         }
         Ok(w)
     }
@@ -284,6 +295,12 @@ impl Writer {
             };
             ff::av_packet_unref(pkt);
             check(ret, "writing")?;
+            // A keyframe closes the last fragment (or cluster, in an MKV):
+            // out of our buffer with it, so a recording cut off here plays
+            // up to this point even when the picture's too still to fill it.
+            if p.stream == 0 && p.key && !live {
+                ff::avio_flush((*self.fmt).pb);
+            }
         }
         self.flush_some();
         Ok(())
@@ -315,8 +332,95 @@ impl Writer {
             check(ff::av_write_trailer(self.fmt), "finalizing the file")?;
             ff::avio_closep(&mut (*self.fmt).pb);
         }
+        if self.remux {
+            // Straight from the .part, so nothing watching the folder sees
+            // the MKV come and go. If it fails the MKV is still a fine file.
+            match remux_to_mp4(&self.part, &self.path.with_extension("mp4"), self.fps) {
+                Ok(saved) => {
+                    let _ = std::fs::remove_file(&self.part);
+                    return Ok(saved);
+                }
+                Err(e) => log::warn!("couldn't remux {} to mp4, keeping the mkv: {e:#}", self.path.display()),
+            }
+        }
         std::fs::rename(&self.part, &self.path).with_context(|| format!("renaming {}", self.part.display()))?;
         Ok(Saved { path: std::mem::take(&mut self.path), frames: self.frames, bytes: self.bytes })
+    }
+}
+
+/// Copies an MKV we wrote into an MP4, packet for packet. MKV only keeps
+/// timestamps to the millisecond, so the video goes back onto its exact
+/// frame grid on the way.
+fn remux_to_mp4(mkv: &Path, mp4: &Path, fps: u32) -> Result<Saved> {
+    let name = CString::new(mkv.to_string_lossy().as_bytes())?;
+    let mut input = Input(ptr::null_mut());
+    unsafe {
+        let matroska = ff::av_find_input_format(c"matroska".as_ptr());
+        check(ff::avformat_open_input(&mut input.0, name.as_ptr(), matroska, ptr::null_mut()), "opening it")?;
+        let n = (*input.0).nb_streams as usize;
+        let stream = |i: usize| *(*input.0).streams.add(i);
+        let video = &*(*stream(0)).codecpar;
+        let codec = match video.codec_id {
+            ff::AVCodecID::AV_CODEC_ID_HEVC => Codec::Hevc,
+            ff::AVCodecID::AV_CODEC_ID_H264 => Codec::H264,
+            _ => bail!("its first track isn't our video"),
+        };
+        let mut audio = Vec::new();
+        for i in 1..n {
+            let st = stream(i);
+            let title = ff::av_dict_get((*st).metadata, c"title".as_ptr(), ptr::null(), 0);
+            let title = if title.is_null() { String::new() } else { CStr::from_ptr((*title).value).to_string_lossy().into_owned() };
+            let par = ff::avcodec_parameters_alloc();
+            if par.is_null() {
+                bail!("out of memory");
+            }
+            let params = Params(par);
+            check(ff::avcodec_parameters_copy(par, (*st).codecpar), "copying audio parameters")?;
+            audio.push((title, params));
+        }
+        let extradata = if video.extradata.is_null() { &[][..] } else { std::slice::from_raw_parts(video.extradata, video.extradata_size as usize) };
+        let streams = Streams { codec, width: video.width as u32, height: video.height as u32, fps, video_params: extradata.to_vec(), audio };
+        let mut out = Writer::create(mp4, &streams)?;
+
+        let packet = PacketGuard(ff::av_packet_alloc());
+        let pkt = packet.0;
+        loop {
+            let ret = ff::av_read_frame(input.0, pkt);
+            if ret == ff::AVERROR_EOF {
+                break;
+            }
+            check(ret, "reading it")?;
+            let i = (*pkt).stream_index as usize;
+            let tb = (*stream(i)).time_base;
+            let unit = ff::AVRational { num: 1, den: if i == 0 { fps as i32 } else { RATE as i32 } };
+            let rescale = |t: i64| ff::av_rescale_q_rnd(t, tb, unit, ff::AVRounding::AV_ROUND_NEAR_INF);
+            let p = Packet {
+                stream: i,
+                pts: rescale((*pkt).pts),
+                duration: rescale((*pkt).duration),
+                key: (*pkt).flags & ff::AV_PKT_FLAG_KEY != 0,
+                data: Payload::from(std::slice::from_raw_parts((*pkt).data, (*pkt).size as usize).to_vec()),
+            };
+            ff::av_packet_unref(pkt);
+            out.write(&p, false)?;
+        }
+        out.finish()
+    }
+}
+
+struct Input(*mut ff::AVFormatContext);
+
+impl Drop for Input {
+    fn drop(&mut self) {
+        unsafe { ff::avformat_close_input(&mut self.0) };
+    }
+}
+
+struct PacketGuard(*mut ff::AVPacket);
+
+impl Drop for PacketGuard {
+    fn drop(&mut self) {
+        unsafe { ff::av_packet_free(&mut self.0) };
     }
 }
 
@@ -342,8 +446,10 @@ pub struct Handle {
 
 impl Handle {
     /// Creates the file right away, so a bad path fails here and not later.
-    pub fn spawn(path: &Path, streams: &Streams) -> Result<Self> {
-        let writer = Writer::create(path, streams)?;
+    /// `remux` makes an .mkv an .mp4 once it's finished.
+    pub fn spawn(path: &Path, streams: &Streams, remux: bool) -> Result<Self> {
+        let mut writer = Writer::create(path, streams)?;
+        writer.remux = remux && !writer.is_mp4();
         let (tx, rx) = mpsc::channel();
         let thread = std::thread::Builder::new().name("writer".into()).spawn(move || run(writer, rx))?;
         Ok(Self { tx, thread })
@@ -415,6 +521,7 @@ impl Live {
             bytes: 0,
             file: None,
             flushed: 0,
+            remux: false,
         };
         unsafe {
             check(

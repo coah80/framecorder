@@ -19,7 +19,7 @@ use std::time::Duration;
 use super::pairing::clients::Update;
 use super::pairing::{Device, Pairing, Presence};
 use super::paint::{Canvas, Rect, Rgb};
-use super::settings::{Codec, Eye, FrameRate, Quality, Settings, Shape};
+use super::settings::{Codec, Eye, Format, FrameRate, Quality, Settings, Shape};
 use super::text::{Face, Fonts};
 
 pub use onboarding::Step;
@@ -57,6 +57,7 @@ pub enum Section {
     Video,
     Audio,
     Clips,
+    Files,
     Sync,
     General,
 }
@@ -84,6 +85,8 @@ pub enum Action {
     Quality(Quality),
     Fps(FrameRate),
     Codec(Codec),
+    Format(Format),
+    Remux,
     GameAudio,
     Mic,
     /// Opens or closes the list of mics.

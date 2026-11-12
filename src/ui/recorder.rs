@@ -6,7 +6,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -82,6 +82,9 @@ impl Recorder {
         let log_file = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
         let args = settings.recorder_args(panel);
         let replay = settings.clipping();
+        if let Ok(folder) = settings.folder() {
+            super::settings::finish_leftovers(&folder);
+        }
 
         let mut cmd = Command::new(&exe);
         if let Some(secs) = replay {
@@ -149,18 +152,18 @@ impl Recorder {
         self.paused
     }
 
-    pub fn record(&mut self) -> Result<()> {
-        let path = output_path("")?;
+    pub fn record(&mut self, path: &Path) {
         self.send(&format!("record {}", path.display()));
-        Ok(())
     }
 
     pub fn stop_record(&mut self) {
         self.send("stop-record");
     }
 
-    pub fn clip(&mut self) {
-        self.send("clip");
+    /// Saves what's in the replay buffer into `path`.
+    pub fn clip(&mut self, path: &Path) {
+        let secs = self.replay.unwrap_or_default();
+        self.send(&format!("clip {secs} {}", path.display()));
     }
 
     /// Asks it to wrap up and exit; anything being written gets finished.
@@ -242,23 +245,6 @@ impl Recorder {
 
 fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).context("HOME isn't set")
-}
-
-/// ~/Videos/framecorder/<sub>/<time>.mp4
-pub fn output_path(sub: &str) -> Result<PathBuf> {
-    let mut t: libc::tm = unsafe { std::mem::zeroed() };
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    unsafe { libc::localtime_r(&now, &mut t) };
-    let name = format!(
-        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.mp4",
-        t.tm_year + 1900,
-        t.tm_mon + 1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec
-    );
-    Ok(home()?.join("Videos/framecorder").join(sub).join(name))
 }
 
 fn log_path() -> Result<PathBuf> {

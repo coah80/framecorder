@@ -178,6 +178,8 @@ impl Mock {
             Action::Quality(q) => s.quality = q,
             Action::Fps(fps) => s.fps = fps,
             Action::Codec(codec) => s.codec = codec,
+            Action::Format(format) => s.format = format,
+            Action::Remux => s.remux = !s.remux,
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
