@@ -251,6 +251,8 @@ pub struct RecordingSettings {
     pub mic_source: Option<String>,
     /// The mics the headset has right now, its own first.
     pub mics: Option<Vec<MicChoice>>,
+    /// hevc or h264. Older headsets can't pick.
+    pub codec: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -276,6 +278,7 @@ impl From<api::Recording> for RecordingSettings {
             split_audio: r.split_audio,
             mic_source: r.mic_source,
             mics: r.mics.map(|mics| mics.into_iter().map(|m| MicChoice { name: m.name, label: m.label, default: m.default }).collect()),
+            codec: r.codec,
         }
     }
 }
@@ -302,6 +305,8 @@ pub struct RecordingPatch {
     pub split_audio: Option<bool>,
     #[uniffi(default = None)]
     pub mic_source: Option<String>,
+    #[uniffi(default = None)]
+    pub codec: Option<String>,
 }
 
 impl From<RecordingPatch> for api::RecordingPatch {
@@ -317,6 +322,7 @@ impl From<RecordingPatch> for api::RecordingPatch {
             eye: r.eye,
             split_audio: r.split_audio,
             mic_source: r.mic_source,
+            codec: r.codec,
         }
     }
 }

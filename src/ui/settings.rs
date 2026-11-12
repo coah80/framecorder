@@ -33,12 +33,20 @@ pub enum FrameRate {
     Thirty,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Codec {
+    Hevc,
+    /// Plays on more things, bigger for the same picture.
+    H264,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub shape: Shape,
     pub eye: Eye,
     pub quality: Quality,
     pub fps: FrameRate,
+    pub codec: Codec,
     pub game_audio: bool,
     pub mic: bool,
     /// Which mic, by PipeWire node name. Empty is the one SteamOS uses.
@@ -63,6 +71,7 @@ impl Default for Settings {
             eye: Eye::Left,
             quality: Quality::High,
             fps: FrameRate::Auto,
+            codec: Codec::Hevc,
             game_audio: true,
             mic: true,
             mic_source: String::new(),
@@ -75,7 +84,7 @@ impl Default for Settings {
 }
 
 impl Quality {
-    /// HEVC bitrate in Mbit/s.
+    /// Video bitrate in Mbit/s.
     pub fn mbps(self) -> u32 {
         match self {
             Quality::Standard => 20,
@@ -118,6 +127,8 @@ impl Settings {
                 ("fps", "auto") => s.fps = FrameRate::Auto,
                 ("fps", "60") => s.fps = FrameRate::Sixty,
                 ("fps", "30") => s.fps = FrameRate::Thirty,
+                ("codec", "hevc") => s.codec = Codec::Hevc,
+                ("codec", "h264") => s.codec = Codec::H264,
                 ("game_audio", v) => s.game_audio = v == "true",
                 ("mic", v) => s.mic = v == "true",
                 ("split_audio", v) => s.split_audio = v == "true",
@@ -158,7 +169,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\nquality={}\nfps={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\nquality={}\nfps={}\ncodec={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -179,6 +190,10 @@ impl Settings {
                 FrameRate::Auto => "auto",
                 FrameRate::Sixty => "60",
                 FrameRate::Thirty => "30",
+            },
+            match self.codec {
+                Codec::Hevc => "hevc",
+                Codec::H264 => "h264",
             },
             self.game_audio,
             self.mic,
@@ -229,6 +244,9 @@ impl Settings {
             FrameRate::Sixty => args.extend(["--fps".into(), "60".into()]),
             FrameRate::Thirty => args.extend(["--fps".into(), "30".into()]),
         }
+        if self.codec == Codec::H264 {
+            args.extend(["--codec".into(), "h264".into()]);
+        }
         if !self.game_audio {
             args.push("--no-audio".into());
         }
@@ -268,6 +286,14 @@ mod tests {
     fn args_for_both_eyes_with_mic() {
         let s = Settings { shape: Shape::BothEyes, mic: true, game_audio: false, ..Settings::default() };
         assert_eq!(s.recorder_args(true).join(" "), "--view raw --bitrate 40 --no-audio --mic");
+    }
+
+    #[test]
+    fn h264_round_trips_and_reaches_the_recorder() {
+        let s = Settings { codec: Codec::H264, onboarded: true, ..Settings::default() };
+        assert_eq!(Settings::parse(&s.text()), s);
+        assert!(s.recorder_args(true).join(" ").contains("--codec h264"));
+        assert!(s.recorder_args(false).join(" ").contains("--codec h264"));
     }
 
     #[test]

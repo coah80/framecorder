@@ -88,6 +88,9 @@ pub struct Recording {
     /// Older headsets can't pick.
     #[serde(default)]
     pub mic_source: Option<String>,
+    /// hevc or h264. Older headsets can't pick.
+    #[serde(default)]
+    pub codec: Option<String>,
     /// The mics the headset has right now, its own first.
     #[serde(default)]
     pub mics: Option<Vec<Mic>>,
@@ -124,6 +127,8 @@ pub struct RecordingPatch {
     pub split_audio: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mic_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

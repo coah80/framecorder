@@ -11,6 +11,8 @@ const PANE_Y: f32 = CONTENT_Y + PILLS_H + 18.0;
 const PANE_H: f32 = CONTENT_Y + CONTENT_H - PANE_Y;
 const INSET: f32 = 32.0;
 const ROW_H: f32 = 114.0;
+/// Between two settings sharing a row.
+const GAP: f32 = 24.0;
 
 const PANE: Rect = Rect { x: PAD, y: PANE_Y, w: WIDTH as f32 - 2.0 * PAD, h: PANE_H };
 /// Where a section's controls go inside its card.
@@ -105,12 +107,17 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let meaning = format!("{} Mbit/s · about {} MB a minute", s.quality.mbps(), s.quality.mbps() * 60 / 8);
     choice(c, f, m, hits, quality_row, "Quality", &meaning, &qualities, locked);
 
+    // the last two side by side, there's room for four rows
+    let half = (fps_row.w - GAP) / 2.0;
     let rates = [
         ("Match display", Action::Fps(FrameRate::Auto), s.fps == FrameRate::Auto),
         ("60 fps", Action::Fps(FrameRate::Sixty), s.fps == FrameRate::Sixty),
         ("30 fps", Action::Fps(FrameRate::Thirty), s.fps == FrameRate::Thirty),
     ];
-    choice(c, f, m, hits, fps_row, "Frame rate", "", &rates, locked);
+    choice(c, f, m, hits, Rect { w: half, ..fps_row }, "Frame rate", "", &rates, locked);
+
+    let codecs = [("HEVC", Action::Codec(Codec::Hevc), s.codec == Codec::Hevc), ("H.264", Action::Codec(Codec::H264), s.codec == Codec::H264)];
+    choice(c, f, m, hits, Rect { x: fps_row.x + half + GAP, w: half, ..fps_row }, "Codec", "", &codecs, locked);
 }
 
 fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

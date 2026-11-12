@@ -737,6 +737,7 @@ impl App {
             Action::Eye(eye) => s.eye = eye,
             Action::Quality(q) => s.quality = q,
             Action::Fps(fps) => s.fps = fps,
+            Action::Codec(codec) => s.codec = codec,
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,

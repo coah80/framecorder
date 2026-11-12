@@ -72,9 +72,10 @@ private val Lengths = listOf(0u to "off", 15u to "15 s", 30u to "30 s", 60u to "
 private const val PANELS_NOTE = "square, vertical, both eyes and picking an eye need the panels unlocked on the headset."
 private val Qualities = listOf("standard" to "standard", "high" to "high", "max" to "max")
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
+private val Codecs = listOf("hevc" to "HEVC", "h264" to "H.264")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -149,7 +150,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
             }
             SegmentRow(
                 rows - 1, rows, "quality, frame rate, audio",
-                subtitle = "${s.quality} · ${Rates.first { it.first == s.fps }.second} · ${audio(s)}",
+                subtitle = listOfNotNull(s.quality, Rates.first { it.first == s.fps }.second, Codecs.firstOrNull { it.first == s.codec }?.second, audio(s)).joinToString(" · "),
                 onClick = if (enabled) ({ more = true }) else null,
                 trailing = { Chevron() },
             )
@@ -172,15 +173,23 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
             ) {
                 Text(dotted("next recording"), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 8.dp, bottom = 14.dp))
                 val mics = micChoices(settings)
-                val groups = if (mics != null) 4 else 3
+                // older headsets can't pick a codec
+                val codec = settings.codec
+                val sound = if (codec != null) 3 else 2
+                val groups = sound + if (mics != null) 2 else 1
                 Group(0, groups, "quality · ${mbps(settings.quality)} Mbit/s") {
                     Choices(Qualities, settings.quality, true) { onChange(RecordingPatch(quality = it)) }
                 }
                 Group(1, groups, "frame rate") {
                     Choices(Rates, settings.fps, true) { onChange(RecordingPatch(fps = it)) }
                 }
+                if (codec != null) {
+                    Group(2, groups, "codec") {
+                        Choices(Codecs, codec, true) { onChange(RecordingPatch(codec = it)) }
+                    }
+                }
                 Column(
-                    Modifier.fillMaxWidth().clip(segmentShape(2, groups, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
+                    Modifier.fillMaxWidth().clip(segmentShape(sound, groups, outer = 20.dp)).background(MaterialTheme.colorScheme.surfaceContainer),
                 ) {
                     Toggle("game audio", settings.gameAudio) { onChange(RecordingPatch(gameAudio = it)) }
                     Toggle("mic", settings.mic) { onChange(RecordingPatch(mic = it)) }
@@ -191,7 +200,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                     }
                 }
                 if (mics != null) {
-                    Group(3, groups, "mic") {
+                    Group(sound + 1, groups, "mic") {
                         Dropdown(mics.first, mics.second, settings.mic) { onChange(RecordingPatch(micSource = it)) }
                     }
                 }
