@@ -92,6 +92,8 @@ pub enum Action {
     SplitAudio,
     /// Replay buffer length.
     ClipLength(u32),
+    /// SteamVR's binding screen, to change the clip button.
+    Bindings,
     Pair,
     ClosePair,
     RemoveDevice(usize),

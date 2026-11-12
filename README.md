@@ -50,7 +50,7 @@ clips are on by default (the switch is under the record button, the length is in
 
 framecorder keeps that much of the last few seconds in temporary segments on disk, with their locations in ram. it falls back to ram if it can't write the segments. then any of these saves it to `~/Videos/framecorder/clips`:
 
-- hold the left thumbstick down (rebind it in steamvr's controller settings under "framecorder")
+- hold the left thumbstick down (to rebind it, "change in steamvr" under clips in settings)
 - the clip button in the tab
 
 it's always on, no recording needed. a little note floats up in front of you and the controller buzzes when it's saved. the buffer is just the already encoded video, nothing gets re-encoded.

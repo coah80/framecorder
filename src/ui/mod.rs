@@ -209,6 +209,8 @@ struct App {
     toast: Option<(String, bool)>,
     toast_until: Option<Instant>,
     buzz: bool,
+    /// Wants SteamVR's binding screen up, for the clip button.
+    bindings: bool,
     screen: Screen,
     sync: Sync,
     /// When the last clip was asked for, while the button is still cooling down.
@@ -534,6 +536,14 @@ pub fn run() -> Result<()> {
                 t.hide();
             }
         }
+        if std::mem::take(&mut app.bindings) {
+            let opened = input.as_ref().map_or_else(|| Err(anyhow::anyhow!("SteamVR input didn't start")), Input::open_bindings);
+            if let Err(e) = opened {
+                log::warn!("couldn't open the bindings: {e:#}");
+                app.note = Some((format!("Couldn't open SteamVR's controller settings: {e:#}"), false));
+                app.dirty = true;
+            }
+        }
         if std::mem::take(&mut app.buzz) {
             if let Some(i) = &input {
                 i.buzz();
@@ -615,6 +625,7 @@ impl App {
             toast: None,
             toast_until: None,
             buzz: false,
+            bindings: false,
             screen,
             sync: Sync::look(),
             clipped_at: None,
@@ -677,6 +688,7 @@ impl App {
             Action::MicMenu => return self.mic_menu = !menu,
             Action::TurnOff => return self.turn_off(),
             Action::Report => return self.go(Screen::Report),
+            Action::Bindings => return self.bindings = true,
             Action::Type => return self.start_typing(),
             Action::Send => return self.report.send(),
             Action::Autostart => {

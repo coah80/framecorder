@@ -132,6 +132,7 @@ impl Mock {
             Action::MicMenu => self.mic_menu = !menu,
             Action::TurnOff => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
             Action::Report => self.go(Screen::Report),
+            Action::Bindings => {}
             Action::Type => {
                 if matches!(self.report, Report::Writing) {
                     self.typing = true;

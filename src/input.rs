@@ -18,6 +18,7 @@ const SLOT_ACTION: usize = 2;
 const SLOT_UPDATE: usize = 4;
 const SLOT_DIGITAL: usize = 5;
 const SLOT_HAPTIC: usize = 23;
+const SLOT_OPEN_BINDING_UI: usize = 32;
 
 const SET: &str = "/actions/framecorder";
 const CLIP: &str = "/actions/framecorder/in/clip";
@@ -132,5 +133,18 @@ impl Input {
             let f: unsafe extern "C" fn(u64, f32, f32, f32, f32, u64) -> i32 = slot(self.table, SLOT_HAPTIC);
             f(self.buzz, 0.0, 0.08, 160.0, 0.6, 0);
         }
+    }
+
+    /// SteamVR's binding screen for framecorder, in the headset.
+    pub fn open_bindings(&self) -> Result<()> {
+        let key = CString::new(crate::apps::KEY)?;
+        let err = unsafe {
+            let f: unsafe extern "C" fn(*const c_char, u64, u64, bool) -> i32 = slot(self.table, SLOT_OPEN_BINDING_UI);
+            f(key.as_ptr(), self.set, 0, false)
+        };
+        if err != 0 {
+            bail!("SteamVR input error {err}");
+        }
+        Ok(())
     }
 }

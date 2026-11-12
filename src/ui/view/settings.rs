@@ -3,7 +3,7 @@
 //! choice means.
 
 use super::super::settings::CLIP_LENGTHS;
-use super::widgets::{card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row};
+use super::widgets::{button, card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row};
 use super::*;
 
 const PILLS_H: f32 = 50.0;
@@ -191,5 +191,7 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let y = r.y + ROW_H + 32.0;
     label(c, f, inner.x, y, "CLIP BUTTON");
     c.text(f, Face::BodyMedium, 17.0, inner.x, y + 34.0, "Left thumbstick, held", TEXT, 1.0);
-    c.text(f, Face::Body, 17.0, inner.x, y + 62.0, "Change it in SteamVR's controller settings, under framecorder.", SUBTEXT0, 1.0);
+    let change = "Change in SteamVR";
+    let w = f.measure(Face::BodyMedium, 18.0, change) + 52.0;
+    button(c, f, m, hits, Rect::new(inner.x + inner.w - w, y - 8.0, w, 52.0), change, Action::Bindings, false);
 }
