@@ -374,7 +374,7 @@ impl FrameApp {
 
     // notifications
 
-    /// "your clip from cole's frame is here", with open and show in folder
+    /// "clip from cole's frame", with open and show in folder
     fn say_it_landed(&self, e: &Entry, cx: &mut Context<Self>) {
         let what = if e.kind == "clip" { "clip" } else { "recording" };
         let from = self.statuses.iter().find(|s| s.fingerprint == e.host).map(|s| s.name.as_str()).unwrap_or("your frame");
@@ -382,7 +382,7 @@ impl FrameApp {
         let action = |id: &str, label: &str| SystemNotificationAction { id: id.into(), label: label.into() };
         cx.show_system_notification(SystemNotification {
             tag: e.key().into(),
-            title: format!("your {what} from {from} is here").into(),
+            title: format!("{what} from {from}").into(),
             body: body.join(" · ").into(),
             actions: vec![action("open", "open"), action("reveal", "show in folder")],
         });
@@ -584,7 +584,7 @@ impl FrameApp {
         self.sync_tray();
         match result {
             Forgot::LocalOnly => self.toast(
-                "forgotten here. the frame still lists this device until you remove it in framecorder's sync settings on the headset.",
+                "unpaired here. the frame still lists this computer until you remove it in sync settings on the headset.",
                 cx,
             ),
             Forgot::Both => {
@@ -719,11 +719,11 @@ impl FrameApp {
             self.told_about_tray = true;
             cx.show_system_notification(SystemNotification {
                 tag: "framecorder-tray".into(),
-                title: "framecorder is still syncing".into(),
+                title: "framecorder is still running".into(),
                 body: if cfg!(target_os = "macos") {
-                    "it's in the menu bar, so new clips keep coming in. to close it for real, click it there and pick quit, or turn off \"keep running\" in settings."
+                    "it's in the menu bar. quit it from there, or turn off \"keep running when closed\" in settings."
                 } else {
-                    "it's in the tray, so new clips keep coming in. to close it for real, right-click it there and pick quit, or turn off \"keep running\" in settings."
+                    "it's in the tray. quit it from there, or turn off \"keep running when closed\" in settings."
                 }
                 .into(),
                 actions: Vec::new(),

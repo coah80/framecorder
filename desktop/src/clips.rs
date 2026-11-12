@@ -175,7 +175,7 @@ fn search_box(app: &FrameApp, focused: bool, cx: &mut Context<FrameApp>) -> impl
                 .items_center()
                 .text_size(px(13.))
                 .child(if empty {
-                    div().truncate().text_color(c(theme::OVERLAY2)).child("search by time, day or name")
+                    div().truncate().text_color(c(theme::OVERLAY2)).child("search")
                 } else {
                     div().truncate().child(app.query.clone())
                 })
@@ -233,28 +233,25 @@ fn problem(s: &Status, narrow: bool, cx: &mut Context<FrameApp>) -> AnyElement {
         State::Unreachable => (
             "wifi-off",
             format!("can't reach {}", s.name),
-            "clips wait on the frame until it's back, nothing is lost. check that".into(),
+            "make sure".into(),
             "try again",
         ),
         State::Full => (
             "disk",
             "this computer is out of space".into(),
-            format!(
-                "the clips are still on {}, nothing is lost. free up some space and they sync on their own.",
-                s.name
-            ),
+            "free up some space.".into(),
             "try again",
         ),
         State::Unpaired => (
             "headset",
             format!("{} forgot this device", s.name),
-            "it was removed on the frame. pair again to keep syncing.".into(),
+            "pair again to keep syncing.".into(),
             "pair again",
         ),
         _ => (
             "lock",
             format!("that isn't {}", s.name),
-            "something else answered where your frame was, so we're not talking to it.".into(),
+            "something else answered at its address.".into(),
             "pair again",
         ),
     };
@@ -355,7 +352,7 @@ fn days(
     let incoming = app.progress.is_some() && query.is_empty();
     if shown.is_empty() && !incoming {
         let text = if app.clips.is_empty() {
-            "nothing yet. save a clip or a recording on your frame and it shows up here.".to_string()
+            "no videos".to_string()
         } else if !query.is_empty() {
             match app.filter {
                 Filter::All => format!("nothing matches \"{query}\"."),
@@ -363,9 +360,9 @@ fn days(
                 Filter::Recording => format!("no recordings match \"{query}\"."),
             }
         } else if app.filter == Filter::Clip {
-            "no clips yet, just recordings.".to_string()
+            "no clips".to_string()
         } else {
-            "no recordings yet, just clips.".to_string()
+            "no recordings".to_string()
         };
         return vec![div()
             .py(px(56.))

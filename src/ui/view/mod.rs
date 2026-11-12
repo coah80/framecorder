@@ -309,7 +309,7 @@ fn report_note(m: &Model) -> Option<(String, Rgb, Rgb)> {
     Some(match (m.report.phase, m.note) {
         (Phase::Failed(why), _) => (format!("Couldn't send it: {why}"), RED, RED),
         (Phase::Sending, _) => ("Sending…".into(), YELLOW, YELLOW),
-        (Phase::Sent { .. }, _) => ("Sent. Thank you for taking the time.".into(), GREEN, SUBTEXT0),
+        (Phase::Sent { .. }, _) => return None,
         (Phase::Writing, Some((text, false))) => (text.into(), RED, RED),
         (Phase::Writing, _) => (PUBLIC_NOTE.into(), YELLOW, YELLOW),
     })

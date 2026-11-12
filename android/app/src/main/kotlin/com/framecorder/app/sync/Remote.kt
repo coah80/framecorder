@@ -30,7 +30,7 @@ private fun FramecorderApp.send(fingerprint: String, what: String, after: () -> 
     scope.launch {
         val said = try {
             hub.command(fingerprint, what)
-            if (what == "clip") "saved, it'll be on your phone in a moment" else null
+            if (what == "clip") "clip saved" else null
         } catch (e: CoreException) {
             e.reason()
         }

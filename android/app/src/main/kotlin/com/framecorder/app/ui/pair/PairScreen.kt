@@ -100,7 +100,7 @@ import kotlinx.coroutines.launch
 private const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
 private const val ANDROID_17 = 37
 
-private enum class How(val text: String) { Name("found by name"), Direct("found by asking directly"), Typed("typed in") }
+private enum class How { Name, Direct, Typed }
 
 /** Pairing on its own screen, for another frame or pairing again. */
 @Composable
@@ -219,7 +219,7 @@ fun Pairing(
         if (!localNetwork) {
             Note(
                 title = "let framecorder see your wi-fi",
-                text = "android asks before an app can talk to devices on your network. framecorder only talks to your frame.",
+                text = "android asks before an app can talk to devices on your wi-fi.",
                 action = "allow",
                 onAction = { askLocalNetwork.launch(LOCAL_NETWORK) },
             )
@@ -231,7 +231,7 @@ fun Pairing(
                     buildAnnotatedString {
                         append("framecorder tab, settings, sync, ")
                         withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)) { append("pair a device") }
-                        append(". the code keeps working for 10 minutes, even with the headset off.")
+                        append(". the code works for 10 minutes.")
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -261,7 +261,7 @@ fun Pairing(
             val list = found.values.sortedBy { it.name }
             if (list.isEmpty()) Searching(networks, localNetwork)
             list.forEachIndexed { i, f ->
-                FoundRow(f, how[f.fingerprint] ?: How.Name, selected == f.fingerprint, i, list.size) {
+                FoundRow(f, selected == f.fingerprint, i, list.size) {
                     selected = f.fingerprint
                     error = null
                 }
@@ -293,11 +293,6 @@ fun Pairing(
                     Text(pairingWith?.let { "pairing with $it..." } ?: "pairing...", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 error != null -> Text(error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                selected != null -> Text(
-                    "pairs as soon as you type the last digit.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
@@ -366,7 +361,7 @@ private fun Hero(searching: Boolean, title: String) {
             modifier = Modifier.padding(top = 24.dp, start = 24.dp, end = 24.dp),
         )
         Text(
-            "clips come straight to this phone over your wi-fi. nothing goes through the internet.",
+            "clips come straight over your wi-fi, never the internet.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -416,7 +411,7 @@ private fun Searching(networks: List<String>, allowed: Boolean) {
                 when {
                     !allowed -> "framecorder can't look until it's allowed to."
                     networks.isEmpty() -> "is this phone on wi-fi?"
-                    else -> "asking by name, and checking ${networks.joinToString()} directly in case your router blocks that"
+                    else -> "checking ${networks.joinToString()}"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -426,7 +421,7 @@ private fun Searching(networks: List<String>, allowed: Boolean) {
 }
 
 @Composable
-private fun FoundRow(frame: FoundFrame, how: How, picked: Boolean, index: Int, count: Int, onPick: () -> Unit) {
+private fun FoundRow(frame: FoundFrame, picked: Boolean, index: Int, count: Int, onPick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -458,7 +453,7 @@ private fun FoundRow(frame: FoundFrame, how: How, picked: Boolean, index: Int, c
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "${host(frame.addr)} · ${how.text}",
+                host(frame.addr),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (picked) scheme.onSecondaryContainer.copy(alpha = 0.85f) else scheme.onSurfaceVariant,
                 maxLines = 1,
@@ -497,7 +492,7 @@ private fun AddressDialog(onDismiss: () -> Unit, onAddress: (String) -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "the frame's ip address, like 192.168.1.42. your router's list of devices shows it, and so do the frame's wi-fi settings.",
+                    "like 192.168.1.42. it's in the frame's wi-fi settings.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

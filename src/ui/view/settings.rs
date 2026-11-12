@@ -189,12 +189,7 @@ fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     choice(c, f, m, hits, r, "Length", "", &options, locked || !s.clips);
 
     let y = r.y + ROW_H + 32.0;
-    label(c, f, inner.x, y, "HOW TO CLIP");
-    let notes = [
-        "Hold the left thumbstick down, or press Clip now on the main screen.",
-        "Change the button in SteamVR's controller settings, under framecorder.",
-    ];
-    for (i, note) in notes.iter().enumerate() {
-        c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);
-    }
+    label(c, f, inner.x, y, "CLIP BUTTON");
+    c.text(f, Face::BodyMedium, 17.0, inner.x, y + 34.0, "Left thumbstick, held", TEXT, 1.0);
+    c.text(f, Face::Body, 17.0, inner.x, y + 62.0, "Change it in SteamVR's controller settings, under framecorder.", SUBTEXT0, 1.0);
 }

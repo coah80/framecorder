@@ -69,7 +69,7 @@ fun DiagnoseScreen(hub: SyncHub, fingerprint: String, onBack: () -> Unit, onPair
     val context = LocalContext.current
     val frames by hub.frames.collectAsStateWithLifecycle()
     val clips by hub.clips.collectAsStateWithLifecycle()
-    val synced = lastSync(clips, fingerprint)?.let { "last synced ${ago(it)}. " } ?: ""
+    val synced = lastSync(clips, fingerprint)?.let { "last synced ${ago(it)}" }
     val frame = frames.firstOrNull { it.fingerprint == fingerprint }
     val name = frame?.name ?: "your frame"
     val addr = frame?.addr?.let(::host) ?: "its last address"
@@ -88,18 +88,18 @@ fun DiagnoseScreen(hub: SyncHub, fingerprint: String, onBack: () -> Unit, onPair
         // Android 17 asks before an app can talk to the local network
         val allowed = Build.VERSION.SDK_INT < 37 ||
             ContextCompat.checkSelfPermission(context, "android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED
-        set(1, Check("allowed to see devices on wi-fi", if (allowed) "android's local network permission" else "not allowed. pair again to be asked.", if (allowed) Result.Pass else Result.Fail))
+        set(1, Check("allowed to see devices on wi-fi", if (allowed) "allowed" else "not allowed. pair again to be asked.", if (allowed) Result.Pass else Result.Fail))
 
         set(2, Check("answers at $addr", "asking...", Result.Running))
         val problem = hub.check(fingerprint)
-        set(2, Check("answers at $addr", problem ?: "it's there and it's the frame you paired", if (problem == null) Result.Pass else Result.Fail))
+        set(2, Check("answers at $addr", problem ?: "the frame you paired", if (problem == null) Result.Pass else Result.Fail))
 
         // only worth looking for if it isn't where it was
         set(3, Check("found by name", "asking the wi-fi...", if (problem == null) Result.Skipped else Result.Running))
         set(4, Check("found by asking every address", "checking ${sweepNetworks().joinToString().ifEmpty { "this network" }}...", if (problem == null) Result.Skipped else Result.Running))
         if (problem != null) {
             val byName = withTimeoutOrNull(6_000) { hub.finder.browse().first { it.fingerprint == fingerprint } }
-            set(3, Check("found by name", byName?.let { "at ${host(it.addr)}" } ?: "no answer. some routers block this, the next check doesn't need it.", if (byName != null) Result.Pass else Result.Fail))
+            set(3, Check("found by name", byName?.let { "at ${host(it.addr)}" } ?: "no answer. some routers block this", if (byName != null) Result.Pass else Result.Fail))
             val direct = hub.sweep(8).firstOrNull { it.fingerprint == fingerprint }
             set(4, Check("found by asking every address", direct?.let { "at ${host(it.addr)}" } ?: "no frame answered on this network", if (direct != null) Result.Pass else Result.Fail))
             if (byName != null || direct != null) hub.retryNow()
@@ -132,12 +132,9 @@ fun DiagnoseScreen(hub: SyncHub, fingerprint: String, onBack: () -> Unit, onPair
                     if (connected) "$name is connected" else "can't reach $name",
                     style = MaterialTheme.typography.headlineMedium,
                 )
-                Text(
-                    if (connected) "${synced}new clips come over the moment they're saved."
-                    else "${synced}anything it saves waits on the frame, nothing is lost.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (synced != null) {
+                    Text(synced, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Column(Modifier.padding(horizontal = 16.dp).padding(top = 8.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 checks.forEachIndexed { i, c -> CheckRow(c, i, checks.size) }
@@ -154,7 +151,7 @@ fun DiagnoseScreen(hub: SyncHub, fingerprint: String, onBack: () -> Unit, onPair
                 ) {
                     Icon(FcIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Text(
-                        "asleep? put the headset on for a second. its wi-fi comes back when it wakes, then this finds it again by itself.",
+                        "asleep? put the headset on for a second.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

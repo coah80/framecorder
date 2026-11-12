@@ -59,7 +59,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                     .hover(|s| s.text_color(c(theme::MAUVE)))
                     .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
                     .child(icon("flag", 13., c(theme::OVERLAY2)))
-                    .child("stuck? report an issue"),
+                    .child("report an issue"),
             ),
     )
 }
@@ -94,7 +94,7 @@ fn address_box(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) 
                 .items_center()
                 .text_size(px(13.))
                 .child(if empty {
-                    div().truncate().text_color(c(theme::OVERLAY2)).child("or type its address, like 192.168.1.42")
+                    div().truncate().text_color(c(theme::OVERLAY2)).child("or type its address")
                 } else {
                     data(p.addr.clone()).truncate()
                 })
@@ -183,15 +183,6 @@ fn left(again: bool, narrow: bool) -> impl IntoElement {
                         .child(bullet(vec![("open the", false), ("framecorder", true), ("tab", false)]))
                         .child(bullet(vec![("go to", false), ("settings,", true), ("then", false), ("sync", true)]))
                         .child(bullet(vec![("hit", false), ("pair a device", true)])),
-                )
-                .child(
-                    div()
-                        .pt(px(12.))
-                        .border_t_1()
-                        .border_color(theme::line())
-                        .text_size(px(13.))
-                        .text_color(c(theme::SUBTEXT0))
-                        .child("it shows a 6 digit code. you'll type it on the right."),
                 ),
         )
 }
@@ -258,7 +249,7 @@ fn pick(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl
                 div()
                     .text_size(px(13.))
                     .text_color(c(theme::SUBTEXT0))
-                    .child("asking this network by name, and knocking on every address in case the router blocks that. make sure the frame's on and on the same wi-fi."),
+                    .child("make sure the frame's on and on this wi-fi."),
             )
         })
         .child(address_box(app, window, cx))

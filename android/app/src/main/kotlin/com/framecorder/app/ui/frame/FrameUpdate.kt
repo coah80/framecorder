@@ -93,22 +93,15 @@ fun FrameUpdateCard(update: FrameUpdate?, updating: Boolean, onUpdate: () -> Uni
             }
             AnimatedContent(updating, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "update body") { busy ->
                 if (busy) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LinearWavyProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = scheme.primary,
-                            trackColor = scheme.onSurface.copy(alpha = 0.12f),
-                        )
-                        Text(
-                            "the headset is installing it. framecorder restarts there on its own, so it drops off here for a moment and comes back on the new version.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = soft,
-                        )
-                    }
+                    LinearWavyProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = scheme.primary,
+                        trackColor = scheme.onSurface.copy(alpha = 0.12f),
+                    )
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            "it installs itself within a few hours anyway. this does it now, while nobody's wearing the headset.",
+                            "framecorder restarts on the headset",
                             style = MaterialTheme.typography.bodySmall,
                             color = soft,
                             modifier = Modifier.weight(1f),

@@ -69,7 +69,7 @@ fun eyeChoices(blend: Boolean): List<Pair<String, String>> = if (blend) Eyes + B
 private val Lengths = listOf(0u to "off", 15u to "15 s", 30u to "30 s", 60u to "1 min", 120u to "2 min")
 
 /** Without the panels unlocked, the recorder records SteamVR's view: 16:9, the left eye. */
-private const val PANELS_NOTE = "square, vertical, both eyes and the eye choice need the panels unlocked on the headset; until then it records SteamVR's view."
+private const val PANELS_NOTE = "square, vertical, both eyes and picking an eye need the panels unlocked on the headset."
 private val Qualities = listOf("standard" to "standard", "high" to "high", "max" to "max")
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 

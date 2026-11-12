@@ -156,21 +156,15 @@ fun ReportScreen(hub: SyncHub, onBack: () -> Unit) {
                 )
                 Text(
                     when (current) {
-                        is Step.Sent -> "it's in, thanks"
+                        is Step.Sent -> "sent, thanks"
                         is Step.Write, Step.Collecting -> "what went wrong?"
                         else -> "check what gets sent"
                     },
                     style = MaterialTheme.typography.headlineMedium,
                 )
-                Text(
-                    when (current) {
-                        is Step.Sent -> "issue #${current.number} is open on github. the people making framecorder see it there, and that's where any reply lands."
-                        is Step.Write, Step.Collecting -> "say what happened and what you expected instead. the details needed to look into it go along, and you see them before anything is sent."
-                        else -> "this is everything that goes on the issue. it's public on github, so look it over first."
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                )
+                if (current is Step.Sent) {
+                    Text("issue #${current.number} on github", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                }
             }
 
             AnimatedContent(current.page, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "report step") { page ->
@@ -218,7 +212,7 @@ fun ReportScreen(hub: SyncHub, onBack: () -> Unit) {
                 when (current) {
                     is Step.Write -> {
                         Button(onClick = ::collect, enabled = description.isNotBlank(), modifier = Modifier.weight(1f).height(56.dp)) {
-                            Text("next, see what gets sent", maxLines = 1)
+                            Text("next", maxLines = 1)
                         }
                     }
                     is Step.Collecting -> {
@@ -279,7 +273,7 @@ private fun Description(text: String, onChange: (String) -> Unit) {
         onValueChange = { if (it.length <= DESCRIPTION_LIMIT) onChange(it) },
         modifier = Modifier.fillMaxWidth(),
         minLines = 6,
-        placeholder = { Text("what happened, what you were doing, and what you expected", color = scheme.onSurfaceVariant.copy(alpha = 0.7f)) },
+        placeholder = { Text("what happened", color = scheme.onSurfaceVariant.copy(alpha = 0.7f)) },
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         shape = RoundedCornerShape(20.dp),
         supportingText = if (text.length >= DESCRIPTION_LIMIT - 500) {
@@ -303,7 +297,7 @@ private fun Gathering(frame: String?) {
     ) {
         LoadingIndicator(Modifier.size(32.dp))
         Text(
-            if (frame != null) "gathering details from this phone and $frame. a few seconds." else "gathering details from this phone.",
+            if (frame != null) "gathering details from this phone and $frame..." else "gathering details from this phone...",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -347,7 +341,7 @@ private fun PublicNote(onSeeAll: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(FcIcons.Info, contentDescription = null, tint = scheme.primary, modifier = Modifier.size(20.dp))
             Text(
-                "this opens a public issue on github.com/coah80/framecorder, posted by cobby-bot. names, logins, pairing keys and addresses are taken out first.",
+                "posted publicly on github by cobby-bot. names, logins, pairing keys and addresses are taken out first.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
             )
@@ -379,7 +373,7 @@ private fun Everything(json: String, onDismiss: () -> Unit) {
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
             Text("everything that's sent", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp))
             Text(
-                "${lines.size} lines of json, exactly as the issue gets them.",
+                "${lines.size} lines",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 8.dp, bottom = 14.dp),

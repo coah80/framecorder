@@ -50,23 +50,19 @@ impl Live {
 pub fn words(s: &Status, remote: Option<&Remote>) -> (&'static str, String) {
     let said = |t: &str| t.to_string();
     match s.state {
-        State::Connecting => ("looking for it", said("it takes commands once it's on, on this wi-fi, with framecorder running.")),
-        State::Unreachable => ("can't reach it", said("nothing is lost, clips wait on the frame. check it's on and on this wi-fi.")),
-        State::Full => ("out of space here", said("the frame can still record. free up some space and its clips sync on their own.")),
-        State::Unpaired => ("forgot this device", said("it was removed on the frame. pair again to keep syncing.")),
-        State::WrongFingerprint => {
-            ("something else answered", said("something else answered where your frame was, so we're not talking to it."))
-        }
+        State::Connecting => ("looking for it", String::new()),
+        State::Unreachable => ("can't reach it", said("check it's on and on this wi-fi.")),
+        State::Full => ("out of space here", said("free up some space on this computer.")),
+        State::Unpaired => ("forgot this device", said("pair again to keep syncing.")),
+        State::WrongFingerprint => ("something else answered", said("it isn't the frame you paired.")),
         State::Connected => match remote {
-            None => ("connected", said("record, stop and save clips from here once your frame has the next framecorder update.")),
-            Some(r) if !r.available => ("framecorder isn't open", said("framecorder isn't open on the headset. it starts with SteamVR.")),
+            None => ("connected", said("the remote needs a newer framecorder on the headset.")),
+            Some(r) if !r.available => ("framecorder isn't open", said("it starts with SteamVR.")),
             Some(r) if !r.ready => ("not set up yet", said("finish setting up framecorder on the headset first.")),
-            Some(r) if r.recording && !r.running => ("recording, paused", said("recording, paused while the framecorder tab is open.")),
-            Some(r) if r.recording => ("recording", said("recording. stop it here or on the headset.")),
+            Some(r) if r.recording && !r.running => ("recording, paused", said("while the tab is open.")),
+            Some(r) if r.recording => ("recording", String::new()),
             Some(r) if r.clip_ready => ("ready", String::new()),
-            Some(r) if r.clips.is_none() => {
-                ("ready", said("clips are off, so there's nothing to save. record instead, or turn them on below."))
-            }
+            Some(r) if r.clips.is_none() => ("ready", said("clips are off.")),
             Some(_) => ("ready", said("clips are starting up...")),
         },
     }
@@ -251,7 +247,7 @@ impl FrameApp {
                 let said = match res {
                     Ok(remote) => {
                         app.on_remote(&fp, Some(remote), cx);
-                        (what == "clip").then_some("saved, it'll be here in a moment".to_string())
+                        (what == "clip").then_some("clip saved".to_string())
                     }
                     Err(e) => Some(e),
                 };
@@ -298,7 +294,7 @@ impl FrameApp {
             "record" => Remote { recording: true, running: true, elapsed_ms: 0, clip_ready: false, ..r },
             "stop" => Remote { recording: false, running: false, elapsed_ms: 0, clip_ready: r.clips.is_some(), ..r },
             _ => {
-                self.toast("saved, it'll be here in a moment", cx);
+                self.toast("clip saved", cx);
                 r
             }
         };

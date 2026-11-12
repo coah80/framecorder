@@ -230,8 +230,6 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                    } else {
-                        Text("what your frame shows, here", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                     }
                 }
             }
@@ -336,38 +334,35 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
             ) {
                 Text(if (wanted) "stop" else "start live view")
             }
-            Text(
-                when {
-                    frame == null -> "pair a frame first."
-                    !connected -> "connect to ${frame.name} first. it has to be on, on this wi-fi, with framecorder running."
-                    remote == null -> "live view works once framecorder is open on the headset. it starts with SteamVR."
-                    !canLive -> "live view needs a newer framecorder on the headset. the frame tab offers the update."
-                    else -> "a moment behind the headset, at the recording's shape and quality. the headset captures only while this is on."
-                },
+            val note = when {
+                frame == null -> "pair a frame first."
+                !connected -> "connect to ${frame.name} first. it has to be on, on this wi-fi, with framecorder running."
+                remote == null -> "live view works once framecorder is open on the headset. it starts with SteamVR."
+                !canLive -> "live view needs a newer framecorder on the headset."
+                else -> null
+            }
+            if (note != null) Text(
+                note,
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp),
             )
 
-            if (canLive) {
+            val url = status?.url?.takeIf { wanted }
+            if (canLive && url != null) {
                 GroupLabel("in another app")
-                val url = status?.url?.takeIf { wanted }
                 SegmentRow(
                     0, 1,
-                    url ?: "a local address, once live view is on",
-                    subtitle = "any player on this phone that opens a url (VLC, for one) can show it while live view is on. to record it on a computer, the desktop app does the same for OBS.",
+                    url,
+                    subtitle = "for VLC or another player",
                     leading = { Icon(FcIcons.Link, contentDescription = null, tint = scheme.onSurfaceVariant) },
-                    trailing = if (url != null) {
-                        {
-                            IconButton(onClick = { copy(context, url) }) {
-                                Icon(FcIcons.Copy, contentDescription = "copy the address", tint = scheme.primary)
-                            }
+                    trailing = {
+                        IconButton(onClick = { copy(context, url) }) {
+                            Icon(FcIcons.Copy, contentDescription = "copy the address", tint = scheme.primary)
                         }
-                    } else {
-                        null
                     },
                 )
-            } else if (connected) {
+            } else if (!canLive && connected) {
                 Spacer(Modifier.height(14.dp))
                 Button(
                     onClick = { onFrame(frame.fingerprint) },

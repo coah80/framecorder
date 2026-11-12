@@ -97,9 +97,7 @@ fn description(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
 
     let under = b.y + b.h + 30.0;
     if report.typing {
-        c.text(f, Face::Body, 16.0, x, under, "Typing on SteamVR's keyboard · press Done when you're finished", MAUVE, 1.0);
-    } else if !report.text.is_empty() && report.editable() {
-        c.text(f, Face::Body, 16.0, x, under, "Tap the box to change it", OVERLAY1, 1.0);
+        c.text(f, Face::Body, 16.0, x, under, "Typing on SteamVR's keyboard", MAUVE, 1.0);
     }
 
     // Send, and when it can't be pressed yet, why.
@@ -134,7 +132,6 @@ fn details(c: &mut Canvas, f: &mut Fonts, m: &Model) {
 
     let Some(s) = m.report.summary else {
         c.text(f, Face::BodyMedium, 18.0, x, r.y + 80.0, "Gathering the details…", TEXT, 1.0);
-        c.text(f, Face::Body, 16.0, x, r.y + 108.0, "Versions, logs and recent errors. A few seconds.", SUBTEXT0, 1.0);
         return;
     };
     let errors = match s.errors {
@@ -179,10 +176,6 @@ fn sent(c: &mut Canvas, f: &mut Fonts, number: u64, url: &str) {
     c.text_centered(f, Face::Data, 44.0, cx, cy + 190.0, &format!("Issue #{number}"), MAUVE, 1.0);
     let link = f.fit(Face::BodyMedium, 20.0, url.trim_start_matches("https://"), r.w - 2.0 * INSET);
     c.text_centered(f, Face::BodyMedium, 20.0, cx, cy + 232.0, &link, TEXT, 1.0);
-    let lines = ["Open it on your phone or computer to follow along.", "If anything's unclear, the question gets asked there."];
-    for (i, line) in lines.iter().enumerate() {
-        c.text_centered(f, Face::Body, 18.0, cx, cy + 282.0 + i as f32 * 28.0, line, SUBTEXT0, 1.0);
-    }
 }
 
 /// Breaks text into lines no wider than `max`, at spaces and where the
