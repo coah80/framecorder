@@ -87,6 +87,10 @@ pub enum Action {
     Codec(Codec),
     Format(Format),
     Remux,
+    /// Opens or closes the list of folders.
+    FolderMenu,
+    /// One of the folders: 0 is ~/Videos/framecorder, then the model's drives.
+    Folder(usize),
     GameAudio,
     Mic,
     /// Opens or closes the list of mics.
@@ -146,6 +150,10 @@ pub struct Model<'a> {
     pub mics: &'a [crate::mics::Mic],
     /// The list of mics is open over the audio settings.
     pub mic_menu: bool,
+    /// Drives plugged in, looked up while the files settings are open.
+    pub drives: &'a [crate::folder::Drive],
+    /// The list of folders is open over the files settings.
+    pub folder_menu: bool,
     pub screen: Screen,
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.
@@ -216,6 +224,9 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
     // over everything, the footer too
     if m.screen == Screen::Settings(Section::Audio) {
         settings::mic_menu(canvas, fonts, m, &mut hits);
+    }
+    if m.screen == Screen::Settings(Section::Files) {
+        settings::folder_menu(canvas, fonts, m, &mut hits);
     }
     hits
 }

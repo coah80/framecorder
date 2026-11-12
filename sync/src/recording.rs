@@ -19,7 +19,7 @@ const MICS_FOR: Duration = Duration::from_secs(3);
 static MICS: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
 
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 13] = [
+const KEYS: [(&str, &str); 14] = [
     ("shape", "wide"),
     ("eye", "left"),
     ("quality", "high"),
@@ -28,6 +28,8 @@ const KEYS: [(&str, &str); 13] = [
     ("format", "mp4"),
     // recordings in mkv come out as mp4 once they're done
     ("remux", "false"),
+    // a framecorder folder on a drive, empty for ~/Videos/framecorder
+    ("folder", ""),
     ("game_audio", "true"),
     ("mic", "true"),
     // a PipeWire node name, empty for the one SteamOS uses
@@ -48,8 +50,25 @@ fn allowed(key: &str, value: &str) -> bool {
         "game_audio" | "mic" | "split_audio" | "clips" | "remux" => matches!(value, "true" | "false"),
         "clip" => matches!(value, "15" | "30" | "60" | "120"),
         "mic_source" => value.is_empty() || mics::valid_name(value),
+        // a phone picks from what's plugged in
+        "folder" => value.is_empty() || crate::folder::drives().iter().any(|d| d.folder.as_os_str() == value),
         _ => false,
     }
+}
+
+/// What the tab takes from the file. A picked drive that's been taken out
+/// is still the pick, it just isn't in.
+fn readable(key: &str, value: &str) -> bool {
+    match key {
+        "folder" => crate::folder::valid(value),
+        _ => allowed(key, value),
+    }
+}
+
+/// The folder picked in the tab, empty for ~/Videos/framecorder.
+pub fn folder(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    lookup(&text, "folder").filter(|v| crate::folder::valid(v)).unwrap_or_default().to_string()
 }
 
 /// The last value for `key`, the way the tab reads the file.
@@ -74,7 +93,7 @@ pub fn read(path: &Path) -> Value {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut out = Map::new();
     for (key, default) in KEYS {
-        let value = lookup(&text, key).filter(|v| allowed(key, v)).unwrap_or(default);
+        let value = lookup(&text, key).filter(|v| readable(key, v)).unwrap_or(default);
         out.insert(key.into(), to_json(key, value));
     }
     // older configs turned clips off with the length
@@ -87,7 +106,7 @@ pub fn read(path: &Path) -> Value {
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of eye, shape, quality, fps, codec, format, remux, game_audio, mic, mic_source, split_audio, clips, clip".into());
+        return Err("expected an object with some of eye, shape, quality, fps, codec, format, remux, folder, game_audio, mic, mic_source, split_audio, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -142,9 +161,22 @@ fn mics() -> Value {
     mics
 }
 
+/// Where recordings can go: Videos, the drives plugged in, and a picked
+/// one that's been taken out.
+fn folders(picked: &str) -> Value {
+    let mut list = vec![json!({"path": "", "name": "Videos", "plugged_in": true})];
+    let drives = crate::folder::drives();
+    list.extend(drives.iter().map(|d| json!({"path": d.folder, "name": d.name, "plugged_in": true})));
+    if !picked.is_empty() && !drives.iter().any(|d| d.folder.as_os_str() == picked) {
+        list.push(json!({"path": picked, "name": crate::folder::name_of(picked), "plugged_in": false}));
+    }
+    Value::Array(list)
+}
+
 pub fn status(paths: &crate::config::Paths) -> Value {
     let mut settings = read(&paths.recording());
     settings["mics"] = mics();
+    settings["folders"] = folders(settings["folder"].as_str().unwrap_or_default());
     settings["panels"] = std::fs::read(paths.status())
         .ok()
         .and_then(|data| serde_json::from_slice::<Value>(&data).ok())
@@ -164,7 +196,7 @@ mod tests {
         let s = read(&dir.path().join("ui.conf"));
         assert_eq!(
             s,
-            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "codec": "hevc", "format": "mp4", "remux": false, "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
+            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "codec": "hevc", "format": "mp4", "remux": false, "folder": "", "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
         );
     }
 

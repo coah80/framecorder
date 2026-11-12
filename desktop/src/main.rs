@@ -50,13 +50,11 @@ usage:
   framecorder-desktop                  start the app
   framecorder-desktop --minimized      start in the tray, if it's set to keep running
   framecorder-desktop --demo <screen>  made up frames and clips, nothing syncs.
-                                       screens: clips, list, clips-selecting, list-selecting, syncing,
-                                       unreachable, pair, settings, frame, frame-recording, frame-paused,
-                                       frame-old, frame-closed, frame-unreachable, frame-syncing, frame-eye,
-                                       frame-blended, frame-no-blend, frame-locked, check, live, live-connecting,
-                                       live-on, live-fullscreen, live-error, live-old, live-no-ffmpeg, report,
-                                       report-collecting, report-review, report-json, report-sending, report-sent,
-                                       report-error";
+                                       screens: clips, list, clips-selecting, list-selecting, syncing, unreachable, pair, settings, frame,
+                                       frame-recording, frame-paused, frame-old, frame-closed, frame-unreachable, frame-syncing,
+                                       frame-eye, frame-blended, frame-no-blend, frame-locked, frame-mics, frame-folders, check, live,
+                                       live-connecting, live-on, live-fullscreen, live-error, live-old, live-no-ffmpeg, report,
+                                       report-collecting, report-review, report-json, report-sending, report-sent, report-error";
 
 /// the one app, and its window when it has one. the window can close and
 /// come back from the tray, the app stays

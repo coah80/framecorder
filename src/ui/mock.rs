@@ -47,6 +47,8 @@ struct Mock {
     autostart: bool,
     auto_update: bool,
     mic_menu: bool,
+    folder_menu: bool,
+    drives: Vec<crate::folder::Drive>,
     text: String,
     typing: bool,
     report: Report,
@@ -93,6 +95,8 @@ impl Mock {
             autostart: true,
             auto_update: true,
             mic_menu: false,
+            folder_menu: false,
+            drives: super::sample_drives(),
             text: String::new(),
             typing: false,
             report: Report::Writing,
@@ -127,9 +131,16 @@ impl Mock {
     fn act(&mut self, action: Action) {
         self.version += 1;
         let menu = std::mem::take(&mut self.mic_menu);
+        let folders = std::mem::take(&mut self.folder_menu);
         let s = &mut self.settings;
         match action {
             Action::MicMenu => self.mic_menu = !menu,
+            Action::FolderMenu => self.folder_menu = !folders,
+            Action::Folder(i) => {
+                if let Some(folder) = super::folder_choice(&self.drives, i) {
+                    s.folder = folder;
+                }
+            }
             Action::TurnOff => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
             Action::Report => self.go(Screen::Report),
             Action::Bindings => {}
@@ -270,6 +281,8 @@ impl Mock {
             autostart: self.autostart,
             auto_update: self.auto_update,
             mic_menu: self.mic_menu,
+            drives: &self.drives,
+            folder_menu: self.folder_menu,
         };
         self.hits = view::draw(&mut canvas, fonts, &model);
         canvas.pixels

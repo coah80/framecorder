@@ -44,6 +44,8 @@ fn defaults() -> Recording {
         codec: None,
         format: None,
         remux: None,
+        folder: None,
+        folders: None,
     }
 }
 
@@ -110,7 +112,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .flex_col()
                 .gap(px(10.))
                 .child(label("next recording"))
-                .child(next_recording(&s, settings.as_ref(), connected, can_blend, app.mic_menu, cx))
+                .child(next_recording(&s, settings.as_ref(), connected, can_blend, app.menu, cx))
                 .when_some(
                     match (&settings, connected, asked) {
                         (_, false, _) => Some(format!("connect to {} to change these.", s.name)),
@@ -599,7 +601,7 @@ fn battery(percent: u8, charging: bool) -> Div {
 
 type Pick = Rc<dyn Fn(usize) -> Recording>;
 
-fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can_blend: bool, mic_menu: bool, cx: &mut Context<FrameApp>) -> Div {
+fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can_blend: bool, menu: Option<&'static str>, cx: &mut Context<FrameApp>) -> Div {
     let enabled = connected && settings.is_some();
     let r = settings.cloned().unwrap_or_else(defaults);
     let fp = s.fingerprint.clone();
@@ -709,6 +711,9 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                 cx,
             )))
         })
+        .when_some(folder_picker(&r), |d, (options, picked, pick)| {
+            d.child(setting(false, "folder", None).child(dropdown(&fp, "folder", &options, picked, enabled, menu, pick, cx)))
+        })
         // only an mkv gets remuxed
         .when_some(r.remux.filter(|_| r.format.as_deref() == Some("mkv")), |d, remux| {
             d.child(setting(false, "remux", None).child(toggle(
@@ -768,7 +773,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
             ),
         )
         .when_some(mic_picker(&r), |d, (options, picked, pick)| {
-            d.child(setting(false, "mic", None).child(dropdown(&fp, "mic", &options, picked, enabled && r.mic, mic_menu, pick, cx)))
+            d.child(setting(false, "mic", None).child(dropdown(&fp, "mic", &options, picked, enabled && r.mic, menu, pick, cx)))
         })
 }
 
@@ -793,11 +798,30 @@ fn mic_picker(r: &Recording) -> Option<(Vec<SharedString>, Option<usize>, Pick)>
     Some((options, on, pick))
 }
 
+/// where recordings go on the headset: videos, a drive plugged in, or a
+/// picked one that's been taken out. older headsets can't pick
+fn folder_picker(r: &Recording) -> Option<(Vec<SharedString>, Option<usize>, Pick)> {
+    let folders = r.folders.as_ref()?;
+    let picked = r.folder.clone().unwrap_or_default();
+    let options = folders
+        .iter()
+        .map(|f| if f.plugged_in { f.name.clone().into() } else { format!("{} isn't in · saving to Videos", f.name).into() })
+        .collect();
+    let on = folders.iter().position(|f| f.path == picked);
+    let paths: Vec<String> = folders.iter().map(|f| f.path.clone()).collect();
+    let r = r.clone();
+    let pick: Pick = Rc::new(move |i| match paths.get(i) {
+        Some(path) => Recording { folder: Some(path.clone()), ..r.clone() },
+        None => r.clone(),
+    });
+    Some((options, on, pick))
+}
+
 /// a pick from a list that can run long, like the headset's mics: the pick in
 /// a field, and the list over the page under it while it's open
 #[allow(clippy::too_many_arguments)]
-fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize>, enabled: bool, open: bool, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
-    let open = open && enabled;
+fn dropdown(fp: &str, name: &'static str, options: &[SharedString], picked: Option<usize>, enabled: bool, menu: Option<&'static str>, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
+    let open = menu == Some(name) && enabled;
     let value = picked.and_then(|i| options.get(i)).cloned().unwrap_or_else(|| "not connected".into());
     let edge = if open { a(theme::MAUVE, 0.6) } else { theme::card_line() };
     let field = div()
@@ -817,8 +841,8 @@ fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize
         .child(icon(if open { "chevron-up" } else { "chevron-down" }, 14., c(if open { theme::MAUVE } else { theme::SUBTEXT0 })))
         .when(!enabled, |d| d.opacity(0.4))
         .when(enabled, |d| {
-            d.cursor_pointer().hover(|s| s.border_color(a(theme::MAUVE, 0.6))).on_click(cx.listener(|app, _, _, cx| {
-                app.mic_menu = !app.mic_menu;
+            d.cursor_pointer().hover(|s| s.border_color(a(theme::MAUVE, 0.6))).on_click(cx.listener(move |app, _, _, cx| {
+                app.menu = if app.menu == Some(name) { None } else { Some(name) };
                 cx.notify();
             }))
         });
@@ -856,7 +880,7 @@ fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize
                 .cursor_pointer()
                 .hover(|s| s.text_color(c(theme::MAUVE)).bg(a(theme::MAUVE, 0.08)))
                 .on_click(cx.listener(move |app, _, _, cx| {
-                    app.mic_menu = false;
+                    app.menu = None;
                     if !on {
                         app.change_settings(&fp, pick(i), cx);
                     }
@@ -871,7 +895,7 @@ fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize
         .child(field)
         .when(open, |d| {
             d.child(deferred(list).with_priority(1)).on_mouse_down_out(cx.listener(|app, _, _, cx| {
-                app.mic_menu = false;
+                app.menu = None;
                 cx.notify();
             }))
         })

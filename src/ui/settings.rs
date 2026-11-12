@@ -69,6 +69,9 @@ pub struct Settings {
     pub format: Format,
     /// Recordings in MKV get remuxed to MP4 once they're done. Not clips.
     pub remux: bool,
+    /// The framecorder folder on a drive to record to, empty for
+    /// ~/Videos/framecorder. See `crate::folder`.
+    pub folder: String,
     pub game_audio: bool,
     pub mic: bool,
     /// Which mic, by PipeWire node name. Empty is the one SteamOS uses.
@@ -96,6 +99,7 @@ impl Default for Settings {
             codec: Codec::Hevc,
             format: Format::Mp4,
             remux: false,
+            folder: String::new(),
             game_audio: true,
             mic: true,
             mic_source: String::new(),
@@ -156,6 +160,7 @@ impl Settings {
                 ("format", "mp4") => s.format = Format::Mp4,
                 ("format", "mkv") => s.format = Format::Mkv,
                 ("remux", v) => s.remux = v == "true",
+                ("folder", v) if crate::folder::valid(v) => s.folder = v.to_string(),
                 ("game_audio", v) => s.game_audio = v == "true",
                 ("mic", v) => s.mic = v == "true",
                 ("split_audio", v) => s.split_audio = v == "true",
@@ -196,7 +201,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -224,6 +229,7 @@ impl Settings {
             },
             self.format.ext(),
             self.remux,
+            self.folder,
             self.game_audio,
             self.mic,
             self.mic_source,
@@ -239,10 +245,9 @@ impl Settings {
         config_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
     }
 
-    /// The folder recordings go in, clips in its `clips` folder.
+    /// The folder recordings go in right now, clips in its `clips` folder.
     pub fn folder(&self) -> Result<PathBuf> {
-        let home = std::env::var_os("HOME").context("HOME isn't set")?;
-        Ok(PathBuf::from(home).join("Videos/framecorder"))
+        crate::folder::current(&self.folder).context("HOME isn't set")
     }
 
     /// A new file for a recording (`sub` empty) or a clip (`sub` "clips"),

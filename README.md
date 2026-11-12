@@ -48,7 +48,7 @@ game audio is on by default, and the tab records the mic too (toggle it off in t
 
 clips are on by default (the switch is under the record button, the length is in settings, clips: 15 s, 30 s, 1 min, 2 min).
 
-framecorder keeps that much of the last few seconds in temporary segments on disk, with their locations in ram. it falls back to ram if it can't write the segments. then any of these saves it to `~/Videos/framecorder/clips`:
+framecorder keeps that much of the last few seconds in temporary segments on disk, with their locations in ram. it falls back to ram if it can't write the segments. then any of these saves it to `clips` in your recordings folder (`~/Videos/framecorder/clips` unless you picked a card or drive):
 
 - hold the left thumbstick down (to rebind it, "change in steamvr" under clips in settings)
 - the clip button in the tab
@@ -115,11 +115,11 @@ needs gcc, clang, glslc, pipewire and vulkan headers, which the frame's image al
 
 ## uninstall
 
-run the installer again and pick remove, or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`.
+run the installer again and pick remove, or over ssh, `framecorder-ui --uninstall`. it stops the services and deletes the programs, settings and pairings. your videos stay in `~/Videos/framecorder`, and on any card or drive you recorded to.
 
 ## using it
 
-open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and a list of what's set up (video, quality, audio, clips) with what's paired under it. tap a row or "settings" to change things, one section at a time. the chip next to the title says whether it's recording the panels or steamvr's view. videos are hevc, or h.264 for players and sites that can't take hevc (settings, video, codec). files are hybrid mp4, like obs's: if the headset dies mid-recording, everything up to the last couple of seconds is still there. mkv is under settings, files, with a switch to remux recordings to mp4 once they stop (clips stay mkv). hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`.
+open the steamvr dashboard, there's a framecorder tab. the first screen is the record button, clips, and a list of what's set up (video, quality, audio, clips) with what's paired under it. tap a row or "settings" to change things, one section at a time. the chip next to the title says whether it's recording the panels or steamvr's view. videos are hevc, or h.264 for players and sites that can't take hevc (settings, video, codec). files are hybrid mp4, like obs's: if the headset dies mid-recording, everything up to the last couple of seconds is still there. mkv is under settings, files, with a switch to remux recordings to mp4 once they stop (clips stay mkv). hit record, then switch to another tab or close the menu and it starts. it pauses by itself whenever the framecorder tab is on screen, so the controls never end up in your video, just come back to it and hit stop. files go to `~/Videos/framecorder`, or to a `framecorder` folder on a microSD card or USB drive (settings, files, folder). if that drive is taken out, recording carries on into `~/Videos/framecorder` until it's back.
 
 (it goes by the tab and not the whole dashboard because on the frame the steam menu counts as open the whole time you're in home)
 
@@ -150,6 +150,6 @@ over ssh, `framecorder-ui --report "what went wrong"` does the same, and `framec
 
 ## notes
 
-- mp4s get finished when the recording stops cleanly, which includes ctrl+c, ssh dropping, and the dashboard tab quitting. if the headset dies mid recording the mp4 is toast, use `.mkv` if you want recordings that survive that
+- mp4s get finished when the recording stops cleanly, which includes ctrl+c, ssh dropping, and the dashboard tab quitting. if the headset dies mid recording, the `.mp4.part` still plays up to the last couple of seconds, and the tab names it back next time it starts
 - raw view costs about 3x the gpu of eye view since it has to read all 37 MB of both panels every frame
 - the fonts in the dashboard tab (montserrat, poppins, space grotesk) are under the sil open font license, see `assets/fonts`

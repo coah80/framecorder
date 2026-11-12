@@ -157,8 +157,8 @@ pub struct FrameApp {
     pub ffmpeg: bool,
     pub report: report::State,
     pub live_view: live::View,
-    /// the list of the headset's mics is open on the frame page
-    pub mic_menu: bool,
+    /// which list is open on the frame page, by its name ("mic", "folder")
+    pub menu: Option<&'static str>,
     toast_task: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
 }
@@ -265,7 +265,7 @@ impl FrameApp {
             ffmpeg: false,
             report: report::State::new(cx.focus_handle()),
             live_view: live::View::new(cx.focus_handle()),
-            mic_menu: false,
+            menu: None,
             toast_task: None,
             _tasks: tasks,
         };

@@ -76,7 +76,7 @@ private val Codecs = listOf("hevc" to "HEVC", "h264" to "H.264")
 private val Formats = listOf("mp4" to "hybrid MP4", "mkv" to "MKV")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null, format = null, remux = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null, format = null, remux = null, folder = null, folders = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -177,7 +177,8 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 // older headsets can't pick a codec
                 val codec = settings.codec
                 val format = settings.format
-                val sound = 2 + listOfNotNull(codec, format).size
+                val folders = settings.folders
+                val sound = 2 + listOfNotNull(codec, format, folders).size
                 val groups = sound + if (mics != null) 2 else 1
                 Group(0, groups, "quality · ${mbps(settings.quality)} Mbit/s") {
                     Choices(Qualities, settings.quality, true) { onChange(RecordingPatch(quality = it)) }
@@ -188,6 +189,13 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 if (codec != null) {
                     Group(2, groups, "codec") {
                         Choices(Codecs, codec, true) { onChange(RecordingPatch(codec = it)) }
+                    }
+                }
+                if (folders != null) {
+                    // a picked drive that's been taken out records to videos meanwhile
+                    val options = folders.map { it.path to if (it.pluggedIn) it.name else "${it.name} isn't in · saving to Videos" }
+                    Group(2 + listOfNotNull(codec).size, groups, "folder") {
+                        Dropdown(options, settings.folder.orEmpty(), true) { onChange(RecordingPatch(folder = it)) }
                     }
                 }
                 if (format != null) {
