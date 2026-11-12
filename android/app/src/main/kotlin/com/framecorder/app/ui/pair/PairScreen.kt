@@ -301,8 +301,8 @@ fun Pairing(
             }
         }
 
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { typing = true }, modifier = Modifier.weight(1f).height(48.dp), enabled = !busy) {
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { typing = true }, modifier = Modifier.fillMaxWidth().height(48.dp), enabled = !busy) {
                 Icon(FcIcons.Keyboard, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("type its address", maxLines = 1)
@@ -313,7 +313,7 @@ fun Pairing(
                     if (text != null && text.trim().startsWith("framecorder://")) pairWith(linkName(text)) { hub.pairLink(text, replaces) }
                     else error = "copy the framecorder://pair link first, then paste it here."
                 },
-                modifier = Modifier.weight(1f).height(48.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
                 enabled = !busy,
             ) {
                 Icon(FcIcons.Link, contentDescription = null, modifier = Modifier.size(20.dp))

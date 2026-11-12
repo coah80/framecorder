@@ -245,7 +245,7 @@ fun ReportScreen(hub: SyncHub, onBack: () -> Unit) {
                         Button(onClick = { send(current.json, current.summary) }, modifier = Modifier.weight(1f).height(56.dp)) { Text("try again", maxLines = 1) }
                     }
                     is Step.Sent -> {
-                        OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f).height(56.dp)) { Text("done", maxLines = 1) }
+                        OutlinedButton(onClick = onBack, modifier = Modifier.height(56.dp)) { Text("done", maxLines = 1) }
                         Button(
                             onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(current.url))) } },
                             modifier = Modifier.weight(1f).height(56.dp),
