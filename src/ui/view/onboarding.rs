@@ -191,7 +191,7 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
-    let meaning = if s.clips { format!("Hold the left thumbstick to clip the last {}", length(s.clip_secs)) } else { String::new() };
+    let meaning = if s.clips { "Hold the left thumbstick to clip".to_string() } else { String::new() };
     question(c, f, inner, "Clips", &meaning);
     let y = inner.y + CONTROLS_Y;
     toggle_row(c, f, m, hits, Rect::new(inner.x, y, inner.w, 92.0), "Clips", Action::Clips, s.clips, false);

@@ -211,10 +211,7 @@ fn record_card(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
         hits.push(Hit { rect: pill, action: Action::ClipNow });
     }
 
-    let (status, color) = match (s.clips, recording) {
-        (false, _) => return,
-        (true, true) => ("Clips are off while recording".to_string(), OVERLAY2),
-        (true, false) => (format!("Hold the left thumbstick to clip the last {}", length(s.clip_secs)), SUBTEXT0),
-    };
-    c.text_centered(f, Face::Body, 16.0, cx, r.y + r.h - 30.0, &status, color, 1.0);
+    if s.clips && recording {
+        c.text_centered(f, Face::Body, 16.0, cx, r.y + r.h - 30.0, "Clips are off while recording", OVERLAY2, 1.0);
+    }
 }
