@@ -23,6 +23,7 @@ const EYES: [(&str, &str); 3] = [("left", "left eye"), ("right", "right eye"), (
 const LENGTHS: [(u32, &str); 5] = [(0, "off"), (15, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
 const QUALITIES: [(&str, &str); 3] = [("standard", "standard"), ("high", "high"), ("max", "max")];
 const RATES: [(&str, &str); 3] = [("auto", "auto"), ("60", "60 fps"), ("30", "30 fps")];
+const CODECS: [(&str, &str); 2] = [("hevc", "HEVC"), ("h264", "H.264")];
 
 /// what the headset uses when it hasn't said yet
 fn defaults() -> Recording {
@@ -39,6 +40,7 @@ fn defaults() -> Recording {
         split_audio: None,
         mic_source: None,
         mics: None,
+        codec: None,
     }
 }
 
@@ -606,6 +608,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
     let length = if r.clips { LENGTHS.iter().position(|(v, _)| *v == r.clip).unwrap_or(2) } else { 0 };
     let quality = QUALITIES.iter().position(|(v, _)| *v == r.quality).unwrap_or(1);
     let rate = RATES.iter().position(|(v, _)| *v == r.fps).unwrap_or(0);
+    let codec = r.codec.as_deref().map(|c| CODECS.iter().position(|(v, _)| *v == c).unwrap_or(0));
 
     let with = |f: fn(&Recording, usize) -> Recording| -> Pick {
         let r = r.clone();
@@ -679,6 +682,18 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
             with(|r, i| Recording { fps: RATES[i].0.into(), ..r.clone() }),
             cx,
         )))
+        // older headsets can't pick
+        .when_some(codec, |d, codec| {
+            d.child(setting(false, "codec", None).child(choices(
+                &fp,
+                "codec",
+                &plain(&CODECS),
+                codec,
+                enabled,
+                with(|r, i| Recording { codec: Some(CODECS[i].0.into()), ..r.clone() }),
+                cx,
+            )))
+        })
         .child(
             // the switches side by side, one under the other in a narrow window
             setting(false, "sound", None).child(
