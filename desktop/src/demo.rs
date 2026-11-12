@@ -343,7 +343,7 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
                 steps: vec![
                     step("this computer is on a network", "192.168.1.x", Outcome::Pass),
                     step("answers at 192.168.1.42", "can't reach the frame (connection refused)", Outcome::Fail),
-                    step("found by name", "no answer. some routers and firewalls block this, the next check doesn't need it.", Outcome::Fail),
+                    step("found by name", "no answer. some routers and firewalls block this", Outcome::Fail),
                     step("found by asking every address", "checking 192.168.1.x...", Outcome::Running),
                 ],
                 running: true,

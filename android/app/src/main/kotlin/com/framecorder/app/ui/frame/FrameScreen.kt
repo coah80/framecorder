@@ -163,7 +163,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
         scope.launch {
             try {
                 hub.command(frame.fingerprint, what)
-                if (what == "clip") Toast.makeText(context, "saved, it'll be here in a moment", Toast.LENGTH_SHORT).show()
+                if (what == "clip") Toast.makeText(context, "clip saved", Toast.LENGTH_SHORT).show()
             } catch (e: CoreException) {
                 haptics.performHapticFeedback(HapticFeedbackType.Reject)
                 Toast.makeText(context, e.reason(), Toast.LENGTH_LONG).show()
@@ -175,7 +175,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
     val recordingNote = when {
         recording != null -> null
         !connected -> "connect to ${frame.name} to change these."
-        asked -> "these can be changed from here once ${frame.name} has the latest framecorder."
+        asked -> "needs the latest framecorder on ${frame.name}."
         else -> null
     }
 
@@ -280,7 +280,6 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
             item {
                 SegmentRow(
                     0, 4, "connection check",
-                    subtitle = "see what's getting in the way",
                     onClick = { onDiagnose(frame.fingerprint) },
                     leading = { Icon(FcIcons.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     trailing = { Chevron() },
@@ -290,7 +289,6 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                 Spacer(Modifier.height(2.dp))
                 SegmentRow(
                     1, 4, "report an issue",
-                    subtitle = "opens a github issue with the frame's logs and details",
                     onClick = onReport,
                     leading = { Icon(FcIcons.Bug, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     trailing = { Chevron() },
@@ -300,7 +298,6 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                 Spacer(Modifier.height(2.dp))
                 SegmentRow(
                     2, 4, "try again now",
-                    subtitle = "instead of waiting for the next look",
                     onClick = hub::retryNow,
                     leading = { Icon(FcIcons.Retry, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 )
@@ -309,7 +306,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                 Spacer(Modifier.height(2.dp))
                 SegmentRow(
                     3, 4, "unpair",
-                    subtitle = "what's already here stays · id ${shortPrint(frame.fingerprint)}",
+                    subtitle = "id ${shortPrint(frame.fingerprint)}",
                     titleColor = MaterialTheme.colorScheme.error,
                     onClick = { unpairing = true },
                     leading = { Icon(FcIcons.Unlink, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
@@ -344,7 +341,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
             AlertDialog(
                 onDismissRequest = { unpairing = false },
                 title = { Text("unpair ${frame.name}?") },
-                text = { Text("it stops sending clips here. what's already on this phone stays, and you can pair again any time.") },
+                text = { Text("clips already on this phone stay.") },
                 confirmButton = {
                     TextButton(onClick = {
                         unpairing = false
@@ -355,7 +352,7 @@ fun FrameScreen(hub: SyncHub, fingerprint: String?, onDiagnose: (String) -> Unit
                                 if (result == Forgot.LOCAL_ONLY) {
                                     Toast.makeText(
                                         context,
-                                        "forgotten here. the frame still lists this device until you remove it in framecorder's sync settings on the headset.",
+                                        "unpaired here. the frame still lists this phone until you remove it in sync settings on the headset.",
                                         Toast.LENGTH_LONG,
                                     ).show()
                                 }
@@ -464,18 +461,19 @@ private fun Remote(
         if (trouble) {
             FilledTonalButton(onClick = onDiagnose, modifier = Modifier.fillMaxWidth()) { Text("check the connection") }
         } else {
-            Text(
-                when {
-                    updating && state == null -> "the remote is back once framecorder has restarted on the headset."
-                    state == null -> "record, stop and save clips from here once your frame has the next framecorder update."
-                    !state.available -> "framecorder isn't open on the headset. it starts with SteamVR."
-                    !state.ready -> "finish setting up framecorder on the headset first."
-                    recording && !state.running -> "recording, paused while the framecorder tab is open."
-                    recording -> "recording. stop it here or on the headset."
-                    state.clipReady -> "keeping the last ${span((state.clipSecs ?: 30u).toLong() * 1000)}, ready to save."
-                    state.clipSecs == null -> "clips are off, so there's nothing to save. record instead, or turn them on."
-                    else -> "clips are starting up..."
-                },
+            val note = when {
+                updating && state == null -> "framecorder is restarting on the headset."
+                state == null -> "the remote needs a newer framecorder on the headset."
+                !state.available -> "framecorder isn't open on the headset. it starts with SteamVR."
+                !state.ready -> "finish setting up framecorder on the headset first."
+                recording && !state.running -> "paused while the tab is open."
+                recording -> null
+                state.clipReady -> "keeping the last ${span((state.clipSecs ?: 30u).toLong() * 1000)}."
+                state.clipSecs == null -> "clips are off."
+                else -> "clips are starting up..."
+            }
+            if (note != null) Text(
+                note,
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(scheme.surfaceContainer).padding(horizontal = 14.dp, vertical = 10.dp),

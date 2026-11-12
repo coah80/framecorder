@@ -32,18 +32,13 @@ fun FirstAsk(wants: List<String>, onDismiss: () -> Unit, onContinue: () -> Unit)
             Modifier.navigationBarsPadding().padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(dotted(if (wants.size > 1) "two quick things" else "one quick thing"), style = MaterialTheme.typography.headlineSmall)
+            Text(dotted("permissions"), style = MaterialTheme.typography.headlineSmall)
             if (VIDEO_PERMISSION in wants) {
-                Line(FcIcons.Library, "see your videos", VIDEO_PERMISSION_WHY)
+                Line(FcIcons.Library, "videos", VIDEO_PERMISSION_WHY)
             }
             if (Manifest.permission.POST_NOTIFICATIONS in wants) {
-                Line(FcIcons.Bell, "notifications", "one per clip that lands, with share and open. the quiet one while syncing is android's own.")
+                Line(FcIcons.Bell, "notifications", "when a clip arrives")
             }
-            Text(
-                "say no and everything still works. a clip you already had may just download again.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Button(onClick = onContinue, shapes = ButtonDefaults.shapes(), modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) { Text("ok") }
         }
     }

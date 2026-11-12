@@ -349,28 +349,27 @@ fn nothing(cx: &mut Context<FrameApp>) -> impl IntoElement {
         .justify_center()
         .gap(px(16.))
         .child(title("live", 26.))
-        .child(div().text_color(c(theme::SUBTEXT0)).child("pair a frame and you can watch it from here."))
         .child(primary("live-pair-first", "pair a frame").on_click(cx.listener(|app, _, _, cx| app.go(Page::Pair, cx))))
 }
 
 /// the headline card: what the stream's doing, and start or stop
 fn now(s: &Status, connected: bool, can: bool, on: bool, starting: bool, status: Option<&LiveStatus>, cx: &mut Context<FrameApp>) -> Div {
     let (head, note, tint): (&str, String, u32) = if starting {
-        ("starting", "asking the frame for its picture...".into(), theme::YELLOW)
+        ("starting", String::new(), theme::YELLOW)
     } else if !connected {
-        ("off", format!("connect to {} first. it streams over your wi-fi, nothing goes through the internet.", s.name), theme::PEACH)
+        ("off", format!("connect to {} first.", s.name), theme::PEACH)
     } else if !can {
-        ("off", format!("live view needs the next framecorder update on {}. update it from the frame page, then come back.", s.name), theme::PEACH)
+        ("off", format!("live view needs a newer framecorder on {}.", s.name), theme::PEACH)
     } else {
         match status.map(|st| &st.phase) {
-            Some(LivePhase::Connecting) if on => ("connecting", "waiting for the first picture. a second or two.".into(), theme::YELLOW),
+            Some(LivePhase::Connecting) if on => ("connecting", String::new(), theme::YELLOW),
             Some(LivePhase::Live) if on => {
                 let rate = status.map_or(0, |st| st.bytes_per_second);
-                ("live", format!("{} coming in. it stops when you stop it or close this window.", format::rate(rate as f64)), theme::MAUVE)
+                ("live", format::rate(rate as f64), theme::MAUVE)
             }
-            Some(LivePhase::Error) => ("couldn't connect", status.and_then(|st| st.error.clone()).unwrap_or_else(|| "something went wrong on the way. try again.".into()), theme::RED),
-            Some(LivePhase::Stopped) => ("stopped", "start it again any time.".into(), theme::SUBTEXT0),
-            _ => ("off", "nothing is streaming. start it to watch here, or to record it in obs.".into(), theme::SUBTEXT0),
+            Some(LivePhase::Error) => ("couldn't connect", status.and_then(|st| st.error.clone()).unwrap_or_else(|| "try again.".into()), theme::RED),
+            Some(LivePhase::Stopped) => ("stopped", String::new(), theme::SUBTEXT0),
+            _ => ("off", String::new(), theme::SUBTEXT0),
         }
     };
     let glyph: AnyElement = if starting || matches!(status.map(|st| &st.phase), Some(LivePhase::Connecting)) && on {
@@ -404,7 +403,7 @@ fn now(s: &Status, connected: bool, can: bool, on: bool, starting: bool, status:
                         .child(div().font_family(theme::HEADING).font_weight(FontWeight::BOLD).text_size(px(20.)).truncate().child(head.to_string())),
                 ),
         )
-        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note))
+        .when(!note.is_empty(), |d| d.child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(note)))
         .child(div().flex().flex_wrap().items_center().gap(px(10.)).child(if on || starting {
             danger("live-stop", "stop").h(px(44.)).px(px(18.)).on_click(cx.listener(|app, _, _, cx| app.stop_live(cx))).into_any_element()
         } else if connected && can {
@@ -431,9 +430,9 @@ fn watching(connected: bool, can: bool, on_frame: Option<u32>, players: Option<u
     let quiet = |t: &str| div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(t.to_string());
     let col = card().when(!narrow, |d| d.w(px(250.))).flex_none().flex().flex_col().gap(px(14.)).p(px(16.)).child(label("watching"));
     match (on_frame, players) {
-        (None, _) if !connected => col.child(quiet("who's watching shows up once it's connected.")),
-        (None, _) if !can => col.child(quiet("the frame's next framecorder update says who's watching.")),
-        (None, _) => col.child(quiet("the frame hasn't said who's watching.")),
+        (None, _) if !connected => col.child(quiet("not connected")),
+        (None, _) if !can => col.child(quiet("needs a newer framecorder on the headset")),
+        (None, _) => col.child(quiet("not reported")),
         (Some(f), p) => col
             .child(line(f, "app watching the frame", "apps watching the frame"))
             .child(line(p.unwrap_or(0), "player on this computer", "players on this computer")),
@@ -446,7 +445,7 @@ fn picture(app: &FrameApp, status: Option<&LiveStatus>, on: bool, cx: &mut Conte
     let can_full = live && (app.ffmpeg || app.demo);
     let body: AnyElement = match (&app.live_view.picture, live) {
         (Some(frame), _) => img(frame.clone()).size_full().object_fit(ObjectFit::Contain).into_any_element(),
-        (None, false) => placeholder(icon("live", 22., c(theme::OVERLAY2)).into_any_element(), "start live view and it shows up here."),
+        (None, false) => placeholder(icon("live", 22., c(theme::OVERLAY2)).into_any_element(), ""),
         (None, true) if app.ffmpeg => match app.live_view.note {
             Note::Gone => placeholder(icon("x", 18., c(theme::PEACH)).into_any_element(), "couldn't decode the stream here. obs still gets it: see below."),
             _ => placeholder(spinner("live-first", 18., c(theme::MAUVE)).into_any_element(), "waiting for the first picture..."),
@@ -494,7 +493,7 @@ fn placeholder(glyph: AnyElement, text: &str) -> AnyElement {
         .gap(px(10.))
         .px(px(24.))
         .child(glyph)
-        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).text_center().child(text.to_string()))
+        .when(!text.is_empty(), |d| d.child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).text_center().child(text.to_string())))
         .into_any_element()
 }
 

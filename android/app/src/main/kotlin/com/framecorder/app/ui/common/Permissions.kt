@@ -14,7 +14,7 @@ val VIDEO_PERMISSION: String =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
 
 /** The one sentence of why, wherever the videos permission is asked for. */
-const val VIDEO_PERMISSION_WHY = "so framecorder can see the videos it saved before and not download them again."
+const val VIDEO_PERMISSION_WHY = "so it skips videos it already saved"
 
 private fun Context.has(permission: String) = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 

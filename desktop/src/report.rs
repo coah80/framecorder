@@ -240,7 +240,7 @@ fn writing(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> D
                     .whitespace_normal()
                     .child(if empty && !focused {
                         div().text_color(c(theme::OVERLAY2)).child(
-                            "what you were doing, what you expected, and what happened instead. a clip that came out wrong? say which one.",
+                            "what happened",
                         )
                     } else {
                         div().child(typed_text(d, focused))

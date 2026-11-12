@@ -10,7 +10,6 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -32,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -78,7 +76,6 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
         // "don't ask again" means android won't show its dialog; its settings page still can
         if (!granted && !videos && !shouldExplain(context)) openAppSettings(context)
     }
-    var howOpen by rememberSaveable { mutableStateOf(false) }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     Scaffold(
@@ -129,7 +126,6 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item {
                 SegmentRow(
                     0, 3, "keep syncing in the background",
-                    subtitle = if (background) "android shows a quiet notification while this is on" else "clips sync while the app is open",
                     onClick = { toggleBackground(context, prefs, !background, frames.isNotEmpty()) },
                     trailing = { Toggle(background) { toggleBackground(context, prefs, it, frames.isNotEmpty()) } },
                 )
@@ -137,11 +133,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item {
                 SegmentRow(
                     1, 3, "clip notifications",
-                    subtitle = when {
-                        !notifications -> "off in android, so new clips arrive quietly"
-                        clipNotes -> "one per clip that lands, with share"
-                        else -> "off, so new clips arrive quietly"
-                    },
+                    subtitle = if (notifications) null else "off in android",
                     onClick = if (!notifications) {
                         { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
                     } else {
@@ -157,7 +149,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item {
                 SegmentRow(
                     2, 3, "see videos saved before",
-                    subtitle = if (videos) "on, $VIDEO_PERMISSION_WHY" else VIDEO_PERMISSION_WHY,
+                    subtitle = if (videos) null else VIDEO_PERMISSION_WHY,
                     onClick = if (videos) null else ({ askVideos.launch(VIDEO_PERMISSION) }),
                     trailing = if (videos) {
                         null
@@ -172,7 +164,6 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
                 item {
                     SegmentRow(
                         0, 1, "use wallpaper colors",
-                        subtitle = "matches your phone instead of framecorder purple",
                         onClick = { prefs.setWallpaper(!wallpaper) },
                         trailing = { Toggle(wallpaper, prefs::setWallpaper) },
                     )
@@ -182,54 +173,26 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item { GroupLabel("this phone") }
             item {
                 SegmentRow(
-                    0, 4, "saved to",
-                    subtitle = "Movies/framecorder, clips in /clips. your gallery app shows them too",
+                    0, 3, "saved to",
+                    subtitle = "Movies/framecorder",
                     leading = { Icon(FcIcons.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 )
             }
             item {
                 SegmentRow(
-                    1, 4, "report an issue",
-                    subtitle = "opens a github issue with this app's log and your frame's details",
+                    1, 3, "report an issue",
                     onClick = onReport,
                     leading = { Icon(FcIcons.Bug, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     trailing = { Chevron() },
                 )
             }
             item {
-                SegmentRow(
-                    2, 4, "how syncing works",
-                    subtitle = if (howOpen) null else "when and how clips get here",
-                    onClick = { howOpen = !howOpen },
-                    leading = { Icon(FcIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                )
-            }
-            if (howOpen) {
-                item {
-                    Column(
-                        Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        for (line in HOW) {
-                            Text("· $line", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-            item {
-                SegmentRow(3, 4, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
+                SegmentRow(2, 3, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
     }
 }
-
-private val HOW = listOf(
-    "a clip or recording comes over the moment it's saved on your frame.",
-    "only while the frame is on, on the same wi-fi as this phone, with framecorder running on it.",
-    "if this app is closed or android stops it, anything new catches up the next time it's open.",
-    "nothing goes through the internet. it's straight from the frame to this phone, encrypted, and only to the frame you paired.",
-)
 
 @Composable
 private fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit) {

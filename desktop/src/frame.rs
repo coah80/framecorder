@@ -110,7 +110,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                     match (&settings, connected, asked) {
                         (_, false, _) => Some(format!("connect to {} to change these.", s.name)),
                         (Some(_), _, _) => None,
-                        (None, _, true) => Some(format!("these can be changed from here once {} has the latest framecorder.", s.name)),
+                        (None, _, true) => Some(format!("needs the latest framecorder on {}.", s.name)),
                         (None, _, false) => Some("asking the frame what it's set to...".to_string()),
                     },
                     |d, note| d.child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT0)).child(note)),
@@ -185,9 +185,6 @@ fn here(clips: &[Clip], fingerprint: &str) -> Div {
                     }),
             )
         })
-        .when(total == 0, |d| {
-            d.child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child("save a clip on it and it lands here."))
-        })
 }
 
 /// the rows about this frame: live view when it can, the connection check, a retry, and unpairing
@@ -248,7 +245,6 @@ fn nothing(cx: &mut Context<FrameApp>) -> impl IntoElement {
         .justify_center()
         .gap(px(16.))
         .child(title("frame", 26.))
-        .child(div().text_color(c(theme::SUBTEXT0)).child("pair a frame and you can drive it from here."))
         .child(primary("pair-first", "pair a frame").on_click(cx.listener(|app, _, _, cx| app.go(Page::Pair, cx))))
 }
 
@@ -508,9 +504,9 @@ fn headset(connected: bool, about: Option<&About>, narrow: bool) -> Div {
         .child(label("the headset"));
     let quiet = |t: &str| div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(t.to_string());
     match about {
-        _ if !connected => col.child(quiet("battery and storage show up once it's connected.")),
-        None => col.child(quiet("battery and storage show up once your frame has the next framecorder update.")),
-        Some(About { battery: None, storage: None }) => col.child(quiet("the frame hasn't said how it's doing.")),
+        _ if !connected => col.child(quiet("not connected")),
+        None => col.child(quiet("needs a newer framecorder on the headset")),
+        Some(About { battery: None, storage: None }) => col.child(quiet("not reported")),
         Some(ab) => col
             .when_some(ab.battery.as_ref(), |d, b| {
                 d.child(
@@ -555,7 +551,7 @@ fn headset(connected: bool, about: Option<&About>, narrow: bool) -> Div {
                                 .text_size(px(12.))
                                 .text_color(c(theme::SUBTEXT0))
                                 .child(dot(theme::MAUVE, false).size(px(8.)))
-                                .child(format!("framecorder's videos take {}", format::size(st.videos))),
+                                .child(format!("framecorder videos {}", format::size(st.videos))),
                         )
                         .child(
                             data(format!("{} free of {}", format::size(st.free), format::size(st.total)))
@@ -841,7 +837,7 @@ fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize
 
 /// why the shapes and the eye are greyed out: the panels aren't unlocked on the headset
 fn locked_note(has_eye: bool) -> Div {
-    let what = if has_eye { "square, vertical, both eyes and the eye choice" } else { "square, vertical and both eyes" };
+    let what = if has_eye { "square, vertical, both eyes and picking an eye" } else { "square, vertical and both eyes" };
     div()
         .flex()
         .items_start()
@@ -853,7 +849,7 @@ fn locked_note(has_eye: bool) -> Div {
         .text_size(px(12.))
         .text_color(c(theme::SUBTEXT0))
         .child(icon("lock", 14., c(theme::PEACH)).mt(px(2.)))
-        .child(div().flex_1().min_w_0().child(format!("{what} need the panels unlocked on the headset; until then it records SteamVR's view.")))
+        .child(div().flex_1().min_w_0().child(format!("{what} need the panels unlocked on the headset.")))
 }
 
 fn setting(first: bool, name: &str, hint: Option<String>) -> Div {

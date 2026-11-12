@@ -4,7 +4,7 @@
 import * as headset from "./headset"
 import { Screen } from "./screen"
 
-const quit = { value: "quit", name: "quit", description: "leave things as they are" } as const
+const quit = { value: "quit", name: "quit", description: "" } as const
 const done = { value: "done", name: "done", description: "" } as const
 
 async function main(screen: Screen): Promise<void> {
@@ -15,16 +15,16 @@ async function main(screen: Screen): Promise<void> {
   if (!headset.installed()) {
     const pick = await screen.ask(
       "install framecorder?",
-      "it records what the frame's panels show, from a tab in the steamvr dashboard. clips, and sync to your phone or computer too. about 5 MB, and it updates itself.\n\nit needs your password once: reading the panels takes a permission only steamos can give.",
-      [{ value: "install", name: "install", description: "asks for your password, then does the rest" }, quit],
+      "records what the frame's panels show. about 5 MB.\n\nit needs your password once, to read the panels.",
+      [{ value: "install", name: "install", description: "" }, quit],
     )
     if (pick === "install") await install(screen)
     return
   }
 
-  const pick = await screen.ask("framecorder is installed", "what do you want to do?", [
-    { value: "update", name: "update", description: "get the latest version now (it also updates itself)" },
-    { value: "remove", name: "remove", description: "take framecorder off the headset" },
+  const pick = await screen.ask("framecorder is installed", "", [
+    { value: "update", name: "update", description: "" },
+    { value: "remove", name: "remove", description: "" },
     quit,
   ])
   if (pick === "update") await install(screen)
@@ -37,7 +37,7 @@ async function install(screen: Screen): Promise<void> {
   if (!(await authorize(screen))) {
     await screen.ask(
       "nothing was installed",
-      "framecorder needs your password to read the panels, that's what it records. run this again when you're ready.",
+      "it needs your password to read the panels. run this again when you're ready.",
       [done],
       "bad",
     )
@@ -52,7 +52,7 @@ async function install(screen: Screen): Promise<void> {
   }
   await screen.ask(
     "framecorder is ready",
-    "put the headset on and open the steamvr dashboard: there's a framecorder tab with the record button.\n\nit updates itself from now on. run this again to remove it.",
+    "open the steamvr dashboard in the headset: framecorder is a tab there.\n\nrun this again to update or remove it.",
     [done],
     "good",
   )
@@ -64,8 +64,8 @@ async function authorize(screen: Screen): Promise<boolean> {
   if (!headset.hasPassword()) {
     const pick = await screen.ask(
       "pick a password first",
-      "steamos doesn't have a password yet, and framecorder needs one. remember it: steamos asks for it for things like this.",
-      [{ value: "set", name: "set a password", description: "you'll type it twice" }, quit],
+      "steamos doesn't have one yet, and framecorder needs it. remember it, steamos asks for it again later.",
+      [{ value: "set", name: "set a password", description: "" }, quit],
     )
     if (pick !== "set") return false
     while (!(await screen.handOver(headset.setPassword))) {
@@ -83,7 +83,7 @@ async function authorize(screen: Screen): Promise<boolean> {
 async function remove(screen: Screen): Promise<void> {
   const pick = await screen.ask("remove framecorder?", "your videos stay in ~/Videos/framecorder.", [
     { value: "remove", name: "remove", description: "programs, settings and pairings" },
-    { value: "cancel", name: "cancel", description: "keep it" },
+    { value: "cancel", name: "cancel", description: "" },
   ])
   if (pick !== "remove") return
   screen.busy("removing framecorder", "removing")

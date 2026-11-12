@@ -61,7 +61,7 @@ fun AppUpdateCard(newer: String?, onGet: () -> Unit, modifier: Modifier = Modifi
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("framecorder ${newer ?: ""} is out", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "this phone has ${BuildConfig.VERSION_NAME}. it downloads in your browser, then android asks to install it.",
+                    "this phone has ${BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )

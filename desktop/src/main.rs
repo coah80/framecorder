@@ -190,7 +190,7 @@ fn main() {
                 demo::seed(&mut app, screen);
             }
             if closed_old {
-                app.toast("the old framecorder app was still running, so it's closed now. this one does it all", cx);
+                app.toast("closed the old framecorder app", cx);
             }
             app
         });

@@ -75,7 +75,7 @@ fn confirm(app: &FrameApp, s: &Status, cx: &mut Context<FrameApp>) -> impl IntoE
                 .gap(px(2.))
                 .child(div().font_weight(FontWeight::MEDIUM).text_color(c(theme::RED)).child(format!("unpair {}?", s.name)))
                 .child(div().text_size(px(12.)).text_color(c(theme::SUBTEXT1)).child(
-                    "it stops sending clips here. what's already on this computer stays, and you can pair again any time.",
+                    "clips already on this computer stay.",
                 )),
         )
         .child(

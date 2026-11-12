@@ -64,10 +64,7 @@ class Notifier(private val context: Context, private val prefs: Prefs) {
             val (frame, remote) = recording
             builder
                 .setContentTitle("${frame.name} is recording")
-                .setContentText(
-                    if (remote.state.running) "stop it here or on the headset"
-                    else "paused at ${length(remote.elapsedMs() / 1000.0)} while the framecorder tab is open",
-                )
+                .setContentText(if (remote.state.running) null else "paused at ${length(remote.elapsedMs() / 1000.0)} while the tab is open")
                 .setCategory(NotificationCompat.CATEGORY_STATUS)
                 .addAction(0, "stop recording", RemoteReceiver.intent(context, frame.fingerprint, "stop"))
             if (remote.state.running) {
@@ -108,13 +105,6 @@ class Notifier(private val context: Context, private val prefs: Prefs) {
                         else -> "waiting for your frame"
                     },
                 )
-                .setContentText(
-                    when {
-                        updating != null -> "the headset restarts it on its own, then it's back here"
-                        connected.isNotEmpty() -> "new clips land here on their own"
-                        else -> "syncs when it's on, on this wi-fi, with framecorder running"
-                    },
-                )
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
             val clipping = connected.firstOrNull { remotes[it.fingerprint]?.state?.clipReady == true }
             if (clipping != null) builder.addAction(0, "save clip", RemoteReceiver.intent(context, clipping.fingerprint, "clip"))
@@ -134,7 +124,7 @@ class Notifier(private val context: Context, private val prefs: Prefs) {
         val sharePending = PendingIntent.getActivity(context, clip.key.hashCode() + 1, share, PendingIntent.FLAG_IMMUTABLE)
         val builder = NotificationCompat.Builder(context, CLIPS)
             .setSmallIcon(R.drawable.ic_stat_framecorder)
-            .setContentTitle("your $what from ${from ?: "your frame"} is here")
+            .setContentTitle("$what from ${from ?: "your frame"}")
             .setContentText(listOfNotNull(clip.durationS?.let(::length), size(clip.size)).joinToString(" · "))
             .setContentIntent(openApp(clip.key))
             .setAutoCancel(true)

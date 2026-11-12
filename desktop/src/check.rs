@@ -139,7 +139,7 @@ async fn checks(engine: Arc<Engine>, host: Host, tx: async_channel::Sender<(usiz
         Err(e) => Some(e.to_string()),
     };
     match &problem {
-        None => put(1, &answers, "it's there and it's the frame you paired".into(), Outcome::Pass),
+        None => put(1, &answers, "the frame you paired".into(), Outcome::Pass),
         Some(e) => put(1, &answers, e.clone(), Outcome::Fail),
     }
 
@@ -168,7 +168,7 @@ async fn checks(engine: Arc<Engine>, host: Host, tx: async_channel::Sender<(usiz
         None => put(
             2,
             BY_NAME,
-            "no answer. some routers and firewalls block this, the next check doesn't need it.".into(),
+            "no answer. some routers and firewalls block this".into(),
             Outcome::Fail,
         ),
     }
@@ -202,7 +202,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
     let name = status.map(|s| s.name.clone()).unwrap_or_else(|| "your frame".into());
     let connected = status.is_some_and(|s| s.state == State::Connected);
     let trouble = !connected && check.steps.iter().any(|s| s.outcome == Outcome::Fail);
-    let synced = sync::last_sync(&app.clips, &check.fingerprint).map(|t| format!("last synced {}. ", format::ago(t)));
+    let synced = sync::last_sync(&app.clips, &check.fingerprint).map(|t| format!("last synced {}", format::ago(t)));
     let tint = if connected { theme::GREEN } else { theme::RED };
     let fp = check.fingerprint.clone();
     let rows: Vec<AnyElement> = check.steps.iter().enumerate().map(|(i, s)| row(s, i == 0)).collect();
@@ -264,15 +264,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                                 .text_size(px(20.))
                                 .child(if connected { format!("{name} is connected") } else { format!("can't reach {name}") }),
                         )
-                        .child(div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(format!(
-                            "{}{}",
-                            synced.unwrap_or_default(),
-                            if connected {
-                                "new clips come over the moment they're saved."
-                            } else {
-                                "anything it saves waits on the frame, nothing is lost."
-                            }
-                        ))),
+                        .children(synced.map(|s| div().text_size(px(13.)).text_color(c(theme::SUBTEXT0)).child(s))),
                 ),
         )
         .child(card().flex().flex_col().children(rows))
@@ -287,7 +279,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                     .bg(a(theme::MAUVE, 0.06))
                     .child(icon("info", 18., c(theme::MAUVE)))
                     .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(c(theme::SUBTEXT1)).child(
-                        "asleep? put the headset on for a second. its wi-fi comes back when it wakes, then this finds it again by itself.",
+                        "asleep? put the headset on for a second.",
                     )),
             )
         })

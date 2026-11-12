@@ -360,8 +360,8 @@ fun LibraryScreen(
                         Text(
                             when {
                                 words.isNotEmpty() -> "nothing matches \"$query\"."
-                                filter == Filter.Clips -> "no clips yet, just recordings."
-                                else -> "no recordings yet, just clips."
+                                filter == Filter.Clips -> "no clips"
+                                else -> "no recordings"
                             },
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -655,7 +655,7 @@ private fun Search(query: String, onQuery: (String) -> Unit, modifier: Modifier 
         value = query,
         onValueChange = onQuery,
         singleLine = true,
-        placeholder = { Text("search by time, day or name") },
+        placeholder = { Text("search") },
         leadingIcon = { Icon(FcIcons.Search, contentDescription = null) },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         shape = CircleShape,
@@ -818,26 +818,22 @@ private fun Empty(paired: Boolean, trouble: FrameStatus?, onFrame: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Text(
             when {
-                !paired -> "nothing here yet"
                 trouble != null -> "waiting for ${trouble.name}"
-                else -> "all caught up"
+                else -> "no videos"
             },
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            when {
-                !paired -> "pair your frame and every clip and recording lands here, straight over your wi-fi."
-                trouble?.state == FrameState.UNPAIRED -> "it doesn't know this phone anymore. pair it again from the frame tab."
-                trouble?.state == FrameState.FULL -> "this phone is out of space. free some up and the rest comes over by itself."
-                trouble != null -> "can't reach it right now. anything it saves waits there until it's back."
-                else -> "save a clip or a recording on your frame and it shows up here a moment later."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
+        val why = when (trouble?.state) {
+            null -> null
+            FrameState.UNPAIRED -> "it doesn't know this phone anymore. pair it again from the frame tab."
+            FrameState.FULL -> "this phone is out of space."
+            else -> "can't reach it right now."
+        }
+        if (why != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(why, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
         AnimatedVisibility(!paired || trouble != null) {
             Button(onClick = onFrame, modifier = Modifier.padding(top = 24.dp).height(48.dp)) {
                 Icon(FcIcons.Headset, contentDescription = null, modifier = Modifier.size(20.dp))
