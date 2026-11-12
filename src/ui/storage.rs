@@ -1,17 +1,14 @@
 //! How much room recordings have left, from the file system they go to.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Free bytes where recordings are saved, or where they would be once the
 /// folder exists.
-pub fn free_for_recordings() -> Option<u64> {
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    let videos = home.join("Videos/framecorder");
-    let dir = if videos.is_dir() { videos } else { home };
-    free_at(&dir)
+pub fn free_for_recordings(folder: &Path) -> Option<u64> {
+    free_at(folder.ancestors().find(|d| d.is_dir())?)
 }
 
-fn free_at(dir: &std::path::Path) -> Option<u64> {
+fn free_at(dir: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
@@ -28,7 +25,7 @@ mod tests {
 
     #[test]
     fn measures_a_real_directory_and_not_a_missing_one() {
-        assert!(free_at(std::path::Path::new("/")).is_some());
-        assert_eq!(free_at(std::path::Path::new("/definitely/not/here")), None);
+        assert!(free_at(Path::new("/")).is_some());
+        assert_eq!(free_at(Path::new("/definitely/not/here")), None);
     }
 }

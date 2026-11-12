@@ -23,6 +23,9 @@ pub struct Paths {
     pub state: PathBuf,
     /// Where the kernel lists batteries.
     pub power: PathBuf,
+    /// Follows the folder picked in the tab, and the drive it's on coming
+    /// and going, by starting over there.
+    pub follow: bool,
 }
 
 impl Paths {
@@ -33,7 +36,10 @@ impl Paths {
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
-        let mut paths = Self::new(&home.join("Videos/framecorder"), &config.join("framecorder/sync"));
+        let picked = crate::recording::folder(&config.join("framecorder/ui.conf"));
+        let videos = crate::folder::current(&picked).unwrap_or_else(|| home.join("Videos/framecorder"));
+        let mut paths = Self::new(&videos, &config.join("framecorder/sync"));
+        paths.follow = true;
         // for trying it somewhere without the headset's battery
         if let Some(power) = std::env::var_os("FRAMECORDER_POWER_SUPPLY") {
             paths.power = PathBuf::from(power);
@@ -47,7 +53,15 @@ impl Paths {
             clips: videos.join("clips"),
             state: state.to_path_buf(),
             power: PathBuf::from("/sys/class/power_supply"),
+            follow: false,
         }
+    }
+
+    /// Where recordings go now, when that's somewhere else than where this
+    /// started.
+    pub fn moved(&self) -> Option<PathBuf> {
+        let now = crate::folder::current(&crate::recording::folder(&self.recording()))?;
+        (self.follow && now != self.videos).then_some(now)
     }
 
     pub fn info(&self) -> PathBuf {

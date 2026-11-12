@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use framecorder_app_lib::core::api::{About, Battery, Mic, Recording, Remote, Storage, UpdateStatus};
+use framecorder_app_lib::core::api::{About, Battery, Folder, Mic, Recording, Remote, Storage, UpdateStatus};
 use framecorder_app_lib::core::discover::Found;
 use framecorder_app_lib::core::engine::{Progress, State, Status};
 use framecorder_app_lib::core::live::{LivePhase, LiveStatus};
@@ -39,6 +39,7 @@ pub const SCREENS: &[&str] = &[
     "frame-no-blend",
     "frame-locked",
     "frame-mics",
+    "frame-folders",
     "check",
     "live",
     "live-connecting",
@@ -149,6 +150,11 @@ fn recording() -> Recording {
         codec: Some("hevc".into()),
         format: Some("mp4".into()),
         remux: Some(false),
+        folder: Some(String::new()),
+        folders: Some(vec![
+            Folder { path: String::new(), name: "Videos".into(), plugged_in: true },
+            Folder { path: "/run/media/steamos/SD CARD/framecorder".into(), name: "microSD card".into(), plugged_in: true },
+        ]),
         mics: Some(vec![
             Mic { name: "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source".into(), label: "Frame".into(), default: true },
             Mic { name: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), label: "Yeti Stereo Microphone".into(), default: false },
@@ -217,7 +223,8 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
     }
     match screen {
         "list" | "list-selecting" => app.grid = false,
-        "frame-mics" => app.mic_menu = true,
+        "frame-mics" => app.menu = Some("mic"),
+        "frame-folders" => app.menu = Some("folder"),
         "syncing" => {
             app.statuses = vec![status(State::Connected, true)];
             app.frame_updating.insert("demo".into());

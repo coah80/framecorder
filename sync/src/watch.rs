@@ -184,6 +184,9 @@ impl Watcher {
     }
 
     fn settings_changed(&mut self, force: bool) {
+        if let Some(folder) = self.paths.moved() {
+            crate::restart_in(&folder);
+        }
         let settings = crate::recording::status(&self.paths);
         if force || settings != self.settings {
             self.hub.broadcast("settings", &settings.to_string());
@@ -195,6 +198,33 @@ impl Watcher {
         for change in &changes {
             self.hub.send(change);
         }
+    }
+}
+
+/// Blocks on the mount table, which wakes it when a drive goes in or comes
+/// out: the folder list changes, and recordings may go somewhere else now.
+pub fn mounts(paths: &Paths, hub: &Hub) {
+    use std::io::{Read, Seek};
+    use std::os::fd::AsRawFd;
+    let Ok(mut table) = std::fs::File::open("/proc/self/mountinfo") else { return };
+    let mut text = Vec::new();
+    loop {
+        // reading it is what arms the next wakeup
+        text.clear();
+        if table.rewind().and_then(|_| table.read_to_end(&mut text)).is_err() {
+            return;
+        }
+        let mut fd = libc::pollfd { fd: table.as_raw_fd(), events: libc::POLLPRI, revents: 0 };
+        if unsafe { libc::poll(&mut fd, 1, -1) } < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return;
+        }
+        if let Some(folder) = paths.moved() {
+            crate::restart_in(&folder);
+        }
+        hub.broadcast("settings", &crate::recording::status(paths).to_string());
     }
 }
 

@@ -4,6 +4,8 @@
 mod config;
 mod devices;
 mod events;
+#[path = "../../src/folder.rs"]
+mod folder;
 mod frame;
 mod http;
 mod library;
@@ -80,6 +82,8 @@ fn run(args: Args) -> std::io::Result<()> {
     let defaults = Paths::from_env()?;
     let paths = Paths {
         power: defaults.power.clone(),
+        // a folder given on the command line stays put
+        follow: args.videos.is_none(),
         ..Paths::new(args.videos.as_deref().unwrap_or(&defaults.videos), args.state.as_deref().unwrap_or(&defaults.state))
     };
     watch::ensure_dirs(&paths).map_err(doing("making the videos folder"))?;
@@ -128,6 +132,10 @@ fn run(args: Args) -> std::io::Result<()> {
         .stack_size(256 * 1024)
         .spawn(move || checker.run_checker(|| openvr::scene_running(&lib_path)))?;
     std::thread::Builder::new().name("watch".into()).spawn(move || watcher.run())?;
+    if paths.follow {
+        let (paths, hub) = (paths.clone(), hub.clone());
+        std::thread::Builder::new().name("mounts".into()).stack_size(256 * 1024).spawn(move || watch::mounts(&paths, &hub))?;
+    }
 
     log::info!(
         "serving {} clips as {name:?} on port {port}, {} device(s) paired, fingerprint {}",
@@ -162,4 +170,18 @@ fn run(args: Args) -> std::io::Result<()> {
     });
     server::serve(listener, state);
     Ok(())
+}
+
+/// Starts over pointed at `folder`: the library, the watches and the rest
+/// are all built around one. Same process, so systemd and the port carry on.
+pub fn restart_in(folder: &Path) -> ! {
+    use std::os::unix::process::CommandExt;
+    log::info!("recordings go to {} now, starting over there", folder.display());
+    let err = match std::env::current_exe() {
+        Ok(exe) => std::process::Command::new(exe).args(std::env::args_os().skip(1)).exec(),
+        Err(e) => e,
+    };
+    log::error!("couldn't start over: {err}");
+    // systemd (Restart=on-failure) has a go at it then
+    std::process::exit(75);
 }

@@ -230,6 +230,11 @@ struct App {
     auto_update: bool,
     /// The list of mics is open.
     mic_menu: bool,
+    /// Drives to record to, looked up while the files settings are open.
+    drives: Vec<crate::folder::Drive>,
+    drives_checked: Option<Instant>,
+    /// The list of folders is open.
+    folder_menu: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -263,7 +268,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
         "audio" | "audio-mics" | "audio-mic-gone" | "audio-mic-menu" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
-        "files" => Screen::Settings(Section::Files),
+        "files" | "files-menu" | "files-sd" | "files-gone" => Screen::Settings(Section::Files),
         "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-shape" | "setup-locked-out" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
@@ -278,8 +283,11 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "setup-both-eyes" => Settings { shape: settings::Shape::BothEyes, ..settings },
         "video-both" => Settings { eye: settings::Eye::Both, ..settings },
         "audio-mic-gone" => Settings { mic_source: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), ..settings },
+        "files-sd" => Settings { folder: "/run/media/steamos/SD CARD/framecorder".into(), format: settings::Format::Mkv, remux: true, ..settings },
+        "files-gone" => Settings { folder: "/run/media/steamos/OLD/framecorder".into(), ..settings },
         _ => settings,
     };
+    let drives = sample_drives();
     let sample = Pairing::sample()?;
     // "many-home" and the like: the same devices, on the home screen.
     let devices = sample_devices(state.trim_end_matches("-home"));
@@ -326,6 +334,8 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         autostart: state != "general-off",
         auto_update: state != "general-off",
         mic_menu: state == "audio-mic-menu",
+        drives: &drives,
+        folder_menu: state == "files-menu",
     };
     let hits = view::draw(&mut canvas, &mut fonts, &model);
     // a hover state: the pointer in the middle of that control, drawn again
@@ -335,6 +345,12 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     }
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
+}
+
+/// A microSD card and a USB drive, plugged in.
+fn sample_drives() -> Vec<crate::folder::Drive> {
+    let drive = |folder: &str, name: &str| crate::folder::Drive { folder: folder.into(), name: name.into() };
+    vec![drive("/run/media/steamos/SD CARD/framecorder", "microSD card"), drive("/run/media/steamos/BACKUP/framecorder", "BACKUP")]
 }
 
 /// The Frame's mic, and a USB one for the previews that need two.
@@ -510,6 +526,7 @@ pub fn run() -> Result<()> {
         if tab_visible {
             app.check_sync(true);
             app.check_mics();
+            app.check_drives();
         } else if app.sync.pairing.as_ref().is_some_and(|p| p.is_ok()) {
             // A code that's out keeps working with the tab closed, since the
             // headset's usually off by the time someone types it on a phone.
@@ -606,6 +623,7 @@ impl App {
     fn new(settings: Settings, unlocked: bool, relocked: bool) -> Self {
         // The first time round the setup comes before anything else.
         let screen = if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Shape) };
+        let free = free_for(&settings);
         Self {
             settings,
             mics: Mics::default(),
@@ -632,12 +650,15 @@ impl App {
             clipped_at: None,
             unlocked,
             relocked,
-            free: storage::free_for_recordings(),
+            free,
             report: Report::new(),
             keyboard: None,
             autostart: true,
             auto_update: true,
             mic_menu: false,
+            drives: Vec::new(),
+            drives_checked: None,
+            folder_menu: false,
         }
     }
 
@@ -682,11 +703,20 @@ impl App {
 
     fn act(&mut self, action: Action) {
         self.dirty = true;
-        // any tap closes the list of mics, picking from it included
+        // any tap closes the lists, picking from one included
         let menu = std::mem::take(&mut self.mic_menu);
+        let folders = std::mem::take(&mut self.folder_menu);
         let s = &mut self.settings;
         match action {
             Action::MicMenu => return self.mic_menu = !menu,
+            Action::FolderMenu => return self.folder_menu = !folders,
+            Action::Folder(i) => {
+                let Some(picked) = folder_choice(&self.drives, i) else { return };
+                s.folder = picked;
+                self.save_settings();
+                self.free = free_for(&self.settings);
+                return;
+            }
             Action::TurnOff => return self.turn_off(),
             Action::Report => return self.go(Screen::Report),
             Action::Bindings => return self.bindings = true,
@@ -1145,8 +1175,13 @@ impl App {
             self.autostart = crate::setup::autostart();
             self.auto_update = crate::setup::auto_update();
         }
-        if screen == Screen::Home {
-            self.free = storage::free_for_recordings();
+        if matches!(screen, Screen::Home | Screen::Settings(Section::Files)) {
+            self.free = free_for(&self.settings);
+        }
+        self.folder_menu = false;
+        if screen == Screen::Settings(Section::Files) {
+            self.drives = crate::folder::drives();
+            self.drives_checked = Some(Instant::now());
         }
         // Leaving the report takes the keyboard down, and once one's been
         // sent, the next starts fresh. Opening it starts gathering details.
@@ -1179,8 +1214,8 @@ impl App {
             return;
         }
         self.sync.checked = Instant::now();
-        if visible && self.screen == Screen::Home {
-            let free = storage::free_for_recordings();
+        if visible && matches!(self.screen, Screen::Home | Screen::Settings(Section::Files)) {
+            let free = free_for(&self.settings);
             let shown = |f: Option<u64>| f.map(|b| view::free_space(b, self.settings.quality.mbps()));
             if shown(free) != shown(self.free) {
                 self.dirty = true;
@@ -1231,6 +1266,20 @@ impl App {
             } else {
                 self.sync.stop_pairing();
             }
+        }
+    }
+
+    /// Notices a card going in or coming out while the files settings are up.
+    fn check_drives(&mut self) {
+        if self.screen != Screen::Settings(Section::Files) || self.drives_checked.is_some_and(|t| t.elapsed() < MICS_EVERY) {
+            return;
+        }
+        self.drives_checked = Some(Instant::now());
+        let drives = crate::folder::drives();
+        if drives != self.drives {
+            self.drives = drives;
+            self.free = free_for(&self.settings);
+            self.dirty = true;
         }
     }
 
@@ -1318,7 +1367,22 @@ impl App {
             autostart: self.autostart,
             auto_update: self.auto_update,
             mic_menu: self.mic_menu,
+            drives: &self.drives,
+            folder_menu: self.folder_menu,
         }
+    }
+}
+
+/// Bytes free where these settings record to.
+fn free_for(settings: &Settings) -> Option<u64> {
+    settings.folder().ok().and_then(|f| storage::free_for_recordings(&f))
+}
+
+/// What `Action::Folder(i)` picks: 0 is ~/Videos/framecorder, then the drives.
+fn folder_choice(drives: &[crate::folder::Drive], i: usize) -> Option<String> {
+    match i {
+        0 => Some(String::new()),
+        i => drives.get(i - 1).map(|d| d.folder.to_string_lossy().into_owned()),
     }
 }
 

@@ -184,11 +184,58 @@ fn fit(f: &mut Fonts, text: &str, width: f32) -> String {
 fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
+    let picker = folder_row(inner);
+    let (options, picked, gone) = folder_options(m);
+    let value = if gone { format!("{} isn't in · saving to Videos", options[picked]) } else { options[picked].clone() };
+    let value = fit(f, &value, picker.w - 90.0);
+    dropdown(c, f, m, hits, picker, "Folder", &value, Action::FolderMenu, m.folder_menu, locked);
+    if let Some(free) = m.free {
+        let text = free_space(free, s.quality.mbps());
+        let w = f.measure(Face::Body, 16.0, &text);
+        c.text(f, Face::Body, 16.0, picker.x + picker.w - w, picker.y + 30.0, &text, OVERLAY2, if locked { 0.4 } else { 1.0 });
+    }
+    c.hline(inner.x, picker.y + ROW_H - 1.0, inner.w, TEXT, 0.05);
+
     let formats = [("Hybrid MP4", Action::Format(Format::Mp4), s.format == Format::Mp4), ("MKV", Action::Format(Format::Mkv), s.format == Format::Mkv)];
-    choice(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, ROW_H), "Format", "", &formats, locked);
+    let format = Rect::new(inner.x, picker.y + ROW_H, inner.w, ROW_H);
+    choice(c, f, m, hits, format, "Format", "", &formats, locked);
     let mkv = s.format == Format::Mkv;
-    let r = Rect::new(inner.x, inner.y + 22.0 + ROW_H + 16.0, inner.w, 92.0);
+    let r = Rect::new(inner.x, format.y + ROW_H + 16.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, r, "Remux recordings to MP4", Action::Remux, mkv && s.remux, locked || !mkv);
+}
+
+fn folder_row(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y, inner.w, 98.0)
+}
+
+/// The list of folders, open over the files settings.
+pub fn folder_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
+    if !m.folder_menu || m.locked() {
+        return;
+    }
+    let field = dropdown_field(folder_row(INNER));
+    let (options, picked, _) = folder_options(m);
+    let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
+    let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::Folder(i), picked == i)).collect();
+    dropdown_list(c, f, m, hits, field, &rows, Action::FolderMenu);
+}
+
+/// Where recordings can go and which one's picked: Videos, then the drives
+/// plugged in, then a picked one that's been taken out (true when it's that).
+fn folder_options(m: &Model) -> (Vec<String>, usize, bool) {
+    let mut options: Vec<String> = std::iter::once("Videos".to_string()).chain(m.drives.iter().map(|d| d.name.clone())).collect();
+    let picked = &m.settings.folder;
+    if picked.is_empty() {
+        return (options, 0, false);
+    }
+    match m.drives.iter().position(|d| d.folder.as_os_str() == picked.as_str()) {
+        Some(i) => (options, i + 1, false),
+        None => {
+            options.push(crate::folder::name_of(picked));
+            let last = options.len() - 1;
+            (options, last, true)
+        }
+    }
 }
 
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {

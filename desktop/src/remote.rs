@@ -318,6 +318,7 @@ fn recording_patch(old: &Recording, new: &Recording) -> RecordingPatch {
         codec: new.codec.clone().filter(|_| old.codec != new.codec),
         format: new.format.clone().filter(|_| old.format != new.format),
         remux: new.remux.filter(|_| old.remux != new.remux),
+        folder: new.folder.clone().filter(|_| old.folder != new.folder),
     }
 }
 

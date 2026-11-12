@@ -97,6 +97,12 @@ pub struct Recording {
     /// Recordings in mkv come out as mp4 once they're done.
     #[serde(default)]
     pub remux: Option<bool>,
+    /// Where recordings go, a path from `folders`, empty for ~/Videos/framecorder.
+    /// Older headsets can't pick.
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub folders: Option<Vec<Folder>>,
     /// The mics the headset has right now, its own first.
     #[serde(default)]
     pub mics: Option<Vec<Mic>>,
@@ -109,6 +115,16 @@ pub struct Mic {
     /// What SteamOS records from when nothing's picked.
     #[serde(default)]
     pub default: bool,
+}
+
+/// Somewhere recordings can go on the headset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Folder {
+    pub path: String,
+    pub name: String,
+    /// False for a picked drive that's been taken out; it records to
+    /// ~/Videos/framecorder meanwhile.
+    pub plugged_in: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -139,6 +155,8 @@ pub struct RecordingPatch {
     pub format: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remux: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

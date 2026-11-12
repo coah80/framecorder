@@ -257,6 +257,17 @@ pub struct RecordingSettings {
     pub format: Option<String>,
     /// Recordings in mkv come out as mp4 once they're done.
     pub remux: Option<bool>,
+    /// Where recordings go, a path from `folders`. Older headsets can't pick.
+    pub folder: Option<String>,
+    pub folders: Option<Vec<FolderChoice>>,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FolderChoice {
+    pub path: String,
+    pub name: String,
+    /// False for a picked drive that's been taken out.
+    pub plugged_in: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -285,6 +296,8 @@ impl From<api::Recording> for RecordingSettings {
             codec: r.codec,
             format: r.format,
             remux: r.remux,
+            folder: r.folder,
+            folders: r.folders.map(|f| f.into_iter().map(|f| FolderChoice { path: f.path, name: f.name, plugged_in: f.plugged_in }).collect()),
         }
     }
 }
@@ -317,6 +330,8 @@ pub struct RecordingPatch {
     pub format: Option<String>,
     #[uniffi(default = None)]
     pub remux: Option<bool>,
+    #[uniffi(default = None)]
+    pub folder: Option<String>,
 }
 
 impl From<RecordingPatch> for api::RecordingPatch {
@@ -335,6 +350,7 @@ impl From<RecordingPatch> for api::RecordingPatch {
             codec: r.codec,
             format: r.format,
             remux: r.remux,
+            folder: r.folder,
         }
     }
 }
