@@ -120,6 +120,20 @@ impl Canvas {
         self.shade(snapped, color, alpha, |_, _| 1.0);
     }
 
+    /// A straight stroke with round ends, for chevrons and check marks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, color: Rgb, alpha: f32) {
+        let r = width / 2.0;
+        let b = Rect::new(x0.min(x1) - r - 1.0, y0.min(y1) - r - 1.0, (x1 - x0).abs() + width + 2.0, (y1 - y0).abs() + width + 2.0);
+        let (dx, dy) = (x1 - x0, y1 - y0);
+        let len2 = (dx * dx + dy * dy).max(f32::EPSILON);
+        self.shade(b, color, alpha, |x, y| {
+            let t = (((x - x0) * dx + (y - y0) * dy) / len2).clamp(0.0, 1.0);
+            let d = ((x - x0 - t * dx).powi(2) + (y - y0 - t * dy).powi(2)).sqrt() - r;
+            (0.5 - d).clamp(0.0, 1.0)
+        });
+    }
+
     pub fn hline(&mut self, x: f32, y: f32, w: f32, color: Rgb, alpha: f32) {
         self.shade(Rect::new(x, y, w, 1.0), color, alpha, |_, _| 1.0);
     }

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use framecorder_app_lib::core::api::{About, Recording, Remote};
 use framecorder_app_lib::core::engine::{State, Status};
-use gpui::{div, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, SharedString, Stateful, Window};
+use gpui::{deferred, div, prelude::*, px, relative, AnyElement, Context, Div, FontWeight, SharedString, Stateful, Window};
 
 use crate::app::{narrow, status_color, status_text, FrameApp, Page};
 use crate::format;
@@ -105,7 +105,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                 .flex_col()
                 .gap(px(10.))
                 .child(label("next recording"))
-                .child(next_recording(&s, settings.as_ref(), connected, can_blend, cx))
+                .child(next_recording(&s, settings.as_ref(), connected, can_blend, app.mic_menu, cx))
                 .when_some(
                     match (&settings, connected, asked) {
                         (_, false, _) => Some(format!("connect to {} to change these.", s.name)),
@@ -598,7 +598,7 @@ fn battery(percent: u8, charging: bool) -> Div {
 
 type Pick = Rc<dyn Fn(usize) -> Recording>;
 
-fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can_blend: bool, cx: &mut Context<FrameApp>) -> Div {
+fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can_blend: bool, mic_menu: bool, cx: &mut Context<FrameApp>) -> Div {
     let enabled = connected && settings.is_some();
     let r = settings.cloned().unwrap_or_else(defaults);
     let fp = s.fingerprint.clone();
@@ -729,33 +729,114 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                     }),
             ),
         )
-        .when_some(mic_picker(&r, enabled), |d, (options, picked, pick)| {
-            d.child(setting(false, "mic", None).child(choices(&fp, "mic", &options, picked, enabled && r.mic, pick, cx)))
+        .when_some(mic_picker(&r), |d, (options, picked, pick)| {
+            d.child(setting(false, "mic", None).child(dropdown(&fp, "mic", &options, picked, enabled && r.mic, mic_menu, pick, cx)))
         })
 }
 
-/// the headset's mics to pick from, once there's a choice: another one plugged
-/// in, or the picked one gone. older headsets don't list them
-fn mic_picker(r: &Recording, enabled: bool) -> Option<(Vec<Choice>, usize, Pick)> {
+/// the headset's mics to pick from and the one in use, once there's a choice:
+/// another one plugged in, or the picked one gone (then none is, and the
+/// default's recorded meanwhile). older headsets don't list them
+fn mic_picker(r: &Recording) -> Option<(Vec<SharedString>, Option<usize>, Pick)> {
     let mics = r.mics.as_ref()?;
     let picked = r.mic_source.clone().unwrap_or_default();
     let gone = !picked.is_empty() && !mics.iter().any(|m| m.name == picked);
     if mics.len() < 2 && !gone {
         return None;
     }
-    let mut options: Vec<Choice> = mics.iter().map(|m| Choice { label: m.label.clone().into(), glyph: None, off: !enabled }).collect();
+    let options = mics.iter().map(|m| m.label.clone().into()).collect();
     let on = if picked.is_empty() { mics.iter().position(|m| m.default) } else { mics.iter().position(|m| m.name == picked) };
-    // the picked one isn't plugged in: the default's recorded meanwhile
-    if gone {
-        options.push(Choice { label: "not connected".into(), glyph: None, off: false });
-    }
     let names: Vec<String> = mics.iter().map(|m| m.name.clone()).collect();
     let r = r.clone();
     let pick: Pick = Rc::new(move |i| match names.get(i) {
         Some(name) => Recording { mic_source: Some(name.clone()), ..r.clone() },
         None => r.clone(),
     });
-    Some((options, on.unwrap_or(mics.len()), pick))
+    Some((options, on, pick))
+}
+
+/// a pick from a list that can run long, like the headset's mics: the pick in
+/// a field, and the list over the page under it while it's open
+#[allow(clippy::too_many_arguments)]
+fn dropdown(fp: &str, name: &str, options: &[SharedString], picked: Option<usize>, enabled: bool, open: bool, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
+    let open = open && enabled;
+    let value = picked.and_then(|i| options.get(i)).cloned().unwrap_or_else(|| "not connected".into());
+    let edge = if open { a(theme::MAUVE, 0.6) } else { theme::card_line() };
+    let field = div()
+        .id(SharedString::from(format!("{name}-field")))
+        .h(px(36.))
+        .px(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .rounded(px(10.))
+        .bg(a(theme::CRUST, 0.35))
+        .border_1()
+        .border_color(edge)
+        .text_size(px(13.))
+        .font_weight(FontWeight::MEDIUM)
+        .child(div().flex_1().min_w_0().truncate().child(value))
+        .child(icon(if open { "chevron-up" } else { "chevron-down" }, 14., c(if open { theme::MAUVE } else { theme::SUBTEXT0 })))
+        .when(!enabled, |d| d.opacity(0.4))
+        .when(enabled, |d| {
+            d.cursor_pointer().hover(|s| s.border_color(a(theme::MAUVE, 0.6))).on_click(cx.listener(|app, _, _, cx| {
+                app.mic_menu = !app.mic_menu;
+                cx.notify();
+            }))
+        });
+    let list = div()
+        .id(SharedString::from(format!("{name}-list")))
+        .occlude()
+        .absolute()
+        .top(px(40.))
+        .left_0()
+        .right_0()
+        .p(px(4.))
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .rounded(px(10.))
+        .bg(c(theme::MANTLE))
+        .border_1()
+        .border_color(theme::card_line())
+        .shadow_lg()
+        .children(options.iter().enumerate().map(|(i, label)| {
+            let on = picked == Some(i);
+            let (fp, pick) = (fp.to_string(), pick.clone());
+            div()
+                .id(SharedString::from(format!("{name}-{i}")))
+                .h(px(32.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .rounded(px(7.))
+                .text_size(px(13.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(c(if on { theme::MAUVE } else { theme::TEXT }))
+                .when(on, |d| d.bg(a(theme::MAUVE, 0.12)))
+                .cursor_pointer()
+                .hover(|s| s.text_color(c(theme::MAUVE)).bg(a(theme::MAUVE, 0.08)))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    app.mic_menu = false;
+                    if !on {
+                        app.change_settings(&fp, pick(i), cx);
+                    }
+                    cx.notify();
+                }))
+                .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                .when(on, |d| d.child(icon("check", 14., c(theme::MAUVE))))
+        }));
+    div()
+        .flex_1()
+        .relative()
+        .child(field)
+        .when(open, |d| {
+            d.child(deferred(list).with_priority(1)).on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                app.mic_menu = false;
+                cx.notify();
+            }))
+        })
 }
 
 /// why the shapes and the eye are greyed out: the panels aren't unlocked on the headset

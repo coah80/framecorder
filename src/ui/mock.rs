@@ -46,6 +46,7 @@ struct Mock {
     free: u64,
     autostart: bool,
     auto_update: bool,
+    mic_menu: bool,
     text: String,
     typing: bool,
     report: Report,
@@ -91,6 +92,7 @@ impl Mock {
             free: if start == "low-space" { 1_400_000_000 } else { 128_400_000_000 },
             autostart: true,
             auto_update: true,
+            mic_menu: false,
             text: String::new(),
             typing: false,
             report: Report::Writing,
@@ -124,8 +126,10 @@ impl Mock {
 
     fn act(&mut self, action: Action) {
         self.version += 1;
+        let menu = std::mem::take(&mut self.mic_menu);
         let s = &mut self.settings;
         match action {
+            Action::MicMenu => self.mic_menu = !menu,
             Action::TurnOff => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
             Action::Report => self.go(Screen::Report),
             Action::Type => {
@@ -261,6 +265,7 @@ impl Mock {
             free: Some(self.free),
             autostart: self.autostart,
             auto_update: self.auto_update,
+            mic_menu: self.mic_menu,
         };
         self.hits = view::draw(&mut canvas, fonts, &model);
         canvas.pixels

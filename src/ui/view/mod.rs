@@ -85,6 +85,8 @@ pub enum Action {
     Fps(FrameRate),
     GameAudio,
     Mic,
+    /// Opens or closes the list of mics.
+    MicMenu,
     /// One of the mics in the model's list.
     MicSource(usize),
     SplitAudio,
@@ -136,6 +138,8 @@ pub struct Model<'a> {
     pub settings: &'a Settings,
     /// The mics there are, looked up while the audio settings are open.
     pub mics: &'a [crate::mics::Mic],
+    /// The list of mics is open over the audio settings.
+    pub mic_menu: bool,
     pub screen: Screen,
     pub sync: SyncView<'a>,
     /// A clip was just asked for, the button's taking a second off.
@@ -203,6 +207,10 @@ pub fn draw(canvas: &mut Canvas, fonts: &mut Fonts, m: &Model) -> Vec<Hit> {
         }
     }
     footer(canvas, fonts, m, &mut hits);
+    // over everything, the footer too
+    if m.screen == Screen::Settings(Section::Audio) {
+        settings::mic_menu(canvas, fonts, m, &mut hits);
+    }
     hits
 }
 
