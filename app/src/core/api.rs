@@ -91,6 +91,12 @@ pub struct Recording {
     /// hevc or h264. Older headsets can't pick.
     #[serde(default)]
     pub codec: Option<String>,
+    /// mp4 or mkv. Older headsets can't pick.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Recordings in mkv come out as mp4 once they're done.
+    #[serde(default)]
+    pub remux: Option<bool>,
     /// The mics the headset has right now, its own first.
     #[serde(default)]
     pub mics: Option<Vec<Mic>>,
@@ -129,6 +135,10 @@ pub struct RecordingPatch {
     pub mic_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remux: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

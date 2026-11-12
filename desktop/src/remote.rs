@@ -316,6 +316,8 @@ fn recording_patch(old: &Recording, new: &Recording) -> RecordingPatch {
         split_audio: new.split_audio.filter(|_| old.split_audio != new.split_audio),
         mic_source: new.mic_source.clone().filter(|_| old.mic_source != new.mic_source),
         codec: new.codec.clone().filter(|_| old.codec != new.codec),
+        format: new.format.clone().filter(|_| old.format != new.format),
+        remux: new.remux.filter(|_| old.remux != new.remux),
     }
 }
 

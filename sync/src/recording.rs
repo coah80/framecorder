@@ -19,12 +19,15 @@ const MICS_FOR: Duration = Duration::from_secs(3);
 static MICS: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
 
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 11] = [
+const KEYS: [(&str, &str); 13] = [
     ("shape", "wide"),
     ("eye", "left"),
     ("quality", "high"),
     ("fps", "auto"),
     ("codec", "hevc"),
+    ("format", "mp4"),
+    // recordings in mkv come out as mp4 once they're done
+    ("remux", "false"),
     ("game_audio", "true"),
     ("mic", "true"),
     // a PipeWire node name, empty for the one SteamOS uses
@@ -41,7 +44,8 @@ fn allowed(key: &str, value: &str) -> bool {
         "quality" => matches!(value, "standard" | "high" | "max"),
         "fps" => matches!(value, "auto" | "60" | "30"),
         "codec" => matches!(value, "hevc" | "h264"),
-        "game_audio" | "mic" | "split_audio" | "clips" => matches!(value, "true" | "false"),
+        "format" => matches!(value, "mp4" | "mkv"),
+        "game_audio" | "mic" | "split_audio" | "clips" | "remux" => matches!(value, "true" | "false"),
         "clip" => matches!(value, "15" | "30" | "60" | "120"),
         "mic_source" => value.is_empty() || mics::valid_name(value),
         _ => false,
@@ -59,7 +63,7 @@ fn lookup<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 
 fn to_json(key: &str, value: &str) -> Value {
     match key {
-        "game_audio" | "mic" | "split_audio" | "clips" => json!(value == "true"),
+        "game_audio" | "mic" | "split_audio" | "clips" | "remux" => json!(value == "true"),
         "clip" => json!(value.parse::<u32>().unwrap_or(30)),
         _ => json!(value),
     }
@@ -83,7 +87,7 @@ pub fn read(path: &Path) -> Value {
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of eye, shape, quality, fps, codec, game_audio, mic, mic_source, split_audio, clips, clip".into());
+        return Err("expected an object with some of eye, shape, quality, fps, codec, format, remux, game_audio, mic, mic_source, split_audio, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -160,7 +164,7 @@ mod tests {
         let s = read(&dir.path().join("ui.conf"));
         assert_eq!(
             s,
-            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "codec": "hevc", "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
+            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "codec": "hevc", "format": "mp4", "remux": false, "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
         );
     }
 
@@ -196,6 +200,7 @@ mod tests {
         assert!(change(&path, &json!({"shape": "round"})).is_err());
         assert!(change(&path, &json!({"eye": "middle"})).is_err());
         assert!(change(&path, &json!({"codec": "av1"})).is_err());
+        assert!(change(&path, &json!({"format": "avi"})).is_err());
         assert!(change(&path, &json!({})).is_err());
         assert!(!path.exists());
     }

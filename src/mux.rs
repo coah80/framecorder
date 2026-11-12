@@ -68,6 +68,8 @@ pub struct Config {
     pub replay_secs: Option<u32>,
     /// Say on stdout when files are saved, for the dashboard tab.
     pub announce: bool,
+    /// Recordings saved as .mkv get remuxed into .mp4 once they're done.
+    pub remux: bool,
     pub codec: Codec,
     pub width: u32,
     pub height: u32,
@@ -232,7 +234,7 @@ impl Session {
                 .tracks
                 .iter()
                 .zip(&self.cfg.audio_tracks)
-                .map(|(t, spec)| Ok((spec.title, t.params()?)))
+                .map(|(t, spec)| Ok((spec.title.to_string(), t.params()?)))
                 .collect::<Result<Vec<_>>>()?;
             self.streams = Some(Arc::new(Streams {
                 codec: self.cfg.codec,
@@ -338,7 +340,9 @@ impl Session {
             self.announce_failure(kind, "nothing recorded yet");
             return;
         };
-        match writer::Handle::spawn(&path, &streams) {
+        // clips are saved a lot, remuxing each would hold up the next
+        let remux = kind == Kind::Recording && self.cfg.remux;
+        match writer::Handle::spawn(&path, &streams, remux) {
             Ok(file) => {
                 for p in backlog {
                     if let Some(rebased) = rebase(&p, start, end, self.fps) {

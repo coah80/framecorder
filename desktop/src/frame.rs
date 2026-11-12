@@ -24,6 +24,7 @@ const LENGTHS: [(u32, &str); 5] = [(0, "off"), (15, "15 s"), (30, "30 s"), (60, 
 const QUALITIES: [(&str, &str); 3] = [("standard", "standard"), ("high", "high"), ("max", "max")];
 const RATES: [(&str, &str); 3] = [("auto", "auto"), ("60", "60 fps"), ("30", "30 fps")];
 const CODECS: [(&str, &str); 2] = [("hevc", "HEVC"), ("h264", "H.264")];
+const FORMATS: [(&str, &str); 2] = [("mp4", "hybrid MP4"), ("mkv", "MKV")];
 
 /// what the headset uses when it hasn't said yet
 fn defaults() -> Recording {
@@ -41,6 +42,8 @@ fn defaults() -> Recording {
         mic_source: None,
         mics: None,
         codec: None,
+        format: None,
+        remux: None,
     }
 }
 
@@ -609,6 +612,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
     let quality = QUALITIES.iter().position(|(v, _)| *v == r.quality).unwrap_or(1);
     let rate = RATES.iter().position(|(v, _)| *v == r.fps).unwrap_or(0);
     let codec = r.codec.as_deref().map(|c| CODECS.iter().position(|(v, _)| *v == c).unwrap_or(0));
+    let format = r.format.as_deref().map(|c| FORMATS.iter().position(|(v, _)| *v == c).unwrap_or(0));
 
     let with = |f: fn(&Recording, usize) -> Recording| -> Pick {
         let r = r.clone();
@@ -682,7 +686,7 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
             with(|r, i| Recording { fps: RATES[i].0.into(), ..r.clone() }),
             cx,
         )))
-        // older headsets can't pick
+        // older headsets can't pick these
         .when_some(codec, |d, codec| {
             d.child(setting(false, "codec", None).child(choices(
                 &fp,
@@ -691,6 +695,29 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                 codec,
                 enabled,
                 with(|r, i| Recording { codec: Some(CODECS[i].0.into()), ..r.clone() }),
+                cx,
+            )))
+        })
+        .when_some(format, |d, format| {
+            d.child(setting(false, "format", None).child(choices(
+                &fp,
+                "format",
+                &plain(&FORMATS),
+                format,
+                enabled,
+                with(|r, i| Recording { format: Some(FORMATS[i].0.into()), ..r.clone() }),
+                cx,
+            )))
+        })
+        // only an mkv gets remuxed
+        .when_some(r.remux.filter(|_| r.format.as_deref() == Some("mkv")), |d, remux| {
+            d.child(setting(false, "remux", None).child(toggle(
+                &fp,
+                "remux",
+                "recordings to MP4",
+                remux,
+                enabled,
+                with(|r, _| Recording { remux: r.remux.map(|on| !on), ..r.clone() }),
                 cx,
             )))
         })

@@ -41,7 +41,7 @@ cd "$WORK/FFmpeg-n$VERSION"
 ./configure --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
     --disable-autodetect --disable-programs --disable-doc --disable-network \
     --disable-everything --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-postproc \
-    --enable-encoder=aac --enable-muxer=mp4,mov,matroska,mpegts --enable-protocol=file --enable-parser=aac,h264,hevc \
+    --enable-encoder=aac --enable-muxer=mp4,mov,matroska,mpegts --enable-demuxer=matroska --enable-protocol=file --enable-parser=aac,h264,hevc \
     $EXTRA >/dev/null
 make -j"$(nproc)" >/dev/null
 rm -rf "$PREFIX"

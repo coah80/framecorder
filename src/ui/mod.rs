@@ -263,6 +263,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
         "audio" | "audio-mics" | "audio-mic-gone" | "audio-mic-menu" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
+        "files" => Screen::Settings(Section::Files),
         "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
         "setup-shape" | "setup-locked-out" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
@@ -738,6 +739,8 @@ impl App {
             Action::Quality(q) => s.quality = q,
             Action::Fps(fps) => s.fps = fps,
             Action::Codec(codec) => s.codec = codec,
+            Action::Format(format) => s.format = format,
+            Action::Remux => s.remux = !s.remux,
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
@@ -883,8 +886,9 @@ impl App {
             }
         }
         let Some(r) = &mut self.recorder else { return };
-        match r.record() {
-            Ok(()) => {
+        match self.settings.new_file("") {
+            Ok(path) => {
+                r.record(&path);
                 self.recording = Some(Recording::new(r.paused()));
                 self.note = None;
             }
@@ -902,10 +906,13 @@ impl App {
         }
         log::info!("clip asked for by the {from}");
         match &mut self.recorder {
-            Some(r) if r.replay.is_some() && !r.quitting() => {
-                r.clip();
-                self.clipped_at = Some(Instant::now());
-            }
+            Some(r) if r.replay.is_some() && !r.quitting() => match self.settings.new_file("clips") {
+                Ok(path) => {
+                    r.clip(&path);
+                    self.clipped_at = Some(Instant::now());
+                }
+                Err(e) => self.toast = Some((format!("Couldn't save that clip: {e:#}"), false)),
+            },
             _ => {
                 let why = if self.settings.clipping().is_some() { "Clipping is starting up" } else { "Clipping is off" };
                 self.toast = Some((why.into(), false));

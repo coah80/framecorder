@@ -100,6 +100,7 @@ import com.framecorder.app.ui.common.share
 import com.framecorder.app.ui.common.sharedClip
 import com.framecorder.app.ui.common.size
 import com.framecorder.app.ui.common.time
+import com.framecorder.app.ui.common.videoMime
 import com.framecorder.app.ui.theme.DataStyle
 import com.framecorder.core.Clip
 import kotlin.math.abs
@@ -506,7 +507,7 @@ private fun codecOf(context: Context, uri: Uri): String? = runCatching {
 
 private fun open(context: Context, clip: Clip) {
     val view = Intent(Intent.ACTION_VIEW)
-        .setDataAndType(Uri.parse(clip.location), "video/mp4")
+        .setDataAndType(Uri.parse(clip.location), videoMime(clip.name))
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     runCatching { context.startActivity(view) }
 }

@@ -253,6 +253,10 @@ pub struct RecordingSettings {
     pub mics: Option<Vec<MicChoice>>,
     /// hevc or h264. Older headsets can't pick.
     pub codec: Option<String>,
+    /// mp4 or mkv. Older headsets can't pick.
+    pub format: Option<String>,
+    /// Recordings in mkv come out as mp4 once they're done.
+    pub remux: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
@@ -279,6 +283,8 @@ impl From<api::Recording> for RecordingSettings {
             mic_source: r.mic_source,
             mics: r.mics.map(|mics| mics.into_iter().map(|m| MicChoice { name: m.name, label: m.label, default: m.default }).collect()),
             codec: r.codec,
+            format: r.format,
+            remux: r.remux,
         }
     }
 }
@@ -307,6 +313,10 @@ pub struct RecordingPatch {
     pub mic_source: Option<String>,
     #[uniffi(default = None)]
     pub codec: Option<String>,
+    #[uniffi(default = None)]
+    pub format: Option<String>,
+    #[uniffi(default = None)]
+    pub remux: Option<bool>,
 }
 
 impl From<RecordingPatch> for api::RecordingPatch {
@@ -323,6 +333,8 @@ impl From<RecordingPatch> for api::RecordingPatch {
             split_audio: r.split_audio,
             mic_source: r.mic_source,
             codec: r.codec,
+            format: r.format,
+            remux: r.remux,
         }
     }
 }

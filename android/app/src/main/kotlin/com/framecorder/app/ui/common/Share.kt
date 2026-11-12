@@ -34,15 +34,19 @@ fun sendIntent(videos: List<Pair<Uri, String>>, title: String): Intent {
     } else {
         Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(videos.map { it.first }))
     }
-    val clip = ClipData(firstName, arrayOf("video/mp4"), ClipData.Item(first))
+    val types = videos.map { videoMime(it.second) }.distinct()
+    val clip = ClipData(firstName, types.toTypedArray(), ClipData.Item(first))
     videos.drop(1).forEach { (uri, _) -> clip.addItem(ClipData.Item(uri)) }
     send.clipData = clip
     return send
-        .setType("video/mp4")
+        .setType(types.singleOrNull() ?: "video/*")
         .putExtra(Intent.EXTRA_TITLE, title)
         .putExtra(Intent.EXTRA_SUBJECT, title)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 }
+
+/** What a video is by its name: the recorder saves .mp4 or .mkv. */
+fun videoMime(name: String): String = if (name.endsWith(".mkv", ignoreCase = true)) "video/x-matroska" else "video/mp4"
 
 /** "clip", "recording", "3 clips", "3 recordings", "3 videos" when they're mixed. */
 fun what(clips: List<Clip>): String {

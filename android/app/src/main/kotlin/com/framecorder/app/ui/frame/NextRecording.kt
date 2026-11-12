@@ -73,9 +73,10 @@ private const val PANELS_NOTE = "square, vertical, both eyes and picking an eye 
 private val Qualities = listOf("standard" to "standard", "high" to "high", "max" to "max")
 private val Rates = listOf("auto" to "auto", "60" to "60 fps", "30" to "30 fps")
 private val Codecs = listOf("hevc" to "HEVC", "h264" to "H.264")
+private val Formats = listOf("mp4" to "hybrid MP4", "mkv" to "MKV")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null, format = null, remux = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -150,7 +151,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
             }
             SegmentRow(
                 rows - 1, rows, "quality, frame rate, audio",
-                subtitle = listOfNotNull(s.quality, Rates.first { it.first == s.fps }.second, Codecs.firstOrNull { it.first == s.codec }?.second, audio(s)).joinToString(" · "),
+                subtitle = listOfNotNull(s.quality, Rates.first { it.first == s.fps }.second, Codecs.firstOrNull { it.first == s.codec }?.second, Formats.firstOrNull { it.first == s.format }?.second, audio(s)).joinToString(" · "),
                 onClick = if (enabled) ({ more = true }) else null,
                 trailing = { Chevron() },
             )
@@ -175,7 +176,8 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 val mics = micChoices(settings)
                 // older headsets can't pick a codec
                 val codec = settings.codec
-                val sound = if (codec != null) 3 else 2
+                val format = settings.format
+                val sound = 2 + listOfNotNull(codec, format).size
                 val groups = sound + if (mics != null) 2 else 1
                 Group(0, groups, "quality · ${mbps(settings.quality)} Mbit/s") {
                     Choices(Qualities, settings.quality, true) { onChange(RecordingPatch(quality = it)) }
@@ -186,6 +188,23 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 if (codec != null) {
                     Group(2, groups, "codec") {
                         Choices(Codecs, codec, true) { onChange(RecordingPatch(codec = it)) }
+                    }
+                }
+                if (format != null) {
+                    Group(sound - 1, groups, "format") {
+                        Choices(Formats, format, true) { onChange(RecordingPatch(format = it)) }
+                        // only an mkv gets remuxed
+                        val remux = settings.remux
+                        if (format == "mkv" && remux != null) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("remux recordings to MP4", style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp), modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = remux,
+                                    onCheckedChange = { onChange(RecordingPatch(remux = it)) },
+                                    thumbContent = if (remux) ({ Icon(FcIcons.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }) else null,
+                                )
+                            }
+                        }
                     }
                 }
                 Column(

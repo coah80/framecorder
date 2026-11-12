@@ -99,7 +99,9 @@ enum Eye {
 #[command(version, about = "Low overhead recorder for the Steam Frame's real headset view")]
 struct Args {
     /// Output file, .mp4 or .mkv. Defaults to ~/Videos/framecorder/<time>.mp4,
-    /// or no recording at all with --replay.
+    /// or no recording at all with --replay. MP4s are hybrid: fragmented while
+    /// they're written, so one cut off partway still plays, and a regular MP4
+    /// once they're done.
     output: Option<PathBuf>,
 
     /// Keep the last this many seconds in memory for clips.
@@ -194,6 +196,11 @@ struct Args {
     /// Also keep the game and the mic on their own tracks, for editing.
     #[arg(long)]
     mic_track: bool,
+
+    /// Remux recordings saved as .mkv into .mp4 once they're done. Clips stay
+    /// as they are.
+    #[arg(long)]
+    remux: bool,
 
     /// Start paused; SIGUSR2 resumes, SIGUSR1 pauses again. Paused time is
     /// cut out of the video.
@@ -364,6 +371,7 @@ fn run(args: Args) -> Result<()> {
         path: output,
         replay_secs: args.replay,
         announce: args.control,
+        remux: args.remux,
         codec: args.codec,
         width,
         height,

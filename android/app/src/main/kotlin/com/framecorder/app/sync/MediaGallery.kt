@@ -11,6 +11,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.LruCache
 import android.util.Size
+import com.framecorder.app.ui.common.videoMime
 import com.framecorder.core.CoreException
 import com.framecorder.core.Gallery
 import java.io.File
@@ -56,7 +57,7 @@ class MediaGallery(private val context: Context) : Gallery {
     private fun copyIn(source: File, name: String, subdir: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.MIME_TYPE, videoMime(name))
             put(MediaStore.Video.Media.RELATIVE_PATH, folder(subdir))
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }

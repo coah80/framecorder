@@ -31,15 +31,18 @@ pub struct Clip {
     pub path: PathBuf,
 }
 
-/// Only finished files count. Writers use `<name>.mp4.part` until done.
+/// The kinds of file the recorder saves.
+const EXTENSIONS: [&str; 2] = [".mp4", ".mkv"];
+
+/// Only finished files count. Writers use `<name>.mp4.part` (or .mkv) until done.
 pub fn is_finished_video(name: &str) -> bool {
-    name.ends_with(".mp4") && !name.starts_with('.') && name.len() > 4
+    EXTENSIONS.iter().any(|ext| name.ends_with(ext)) && !name.starts_with('.') && name.len() > 4
 }
 
 /// Stable, URL-safe id for a file. Readable for the names the recorder
 /// makes, hex for anything odd someone copied in.
 pub fn clip_id(kind: Kind, file_name: &str) -> String {
-    let stem = file_name.strip_suffix(".mp4").unwrap_or(file_name);
+    let stem = EXTENSIONS.iter().find_map(|ext| file_name.strip_suffix(ext)).unwrap_or(file_name);
     let prefix = match kind {
         Kind::Clip => 'c',
         Kind::Recording => 'r',
@@ -168,6 +171,7 @@ fn probe(path: &Path, kind: Kind, known: Option<&Clip>) -> Option<Clip> {
     // the file's done by the time we see it, so only re-read when it changed
     let duration_s = match known {
         Some(k) if k.size == meta.len() && k.created == created => k.duration_s,
+        _ if name.ends_with(".mkv") => mkv_duration(path).ok().flatten(),
         _ => mp4_duration(path).ok().flatten(),
     };
     Some(Clip { id: clip_id(kind, &name), kind, name, size: meta.len(), duration_s, created, path: path.to_path_buf() })
@@ -218,6 +222,94 @@ fn fragment_duration(f: &mut File, moov: u64, moov_end: u64) -> io::Result<Optio
         u32::from_be_bytes(b) as u64
     };
     Ok((d > 0).then_some(d))
+}
+
+/// Reads the segment info for the length: Duration, in TimestampScale
+/// nanoseconds. It sits ahead of the video, so this reads a few hundred
+/// bytes. An MKV the recorder never finished has none.
+pub fn mkv_duration(path: &Path) -> io::Result<Option<f64>> {
+    const EBML: u32 = 0x1A45_DFA3;
+    const SEGMENT: u32 = 0x1853_8067;
+    const INFO: u32 = 0x1549_A966;
+    const CLUSTER: u32 = 0x1F43_B675;
+    const SCALE: u32 = 0x2A_D7B1;
+    const DURATION: u32 = 0x4489;
+
+    let mut f = io::BufReader::new(File::open(path)?);
+    let (id, size) = (ebml_id(&mut f)?, ebml_size(&mut f)?);
+    if id != EBML {
+        return Ok(None);
+    }
+    f.seek_relative(size.unwrap_or(0) as i64)?;
+    if ebml_id(&mut f)? != SEGMENT {
+        return Ok(None);
+    }
+    ebml_size(&mut f)?;
+    // the seek head, maybe some padding, then the info
+    for _ in 0..16 {
+        let id = ebml_id(&mut f)?;
+        let Some(size) = ebml_size(&mut f)? else { return Ok(None) };
+        if id == CLUSTER {
+            return Ok(None);
+        }
+        if id != INFO {
+            f.seek_relative(size as i64)?;
+            continue;
+        }
+        let mut info = vec![0u8; size.min(4096) as usize];
+        f.read_exact(&mut info)?;
+        let mut r = io::Cursor::new(info.as_slice());
+        let (mut scale, mut duration) = (1_000_000.0, None);
+        while (r.position() as usize) < info.len() {
+            let id = ebml_id(&mut r)?;
+            let Some(size) = ebml_size(&mut r)? else { break };
+            let start = r.position() as usize;
+            let Some(v) = info.get(start..start + size as usize) else { break };
+            r.set_position((start + v.len()) as u64);
+            match (id, v.len()) {
+                (SCALE, 1..=8) => scale = v.iter().fold(0u64, |n, b| n << 8 | *b as u64) as f64,
+                (DURATION, 4) => duration = Some(f32::from_be_bytes(v.try_into().unwrap()) as f64),
+                (DURATION, 8) => duration = Some(f64::from_be_bytes(v.try_into().unwrap())),
+                _ => {}
+            }
+        }
+        return Ok(duration.filter(|d| *d > 0.0).map(|d| d * scale / 1e9));
+    }
+    Ok(None)
+}
+
+/// An element ID, its length marker kept, the way the spec writes them.
+fn ebml_id(r: &mut impl Read) -> io::Result<u32> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b)?;
+    let len = b[0].leading_zeros() as usize + 1;
+    if len > 4 {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut id = b[0] as u32;
+    for _ in 1..len {
+        r.read_exact(&mut b)?;
+        id = id << 8 | b[0] as u32;
+    }
+    Ok(id)
+}
+
+/// An element's size, None when it's "unknown" (all ones).
+fn ebml_size(r: &mut impl Read) -> io::Result<Option<u64>> {
+    let mut b = [0u8; 1];
+    r.read_exact(&mut b)?;
+    let len = b[0].leading_zeros() as usize + 1;
+    if len > 8 {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut size = (b[0] as u64) & (0xFF >> len);
+    let mut unknown = size == 0xFF >> len;
+    for _ in 1..len {
+        r.read_exact(&mut b)?;
+        size = size << 8 | b[0] as u64;
+        unknown &= b[0] == 0xFF;
+    }
+    Ok((!unknown).then_some(size))
 }
 
 /// Finds a box between `start` and `end`, returning where its payload
@@ -333,8 +425,11 @@ pub(crate) mod tests {
         assert_eq!(clip_id(Kind::Clip, "2026-09-26_14-00-00.mp4"), "c-2026-09-26_14-00-00");
         assert_eq!(clip_id(Kind::Recording, "x.mp4"), "r-x");
         assert_eq!(clip_id(Kind::Clip, "my clip/é.mp4"), format!("c~{}", hex("my clip/é".as_bytes())));
+        assert_eq!(clip_id(Kind::Clip, "2026-09-26_14-00-00.mkv"), "c-2026-09-26_14-00-00");
         assert!(is_finished_video("a.mp4"));
+        assert!(is_finished_video("a.mkv"));
         assert!(!is_finished_video("a.mp4.part"));
+        assert!(!is_finished_video("a.mkv.part"));
         assert!(!is_finished_video(".mp4"));
         assert!(!is_finished_video("a.perf.csv"));
     }
@@ -352,5 +447,45 @@ pub(crate) mod tests {
         // no moov at all, e.g. a broken file
         std::fs::write(&path, bx(b"mdat", &[0u8; 16])).unwrap();
         assert_eq!(mp4_duration(&path).unwrap(), None);
+    }
+
+    /// An element with an 8 byte size, the way FFmpeg writes the big ones.
+    fn el(id: &[u8], payload: &[u8]) -> Vec<u8> {
+        let mut v = id.to_vec();
+        v.push(0x01);
+        v.extend_from_slice(&(payload.len() as u64).to_be_bytes()[1..]);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    /// Laid out like the recorder's: a seek head and padding ahead of the
+    /// info, which holds a CRC and strings longer than a number either side
+    /// of the duration.
+    fn fake_mkv(duration: Option<f64>) -> Vec<u8> {
+        let mut info = [&[0xBF, 0x84][..], &[0; 4], &[0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40], &[0x4D, 0x80, 0x8D], b"Lavf62.3.100."].concat();
+        if let Some(d) = duration {
+            info.extend([0x44, 0x89, 0x88]);
+            info.extend(d.to_be_bytes());
+        }
+        info.extend([&[0x57, 0x41, 0x8D][..], b"Lavf62.3.100."].concat());
+        let segment = [el(&[0x11, 0x4D, 0x9B, 0x74], &[0; 12]), el(&[0xEC], &[0; 83]), el(&[0x15, 0x49, 0xA9, 0x66], &info), el(&[0x1F, 0x43, 0xB6, 0x75], &[0; 64])].concat();
+        [el(&[0x1A, 0x45, 0xDF, 0xA3], &[0x42, 0x82, 0x88, b'm', b'a', b't', b'r', b'o', b's', b'k', b'a']), el(&[0x18, 0x53, 0x80, 0x67], &segment)].concat()
+    }
+
+    #[test]
+    fn duration_from_mkv_and_none_from_an_unfinished_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mkv");
+        std::fs::write(&path, fake_mkv(Some(4035.0))).unwrap();
+        assert_eq!(mkv_duration(&path).unwrap(), Some(4.035));
+        std::fs::write(&path, fake_mkv(None)).unwrap();
+        assert_eq!(mkv_duration(&path).unwrap(), None);
+        // an mp4 someone named .mkv
+        std::fs::write(&path, fake_mp4_bytes()).unwrap();
+        assert_eq!(mkv_duration(&path).ok().flatten(), None);
+    }
+
+    fn fake_mp4_bytes() -> Vec<u8> {
+        [bx(b"ftyp", b"isomiso2"), bx(b"moov", &mvhd(1000, 1000))].concat()
     }
 }
