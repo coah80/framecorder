@@ -226,6 +226,8 @@ struct App {
     /// on its own, looked up when settings open.
     autostart: bool,
     auto_update: bool,
+    /// The list of mics is open.
+    mic_menu: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
@@ -257,7 +259,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     };
     let screen = match state {
         "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
-        "audio" | "audio-mics" | "audio-mic-gone" => Screen::Settings(Section::Audio),
+        "audio" | "audio-mics" | "audio-mic-gone" | "audio-mic-menu" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
         "general" | "general-off" => Screen::Settings(Section::General),
         "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
@@ -320,6 +322,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         report,
         autostart: state != "general-off",
         auto_update: state != "general-off",
+        mic_menu: state == "audio-mic-menu",
     };
     let hits = view::draw(&mut canvas, &mut fonts, &model);
     // a hover state: the pointer in the middle of that control, drawn again
@@ -337,6 +340,12 @@ pub(crate) fn sample_mics(state: &str) -> Vec<crate::mics::Mic> {
     let frame = mic("alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source", "Frame", true);
     match state {
         "audio-mics" => vec![frame, mic("alsa_input.usb-Blue_Yeti-00.analog-stereo", "Yeti Stereo Microphone", false)],
+        "audio-mic-menu" => vec![
+            frame,
+            mic("bluez_input.00_1B_66_A1_B2_C3", "Moded Headset", false),
+            mic("vban_phone_mic", "Phone mic", false),
+            mic("alsa_input.usb-Blue_Yeti-00.analog-stereo", "Yeti Stereo Microphone", false),
+        ],
         _ => vec![frame],
     }
 }
@@ -616,6 +625,7 @@ impl App {
             keyboard: None,
             autostart: true,
             auto_update: true,
+            mic_menu: false,
         }
     }
 
@@ -660,8 +670,11 @@ impl App {
 
     fn act(&mut self, action: Action) {
         self.dirty = true;
+        // any tap closes the list of mics, picking from it included
+        let menu = std::mem::take(&mut self.mic_menu);
         let s = &mut self.settings;
         match action {
+            Action::MicMenu => return self.mic_menu = !menu,
             Action::TurnOff => return self.turn_off(),
             Action::Report => return self.go(Screen::Report),
             Action::Type => return self.start_typing(),
@@ -1103,6 +1116,7 @@ impl App {
     }
 
     fn go(&mut self, screen: Screen) {
+        self.mic_menu = false;
         // Leaving the pairing screen takes the code back.
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
@@ -1283,6 +1297,7 @@ impl App {
             report,
             autostart: self.autostart,
             auto_update: self.auto_update,
+            mic_menu: self.mic_menu,
         }
     }
 }

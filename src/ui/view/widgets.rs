@@ -80,6 +80,66 @@ pub fn choice(
     segmented(c, f, m, hits, Rect::new(r.x, r.y + 46.0, r.w, 52.0), options, locked);
 }
 
+/// A setting picked from a list: its name, and a field holding the current
+/// pick that opens the list (`dropdown_list`).
+#[allow(clippy::too_many_arguments)]
+pub fn dropdown(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, name: &str, value: &str, action: Action, open: bool, locked: bool) {
+    let alpha = if locked { 0.4 } else { 1.0 };
+    c.text(f, Face::BodyMedium, 19.0, r.x, r.y + 30.0, name, TEXT, alpha);
+    let field = dropdown_field(r);
+    let lit = !locked && (open || m.over(field));
+    c.fill_rrect(field, 14.0, SURFACE0, 0.40 * alpha);
+    c.stroke_rrect(field, 14.0, 1.5, if lit { MAUVE } else { SURFACE1 }, if lit { 0.6 } else { 0.5 } * alpha);
+    let cy = field.y + field.h / 2.0;
+    c.text(f, Face::BodyMedium, 18.0, field.x + 20.0, cy + 6.5, value, TEXT, alpha);
+    // a chevron, pointing up while the list is open
+    let (x, s) = (field.x + field.w - 34.0, if open { -1.0 } else { 1.0 });
+    let color = if lit { MAUVE } else { SUBTEXT0 };
+    c.line(x - 7.0, cy - 3.5 * s, x, cy + 3.5 * s, 2.5, color, alpha);
+    c.line(x, cy + 3.5 * s, x + 7.0, cy - 3.5 * s, 2.5, color, alpha);
+    if !locked {
+        hits.push(Hit { rect: field, action });
+    }
+}
+
+/// Where a dropdown in row `r` draws its field.
+pub fn dropdown_field(r: Rect) -> Rect {
+    Rect::new(r.x, r.y + 46.0, r.w, 52.0)
+}
+
+/// The open list of a dropdown, drawn over everything else: under its field,
+/// or above it when there's no room below. Its rows take a tap before
+/// anything on screen, and a tap anywhere else is `close`.
+pub fn dropdown_list(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, field: Rect, options: &[(&str, Action, bool)], close: Action) {
+    const ROW: f32 = 56.0;
+    let h = options.len() as f32 * ROW + 8.0;
+    let below = field.y + field.h + 8.0;
+    let y = if below + h <= HEIGHT as f32 - 12.0 { below } else { field.y - 8.0 - h };
+    let panel = Rect::new(field.x, y, field.w, h);
+    c.fill_rrect(Rect::new(panel.x + 2.0, panel.y + 10.0, panel.w - 4.0, panel.h), 16.0, CRUST, 0.55);
+    c.fill_rrect(panel, 16.0, BASE, 1.0);
+    c.fill_rrect(panel, 16.0, SURFACE0, 0.70);
+    c.stroke_rrect(panel, 16.0, 1.5, SURFACE1, 0.8);
+    let mut front = Vec::with_capacity(options.len() + 1);
+    for (i, &(text, action, selected)) in options.iter().enumerate() {
+        let row = Rect::new(panel.x + 4.0, panel.y + 4.0 + i as f32 * ROW, panel.w - 8.0, ROW);
+        let hovered = m.over(row);
+        if selected || hovered {
+            c.fill_rrect(row, 12.0, MAUVE, if selected { 0.14 } else { 0.08 });
+        }
+        let cy = row.y + row.h / 2.0;
+        c.text(f, Face::BodyMedium, 18.0, row.x + 16.0, cy + 6.5, text, if selected || hovered { MAUVE } else { TEXT }, 1.0);
+        if selected {
+            let x = row.x + row.w - 38.0;
+            c.line(x, cy, x + 6.0, cy + 6.0, 2.5, MAUVE, 1.0);
+            c.line(x + 6.0, cy + 6.0, x + 18.0, cy - 6.0, 2.5, MAUVE, 1.0);
+        }
+        front.push(Hit { rect: row, action });
+    }
+    front.push(Hit { rect: Rect::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32), action: close });
+    hits.splice(0..0, front);
+}
+
 /// 56x30 switch: the 44x24 one scaled up a bit for VR.
 fn switch(c: &mut Canvas, r: Rect, on: bool, alpha: f32) {
     let (sw, sh) = (56.0, 30.0);

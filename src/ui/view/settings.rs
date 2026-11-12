@@ -3,7 +3,7 @@
 //! choice means.
 
 use super::super::settings::CLIP_LENGTHS;
-use super::widgets::{card, choice, label, toggle_row};
+use super::widgets::{card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row};
 use super::*;
 
 const PILLS_H: f32 = 50.0;
@@ -12,14 +12,17 @@ const PANE_H: f32 = CONTENT_Y + CONTENT_H - PANE_Y;
 const INSET: f32 = 32.0;
 const ROW_H: f32 = 114.0;
 
+const PANE: Rect = Rect { x: PAD, y: PANE_Y, w: WIDTH as f32 - 2.0 * PAD, h: PANE_H };
+/// Where a section's controls go inside its card.
+const INNER: Rect = Rect { x: PANE.x + INSET, y: PANE.y + 6.0, w: PANE.w - 2.0 * INSET, h: PANE.h - 12.0 };
+
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, section: Section, hits: &mut Vec<Hit>) {
     pills(c, f, m, section, hits);
-    let pane = Rect::new(PAD, PANE_Y, WIDTH as f32 - 2.0 * PAD, PANE_H);
     if section == Section::Sync {
-        return sync::draw(c, f, m, pane, hits);
+        return sync::draw(c, f, m, PANE, hits);
     }
-    card(c, pane);
-    let inner = Rect::new(pane.x + INSET, pane.y + 6.0, pane.w - 2.0 * INSET, pane.h - 12.0);
+    card(c, PANE);
+    let inner = INNER;
     match section {
         Section::Video => video(c, f, m, inner, hits),
         Section::Audio => audio(c, f, m, inner, hits),
@@ -117,12 +120,11 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
     toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
     let mut row = 2.0;
-    if let Some(options) = mic_options(m) {
-        let picker = Rect::new(inner.x, inner.y + 22.0 + row * 108.0, inner.w, 98.0);
-        let labels: Vec<String> = options.iter().map(|(label, _)| fit(f, label, (inner.w - 8.0) / options.len() as f32 - 28.0)).collect();
-        let choices: Vec<(&str, Action, bool)> =
-            options.iter().zip(&labels).enumerate().map(|(i, ((_, on), label))| (label.as_str(), Action::MicSource(i), *on)).collect();
-        choice(c, f, m, hits, picker, "Mic", "", &choices, locked || !s.mic);
+    if let Some((options, picked)) = mic_options(m) {
+        let picker = mic_row(inner);
+        let value = picked.map_or("Not connected", |i| options[i].as_str());
+        let value = fit(f, value, picker.w - 90.0);
+        dropdown(c, f, m, hits, picker, "Mic", &value, Action::MicMenu, m.mic_menu, locked || !s.mic);
         row += 1.0;
     }
     // splitting needs something to split
@@ -133,22 +135,30 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     toggle_row(c, f, m, hits, split, "Split tracks", Action::SplitAudio, both && s.split_audio, locked || !both);
 }
 
-/// The mics to pick from, and which one's in use, once there's a choice:
-/// another mic plugged in, or the picked one gone.
-fn mic_options(m: &Model) -> Option<Vec<(String, bool)>> {
+fn mic_row(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y + 22.0 + 2.0 * 108.0, inner.w, 98.0)
+}
+
+/// The list of mics, open over the audio settings.
+pub fn mic_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
+    let Some((options, picked)) = mic_options(m).filter(|_| m.mic_menu && m.settings.mic && !m.locked()) else { return };
+    let field = dropdown_field(mic_row(INNER));
+    let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
+    let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::MicSource(i), picked == Some(i))).collect();
+    dropdown_list(c, f, m, hits, field, &rows, Action::MicMenu);
+}
+
+/// The mics to pick from and which one's in use, once there's a choice:
+/// another mic plugged in, or the picked one gone (then none is, and the
+/// default's recorded meanwhile).
+fn mic_options(m: &Model) -> Option<(Vec<String>, Option<usize>)> {
     let picked = &m.settings.mic_source;
     let gone = !picked.is_empty() && !m.mics.iter().any(|mic| &mic.name == picked);
     if m.mics.len() < 2 && !gone {
         return None;
     }
-    let mut options: Vec<(String, bool)> =
-        m.mics.iter().map(|mic| (mic.label.clone(), if picked.is_empty() { mic.default } else { &mic.name == picked })).collect();
-    options.truncate(if gone { 3 } else { 4 });
-    // the picked one isn't plugged in: the default's recorded meanwhile
-    if gone {
-        options.push(("Not connected".into(), true));
-    }
-    Some(options)
+    let on = m.mics.iter().position(|mic| if picked.is_empty() { mic.default } else { &mic.name == picked });
+    Some((m.mics.iter().map(|mic| mic.label.clone()).collect(), on))
 }
 
 /// `text` cut down with an ellipsis to fit `width` at the segment's size.

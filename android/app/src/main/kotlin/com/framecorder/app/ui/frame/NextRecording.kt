@@ -2,6 +2,7 @@ package com.framecorder.app.ui.frame
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,8 +14,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -26,17 +30,23 @@ import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.framecorder.app.ui.common.Chevron
@@ -74,15 +84,15 @@ private fun mbps(quality: String) = when (quality) {
 
 /**
  * The headset's mics to pick from, and the picked one, once there's a choice:
- * another one plugged in, or the picked one gone. Older headsets don't list them.
+ * another one plugged in, or the picked one gone (then it's none of them).
+ * Older headsets don't list them.
  */
 private fun micChoices(s: RecordingSettings): Pair<List<Pair<String, String>>, String>? {
     val mics = s.mics ?: return null
     val picked = s.micSource.orEmpty()
     val gone = picked.isNotEmpty() && mics.none { it.name == picked }
     if (mics.size < 2 && !gone) return null
-    val options = mics.map { it.name to it.label } + if (gone) listOf(picked to "not connected") else emptyList()
-    return options to picked.ifEmpty { mics.firstOrNull { it.default }?.name.orEmpty() }
+    return mics.map { it.name to it.label } to picked.ifEmpty { mics.firstOrNull { it.default }?.name.orEmpty() }
 }
 
 private fun audio(s: RecordingSettings) = when {
@@ -182,7 +192,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
                 }
                 if (mics != null) {
                     Group(3, groups, "mic") {
-                        Choices(mics.first, mics.second, settings.mic, lines = 2) { onChange(RecordingPatch(micSource = it)) }
+                        Dropdown(mics.first, mics.second, settings.mic) { onChange(RecordingPatch(micSource = it)) }
                     }
                 }
             }
@@ -244,6 +254,52 @@ private fun <T> Choices(
                         textAlign = TextAlign.Center,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** A pick from a list that can run long, like the headset's mics: the pick in a field that opens the list. */
+@Composable
+private fun Dropdown(options: List<Pair<String, String>>, picked: String, enabled: Boolean, onPick: (String) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    var width by remember { mutableIntStateOf(0) }
+    val label = options.firstOrNull { it.first == picked }?.second ?: "not connected"
+    Box {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .onSizeChanged { width = it.width }
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .clickable(enabled = enabled, role = Role.DropdownList) { open = true }
+                .alpha(if (enabled) 1f else 0.4f)
+                .padding(start = 16.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Icon(FcIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(
+            expanded = open && enabled,
+            onDismissRequest = { open = false },
+            modifier = Modifier.width(with(LocalDensity.current) { width.toDp() }),
+        ) {
+            options.forEach { (value, name) ->
+                val on = value == picked
+                DropdownMenuItem(
+                    text = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (on) MaterialTheme.colorScheme.primary else Color.Unspecified) },
+                    trailingIcon = if (on) {
+                        { Icon(FcIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        open = false
+                        if (!on) onPick(value)
+                    },
+                )
             }
         }
     }

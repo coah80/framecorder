@@ -38,6 +38,7 @@ pub const SCREENS: &[&str] = &[
     "frame-blended",
     "frame-no-blend",
     "frame-locked",
+    "frame-mics",
     "check",
     "live",
     "live-connecting",
@@ -213,6 +214,7 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
     }
     match screen {
         "list" | "list-selecting" => app.grid = false,
+        "frame-mics" => app.mic_menu = true,
         "syncing" => {
             app.statuses = vec![status(State::Connected, true)];
             app.frame_updating.insert("demo".into());

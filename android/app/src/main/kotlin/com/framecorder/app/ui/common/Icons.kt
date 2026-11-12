@@ -19,6 +19,7 @@ object FcIcons {
     val Library = stroke("library", rrect(4f, 4f, 7f, 7f, 2f), rrect(13f, 4f, 7f, 7f, 2f), rrect(4f, 13f, 7f, 7f, 2f), rrect(13f, 13f, 7f, 7f, 2f))
     val Settings = stroke("settings", "M4 7h10M18 7h2M4 17h2M10 17h10", circle(16f, 7f, 2f), circle(8f, 17f, 2f))
     val ChevronRight = stroke("chevron", "M9.5 6l6 6-6 6")
+    val ChevronDown = stroke("open", "M6 9.5l6 6 6-6")
     val Back = stroke("back", "M19 12H5M11 6l-6 6 6 6")
     val Check = stroke("check", "M5 12.5l4.5 4.5L19 7.5")
     val SelectAll = stroke("select all", rrect(3.5f, 3.5f, 17f, 17f, 4f), "M8 12.3l2.8 2.8L16.3 9")
