@@ -123,16 +123,17 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             }
 
             item { GroupLabel("syncing") }
+            val syncRows = if (videos) 2 else 3
             item {
                 SegmentRow(
-                    0, 3, "keep syncing in the background",
+                    0, syncRows, "keep syncing in the background",
                     onClick = { toggleBackground(context, prefs, !background, frames.isNotEmpty()) },
                     trailing = { Toggle(background) { toggleBackground(context, prefs, it, frames.isNotEmpty()) } },
                 )
             }
             item {
                 SegmentRow(
-                    1, 3, "clip notifications",
+                    1, syncRows, "clip notifications",
                     subtitle = if (notifications) null else "off in android",
                     onClick = if (!notifications) {
                         { askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
@@ -146,16 +147,13 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
                     },
                 )
             }
-            item {
+            // once it's allowed there's nothing left to do here
+            if (!videos) item {
                 SegmentRow(
-                    2, 3, "see videos saved before",
-                    subtitle = if (videos) null else VIDEO_PERMISSION_WHY,
-                    onClick = if (videos) null else ({ askVideos.launch(VIDEO_PERMISSION) }),
-                    trailing = if (videos) {
-                        null
-                    } else {
-                        { Text("turn on", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge) }
-                    },
+                    2, syncRows, "see videos saved before",
+                    subtitle = VIDEO_PERMISSION_WHY,
+                    onClick = { askVideos.launch(VIDEO_PERMISSION) },
+                    trailing = { Text("turn on", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge) },
                 )
             }
 

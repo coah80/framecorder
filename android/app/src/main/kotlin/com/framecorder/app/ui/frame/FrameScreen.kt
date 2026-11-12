@@ -462,14 +462,14 @@ private fun Remote(
             FilledTonalButton(onClick = onDiagnose, modifier = Modifier.fillMaxWidth()) { Text("check the connection") }
         } else {
             val note = when {
-                updating && state == null -> "framecorder is restarting on the headset."
+                updating && state == null -> "framecorder is restarting on the headset"
                 state == null -> "the remote needs a newer framecorder on the headset."
                 !state.available -> "framecorder isn't open on the headset. it starts with SteamVR."
                 !state.ready -> "finish setting up framecorder on the headset first."
-                recording && !state.running -> "paused while the tab is open."
+                recording && !state.running -> "paused while the tab is open"
                 recording -> null
-                state.clipReady -> "keeping the last ${span((state.clipSecs ?: 30u).toLong() * 1000)}."
-                state.clipSecs == null -> "clips are off."
+                state.clipReady -> "keeping the last ${span((state.clipSecs ?: 30u).toLong() * 1000)}"
+                state.clipSecs == null -> "clips are off"
                 else -> "clips are starting up..."
             }
             if (note != null) Text(
