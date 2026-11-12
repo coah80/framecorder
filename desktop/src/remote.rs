@@ -59,10 +59,10 @@ pub fn words(s: &Status, remote: Option<&Remote>) -> (&'static str, String) {
             None => ("connected", said("the remote needs a newer framecorder on the headset.")),
             Some(r) if !r.available => ("framecorder isn't open", said("it starts with SteamVR.")),
             Some(r) if !r.ready => ("not set up yet", said("finish setting up framecorder on the headset first.")),
-            Some(r) if r.recording && !r.running => ("recording, paused", said("while the tab is open.")),
+            Some(r) if r.recording && !r.running => ("recording, paused", said("while the tab is open")),
             Some(r) if r.recording => ("recording", String::new()),
             Some(r) if r.clip_ready => ("ready", String::new()),
-            Some(r) if r.clips.is_none() => ("ready", said("clips are off.")),
+            Some(r) if r.clips.is_none() => ("ready", said("clips are off")),
             Some(_) => ("ready", said("clips are starting up...")),
         },
     }

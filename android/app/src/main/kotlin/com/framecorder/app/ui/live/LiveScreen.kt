@@ -272,12 +272,13 @@ fun LiveScreen(hub: SyncHub, onFrame: (String) -> Unit) {
                         } else {
                             ShapeIcon(FcIcons.Live, shape = MaterialShapes.Sunny, size = 56.dp, iconSize = 26.dp, container = scheme.surfaceContainerHigh, content = scheme.onSurfaceVariant)
                         }
-                        Text(
-                            when (phase) {
-                                LivePhase.CONNECTING -> "connecting to ${frame?.name ?: "your frame"}"
-                                LivePhase.ERROR -> status?.error ?: "live view stopped"
-                                else -> "nothing playing"
-                            },
+                        val said = when (phase) {
+                            LivePhase.CONNECTING -> "connecting to ${frame?.name ?: "your frame"}"
+                            LivePhase.ERROR -> status?.error ?: "live view stopped"
+                            else -> null
+                        }
+                        if (said != null) Text(
+                            said,
                             style = MaterialTheme.typography.bodyMedium,
                             color = scheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 24.dp),
