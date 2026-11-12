@@ -1,5 +1,6 @@
-//! The mics a recording can use: the Frame's own, and any plugged in over USB
-//! or connected over Bluetooth. SteamOS puts a loopback in front of every mic
+//! The mics a recording can use: the Frame's own, any plugged in over USB or
+//! connected over Bluetooth, and any coming in over the network (a phone
+//! sending its mic as VBAN, RTP or ROC). SteamOS puts a loopback in front of every mic
 //! and lets apps record only from that (`/etc/wireplumber/wireplumber.conf.d/
 //! 10-access.conf`): the raw mic, and the EQ, echo cancelling and noise
 //! suppression stages behind the Frame's own, refuse a link. So those don't count.
@@ -55,7 +56,9 @@ pub fn parse(dump: &str) -> Vec<Mic> {
     let wrapped: Vec<&Value> = sources.iter().filter(|p| loopback(p)).map(|p| &p["device.id"]).filter(|id| !id.is_null()).collect();
     let usable = |p: &Value| {
         let device = matches!(p["device.api"].as_str(), Some("alsa" | "bluez5")) && !wrapped.contains(&&p["device.id"]);
-        (loopback(p) || device) && p["node.virtual"] != true && p["node.create-loopback"] != true && p["steamos.mic_filter"] != true
+        // a network receiver's node is virtual too, but nothing hides it from apps
+        let local = (loopback(p) || device) && p["node.virtual"] != true;
+        (local || p["node.network"] == true) && p["node.create-loopback"] != true && p["steamos.mic_filter"] != true
     };
     let mut mics: Vec<Mic> = sources
         .iter()
@@ -87,8 +90,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// The Frame's own chain as its pw-dump shows it, plus a USB mic and a
-    /// Bluetooth headset, each behind the loopback SteamOS makes for it.
+    /// The Frame's own chain as its pw-dump shows it, a USB mic and a
+    /// Bluetooth headset, each behind the loopback SteamOS makes for it, and a
+    /// phone's mic arriving over VBAN.
     #[test]
     fn only_mics_apps_may_record_count_and_the_frame_comes_first() {
         let node = |name: &str, description: &str, extra: Value| {
@@ -112,6 +116,7 @@ mod tests {
             node(yeti, "Yeti Stereo Microphone", json!({"alsa.loopback": true})),
             node("bluez_input.00_1B_66_A1_B2_C3.0", "Moded Headset", json!({"device.api": "bluez5", "device.id": 90})),
             node(headset, "Moded Headset", json!({"bluez5.loopback": true, "device.id": 90, "node.virtual": false})),
+            node("vban_phone_mic", "Phone mic", json!({"node.network": true, "node.virtual": true, "vban.ip": "172.20.1.40"})),
             {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Audio/Sink", "node.name": "speakers"}}},
             {"type": "PipeWire:Interface:Metadata", "props": {"metadata.name": "default"}, "metadata": [
                 {"key": "default.audio.source", "value": {"name": frame}},
@@ -120,7 +125,7 @@ mod tests {
         .to_string();
         let mics = parse(&dump);
         let picked: Vec<_> = mics.iter().map(|m| (m.label.as_str(), m.name.as_str(), m.default)).collect();
-        assert_eq!(picked, [("Frame", frame, true), ("Moded Headset", headset, false), ("Yeti Stereo Microphone", yeti, false)]);
+        assert_eq!(picked, [("Frame", frame, true), ("Moded Headset", headset, false), ("Phone mic", "vban_phone_mic", false), ("Yeti Stereo Microphone", yeti, false)]);
         assert!(mics.iter().all(|m| valid_name(&m.name)));
         assert!(parse("not json").is_empty());
     }
