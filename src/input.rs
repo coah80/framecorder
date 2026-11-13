@@ -15,10 +15,12 @@ const VERSION: &str = "IVRInput_011";
 const SLOT_SET_MANIFEST: usize = 0;
 const SLOT_ACTION_SET: usize = 1;
 const SLOT_ACTION: usize = 2;
+const SLOT_SOURCE: usize = 3;
 const SLOT_UPDATE: usize = 4;
 const SLOT_DIGITAL: usize = 5;
 const SLOT_HAPTIC: usize = 23;
 const SLOT_OPEN_BINDING_UI: usize = 32;
+const INVALID_DEVICE: i32 = 9;
 
 const SET: &str = "/actions/framecorder";
 const CLIP: &str = "/actions/framecorder/in/clip";
@@ -55,6 +57,7 @@ pub struct Input {
     set: u64,
     clip: u64,
     buzz: u64,
+    left_hand: u64,
 }
 
 unsafe fn slot<T: Copy>(table: *const *const c_void, index: usize) -> T {
@@ -107,7 +110,13 @@ impl Input {
         if err != 0 {
             bail!("SteamVR didn't take the input manifest (input error {err})");
         }
-        Ok(Self { table, set: handle(SLOT_ACTION_SET, SET)?, clip: handle(SLOT_ACTION, CLIP)?, buzz: handle(SLOT_ACTION, BUZZ)? })
+        Ok(Self {
+            table,
+            set: handle(SLOT_ACTION_SET, SET)?,
+            clip: handle(SLOT_ACTION, CLIP)?,
+            buzz: handle(SLOT_ACTION, BUZZ)?,
+            left_hand: handle(SLOT_SOURCE, "/user/hand/left")?,
+        })
     }
 
     /// True once each time the clip binding fires.
@@ -140,9 +149,11 @@ impl Input {
         let key = CString::new(crate::apps::KEY)?;
         let err = unsafe {
             let f: unsafe extern "C" fn(*const c_char, u64, u64, bool) -> i32 = slot(self.table, SLOT_OPEN_BINDING_UI);
-            f(key.as_ptr(), self.set, 0, false)
+            f(key.as_ptr(), self.set, self.left_hand, false)
         };
-        if err != 0 {
+        // the clip button's on the left controller. with it off, steamvr says
+        // InvalidDevice but still opens the screen, for whichever's on
+        if err != 0 && err != INVALID_DEVICE {
             bail!("SteamVR input error {err}");
         }
         Ok(())
