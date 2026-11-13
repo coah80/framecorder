@@ -81,16 +81,21 @@ pub fn choice(
 }
 
 /// A setting picked from a list: its name, and a field holding the current
-/// pick that opens the list (`dropdown_list`).
+/// pick that opens the list (`dropdown_list`). With nothing else to pick
+/// (`action` is None) the field just shows the value.
 #[allow(clippy::too_many_arguments)]
-pub fn dropdown(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, name: &str, value: &str, action: Action, open: bool, locked: bool) {
+pub fn dropdown(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>, r: Rect, name: &str, value: &str, action: Option<Action>, open: bool, locked: bool) {
     let alpha = if locked { 0.4 } else { 1.0 };
     c.text(f, Face::BodyMedium, 19.0, r.x, r.y + 30.0, name, TEXT, alpha);
     let field = dropdown_field(r);
-    let lit = !locked && (open || m.over(field));
-    c.fill_rrect(field, 14.0, SURFACE0, 0.40 * alpha);
-    c.stroke_rrect(field, 14.0, 1.5, if lit { MAUVE } else { SURFACE1 }, if lit { 0.6 } else { 0.5 } * alpha);
     let cy = field.y + field.h / 2.0;
+    c.fill_rrect(field, 14.0, SURFACE0, 0.40 * alpha);
+    let Some(action) = action else {
+        c.text(f, Face::BodyMedium, 18.0, field.x + 20.0, cy + 6.5, value, TEXT, alpha);
+        return;
+    };
+    let lit = !locked && (open || m.over(field));
+    c.stroke_rrect(field, 14.0, 1.5, if lit { MAUVE } else { SURFACE1 }, if lit { 0.6 } else { 0.5 } * alpha);
     c.text(f, Face::BodyMedium, 18.0, field.x + 20.0, cy + 6.5, value, TEXT, alpha);
     // a chevron, pointing up while the list is open
     let (x, s) = (field.x + field.w - 34.0, if open { -1.0 } else { 1.0 });

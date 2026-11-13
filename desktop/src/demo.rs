@@ -151,10 +151,8 @@ fn recording() -> Recording {
         format: Some("mp4".into()),
         remux: Some(false),
         folder: Some(String::new()),
-        folders: Some(vec![
-            Folder { path: String::new(), name: "Videos".into(), plugged_in: true },
-            Folder { path: "/run/media/steamos/SD CARD/framecorder".into(), name: "microSD card".into(), plugged_in: true },
-        ]),
+        // most headsets have nothing plugged in
+        folders: Some(vec![Folder { path: String::new(), name: "Videos".into(), plugged_in: true }]),
         mics: Some(vec![
             Mic { name: "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source".into(), label: "Frame".into(), default: true },
             Mic { name: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), label: "Yeti Stereo Microphone".into(), default: false },
@@ -224,7 +222,6 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
     match screen {
         "list" | "list-selecting" => app.grid = false,
         "frame-mics" => app.menu = Some("mic"),
-        "frame-folders" => app.menu = Some("folder"),
         "syncing" => {
             app.statuses = vec![status(State::Connected, true)];
             app.frame_updating.insert("demo".into());
@@ -303,6 +300,15 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
                 total: 48_000_000,
                 queued: 0,
             });
+        }
+        // a microsd card in, the folder list open
+        "frame-folders" => {
+            let mut rec = recording();
+            if let Some(folders) = rec.folders.as_mut() {
+                folders.push(Folder { path: "/run/media/steamos/SD CARD/framecorder".into(), name: "microSD card".into(), plugged_in: true });
+            }
+            app.live.insert("demo".into(), Live { recording: Some(rec), ..live(Some(remote())) });
+            app.menu = Some("folder");
         }
         // set to the right eye, with the panels unlocked
         "frame-eye" => {

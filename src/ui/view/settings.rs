@@ -128,11 +128,11 @@ fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
     toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
     let mut row = 2.0;
-    if let Some((options, picked)) = mic_options(m) {
+    if let Some((options, picked, can_pick)) = mic_options(m) {
         let picker = mic_row(inner);
         let value = picked.map_or("Not connected", |i| options[i].as_str());
         let value = fit(f, value, picker.w - 90.0);
-        dropdown(c, f, m, hits, picker, "Mic", &value, Action::MicMenu, m.mic_menu, locked || !s.mic);
+        dropdown(c, f, m, hits, picker, "Mic", &value, can_pick.then_some(Action::MicMenu), m.mic_menu, locked || !s.mic);
         row += 1.0;
     }
     // splitting needs something to split
@@ -149,24 +149,24 @@ fn mic_row(inner: Rect) -> Rect {
 
 /// The list of mics, open over the audio settings.
 pub fn mic_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
-    let Some((options, picked)) = mic_options(m).filter(|_| m.mic_menu && m.settings.mic && !m.locked()) else { return };
+    let Some((options, picked, _)) = mic_options(m).filter(|&(_, _, can_pick)| can_pick && m.mic_menu && m.settings.mic && !m.locked()) else { return };
     let field = dropdown_field(mic_row(INNER));
     let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
     let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::MicSource(i), picked == Some(i))).collect();
     dropdown_list(c, f, m, hits, field, &rows, Action::MicMenu);
 }
 
-/// The mics to pick from and which one's in use, once there's a choice:
-/// another mic plugged in, or the picked one gone (then none is, and the
-/// default's recorded meanwhile).
-fn mic_options(m: &Model) -> Option<(Vec<String>, Option<usize>)> {
+/// The mics and which one's in use, and whether there's a choice: another
+/// mic plugged in, or the picked one gone (then none is, and the default's
+/// recorded meanwhile).
+fn mic_options(m: &Model) -> Option<(Vec<String>, Option<usize>, bool)> {
     let picked = &m.settings.mic_source;
     let gone = !picked.is_empty() && !m.mics.iter().any(|mic| &mic.name == picked);
-    if m.mics.len() < 2 && !gone {
+    if m.mics.is_empty() && !gone {
         return None;
     }
     let on = m.mics.iter().position(|mic| if picked.is_empty() { mic.default } else { &mic.name == picked });
-    Some((m.mics.iter().map(|mic| mic.label.clone()).collect(), on))
+    Some((m.mics.iter().map(|mic| mic.label.clone()).collect(), on, m.mics.len() > 1 || gone))
 }
 
 /// `text` cut down with an ellipsis to fit `width` at the segment's size.
@@ -188,7 +188,8 @@ fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let (options, picked, gone) = folder_options(m);
     let value = if gone { format!("{} isn't in · saving to Videos", options[picked]) } else { options[picked].clone() };
     let value = fit(f, &value, picker.w - 90.0);
-    dropdown(c, f, m, hits, picker, "Folder", &value, Action::FolderMenu, m.folder_menu, locked);
+    let can_pick = options.len() > 1;
+    dropdown(c, f, m, hits, picker, "Folder", &value, can_pick.then_some(Action::FolderMenu), m.folder_menu, locked);
     if let Some(free) = m.free {
         let text = free_space(free, s.quality.mbps());
         let w = f.measure(Face::Body, 16.0, &text);
@@ -210,11 +211,11 @@ fn folder_row(inner: Rect) -> Rect {
 
 /// The list of folders, open over the files settings.
 pub fn folder_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
-    if !m.folder_menu || m.locked() {
+    let (options, picked, _) = folder_options(m);
+    if !m.folder_menu || m.locked() || options.len() < 2 {
         return;
     }
     let field = dropdown_field(folder_row(INNER));
-    let (options, picked, _) = folder_options(m);
     let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
     let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::Folder(i), picked == i)).collect();
     dropdown_list(c, f, m, hits, field, &rows, Action::FolderMenu);
