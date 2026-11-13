@@ -777,14 +777,13 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
         })
 }
 
-/// the headset's mics to pick from and the one in use, once there's a choice:
-/// another one plugged in, or the picked one gone (then none is, and the
-/// default's recorded meanwhile). older headsets don't list them
+/// the headset's mics and the one in use, none of them when the picked one's
+/// unplugged (the default's recorded meanwhile). older headsets don't list them
 fn mic_picker(r: &Recording) -> Option<(Vec<SharedString>, Option<usize>, Pick)> {
     let mics = r.mics.as_ref()?;
     let picked = r.mic_source.clone().unwrap_or_default();
     let gone = !picked.is_empty() && !mics.iter().any(|m| m.name == picked);
-    if mics.len() < 2 && !gone {
+    if mics.is_empty() && !gone {
         return None;
     }
     let options = mics.iter().map(|m| m.label.clone().into()).collect();
@@ -818,10 +817,12 @@ fn folder_picker(r: &Recording) -> Option<(Vec<SharedString>, Option<usize>, Pic
 }
 
 /// a pick from a list that can run long, like the headset's mics: the pick in
-/// a field, and the list over the page under it while it's open
+/// a field, and the list over the page under it while it's open. with
+/// nothing else to pick the field just shows the value
 #[allow(clippy::too_many_arguments)]
 fn dropdown(fp: &str, name: &'static str, options: &[SharedString], picked: Option<usize>, enabled: bool, menu: Option<&'static str>, pick: Pick, cx: &mut Context<FrameApp>) -> Div {
-    let open = menu == Some(name) && enabled;
+    let fixed = options.len() < 2 && picked.is_some();
+    let open = menu == Some(name) && enabled && !fixed;
     let value = picked.and_then(|i| options.get(i)).cloned().unwrap_or_else(|| "not connected".into());
     let edge = if open { a(theme::MAUVE, 0.6) } else { theme::card_line() };
     let field = div()
@@ -834,13 +835,13 @@ fn dropdown(fp: &str, name: &'static str, options: &[SharedString], picked: Opti
         .rounded(px(10.))
         .bg(a(theme::CRUST, 0.35))
         .border_1()
-        .border_color(edge)
+        .border_color(if fixed { a(theme::CRUST, 0.0) } else { edge })
         .text_size(px(13.))
         .font_weight(FontWeight::MEDIUM)
         .child(div().flex_1().min_w_0().truncate().child(value))
-        .child(icon(if open { "chevron-up" } else { "chevron-down" }, 14., c(if open { theme::MAUVE } else { theme::SUBTEXT0 })))
+        .when(!fixed, |d| d.child(icon(if open { "chevron-up" } else { "chevron-down" }, 14., c(if open { theme::MAUVE } else { theme::SUBTEXT0 }))))
         .when(!enabled, |d| d.opacity(0.4))
-        .when(enabled, |d| {
+        .when(enabled && !fixed, |d| {
             d.cursor_pointer().hover(|s| s.border_color(a(theme::MAUVE, 0.6))).on_click(cx.listener(move |app, _, _, cx| {
                 app.menu = if app.menu == Some(name) { None } else { Some(name) };
                 cx.notify();

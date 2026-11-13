@@ -287,7 +287,8 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "files-gone" => Settings { folder: "/run/media/steamos/OLD/framecorder".into(), ..settings },
         _ => settings,
     };
-    let drives = sample_drives();
+    // most headsets have nothing plugged in
+    let drives = if state == "files" { Vec::new() } else { sample_drives() };
     let sample = Pairing::sample()?;
     // "many-home" and the like: the same devices, on the home screen.
     let devices = sample_devices(state.trim_end_matches("-home"));

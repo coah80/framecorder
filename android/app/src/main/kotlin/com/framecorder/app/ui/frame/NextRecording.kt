@@ -85,15 +85,14 @@ private fun mbps(quality: String) = when (quality) {
 }
 
 /**
- * The headset's mics to pick from, and the picked one, once there's a choice:
- * another one plugged in, or the picked one gone (then it's none of them).
- * Older headsets don't list them.
+ * The headset's mics and the picked one, which is none of them when it's been
+ * unplugged. Older headsets don't list them.
  */
 private fun micChoices(s: RecordingSettings): Pair<List<Pair<String, String>>, String>? {
     val mics = s.mics ?: return null
     val picked = s.micSource.orEmpty()
     val gone = picked.isNotEmpty() && mics.none { it.name == picked }
-    if (mics.size < 2 && !gone) return null
+    if (mics.isEmpty() && !gone) return null
     return mics.map { it.name to it.label } to picked.ifEmpty { mics.firstOrNull { it.default }?.name.orEmpty() }
 }
 
@@ -295,12 +294,13 @@ private fun <T> Choices(
     }
 }
 
-/** A pick from a list that can run long, like the headset's mics: the pick in a field that opens the list. */
+/** A pick from a list that can run long, like the headset's mics: the pick in a field that opens the list. With nothing else to pick the field just shows the value. */
 @Composable
 private fun Dropdown(options: List<Pair<String, String>>, picked: String, enabled: Boolean, onPick: (String) -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
     var width by remember { mutableIntStateOf(0) }
     val label = options.firstOrNull { it.first == picked }?.second ?: "not connected"
+    val fixed = options.size < 2 && options.any { it.first == picked }
     Box {
         Row(
             Modifier
@@ -309,16 +309,16 @@ private fun Dropdown(options: List<Pair<String, String>>, picked: String, enable
                 .onSizeChanged { width = it.width }
                 .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .clickable(enabled = enabled, role = Role.DropdownList) { open = true }
+                .clickable(enabled = enabled && !fixed, role = Role.DropdownList) { open = true }
                 .alpha(if (enabled) 1f else 0.4f)
                 .padding(start = 16.dp, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Icon(FcIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!fixed) Icon(FcIcons.ChevronDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(
-            expanded = open && enabled,
+            expanded = open && enabled && !fixed,
             onDismissRequest = { open = false },
             modifier = Modifier.width(with(LocalDensity.current) { width.toDp() }),
         ) {
