@@ -474,29 +474,45 @@ pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, ou
     Ok(lut)
 }
 
-const BLEND_RANGE: [f64; 2] = [0.4, 0.6];
+/// Where in the overlap the left eye fades into the right, as SteamVR's own
+/// headset view does in its default "both eyes, right dominant" mode
+/// (`SetHeadsetViewBlendRange(0.0, 0.1)` from vrmonitor): the right eye
+/// wherever it sees, and the left eye only past the right eye's inner edge,
+/// fading out linearly over the tenth of the overlap next to that edge. The
+/// middle of the picture comes from one eye, so nothing ghosts there.
+const BLEND_RANGE: [f64; 2] = [0.0, 0.1];
 
 fn blend_weight(tx: f64, overlap: [f64; 2]) -> f64 {
     let start = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[0];
     let end = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[1];
-    let t = ((tx - start) / (end - start)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    ((tx - start) / (end - start)).clamp(0.0, 1.0)
 }
 
-fn stereo_bounds(models: &[EyeModel; 2], cy: f64) -> Result<([f64; 2], f64)> {
-    let limit = models.iter().map(|m| (-m.l).max(m.r)).fold(0.0, f64::max);
-    let mut overlap = [f64::INFINITY, f64::NEG_INFINITY];
-    for k in 0..=MASK_SIZE {
-        let x = (k as f64 / MASK_SIZE as f64 * 2.0 - 1.0) * limit;
-        if models.iter().all(|m| m.shown(x, cy)) {
-            overlap[0] = overlap[0].min(x);
-            overlap[1] = overlap[1].max(x);
+/// How far either eye's view reaches sideways.
+fn stereo_limit(models: &[EyeModel; 2]) -> f64 {
+    models.iter().map(|m| (-m.l).max(m.r)).fold(0.0, f64::max)
+}
+
+/// What both eyes see across every one of `rows`. SteamVR measures it at the
+/// top and bottom of its picture, where the round lens edge pulls it in most,
+/// so the fade never lands where the right eye has already run out.
+fn stereo_overlap(models: &[EyeModel; 2], rows: &[f64], limit: f64) -> Result<[f64; 2]> {
+    let mut overlap = [f64::NEG_INFINITY, f64::INFINITY];
+    for &y in rows {
+        let mut row = [f64::INFINITY, f64::NEG_INFINITY];
+        for k in 0..=MASK_SIZE {
+            let x = (k as f64 / MASK_SIZE as f64 * 2.0 - 1.0) * limit;
+            if models.iter().all(|m| m.shown(x, y)) {
+                row[0] = row[0].min(x);
+                row[1] = row[1].max(x);
+            }
         }
+        overlap = [overlap[0].max(row[0]), overlap[1].min(row[1])];
     }
     if overlap[0] >= overlap[1] {
         bail!("the eyes have no stereo overlap at the center of the view");
     }
-    Ok((overlap, limit))
+    Ok(overlap)
 }
 
 fn stereo_fit(models: &[EyeModel; 2], aspect: f64, cy: f64, limit: f64) -> f64 {
@@ -523,7 +539,7 @@ pub fn blended(vr: &OpenVr, fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Res
 fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
     let aspect = out_h as f64 / out_w as f64;
     let cy = (models[0].middle().1 + models[1].middle().1) / 2.0;
-    let (overlap, limit) = stereo_bounds(models, cy)?;
+    let limit = stereo_limit(models);
     let widest = stereo_fit(models, aspect, cy, limit);
     if widest <= 0.0 {
         bail!("couldn't find a clean combined view in SteamVR's lens data");
@@ -532,6 +548,9 @@ fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u
     if h > widest {
         log::warn!("the requested combined view reaches beyond the panels, the edges will be black");
     }
+    // our picture's corners may be one eye only, then the middle row has to do
+    let edges = [cy - h * aspect, cy + h * aspect];
+    let overlap = stereo_overlap(models, &edges, limit).or_else(|_| stereo_overlap(models, &[cy], limit))?;
     let mut lut = Lut::new(out_w, out_h);
     lut.blended = true;
     let count = (lut.width * lut.height) as usize;
@@ -671,13 +690,15 @@ mod tests {
     #[test]
     fn combined_view_fits_each_shape_and_uses_the_stereo_overlap() {
         let models = eyes();
-        let (overlap, limit) = stereo_bounds(&models, 0.0).unwrap();
+        let limit = stereo_limit(&models);
+        let overlap = stereo_overlap(&models, &[-0.5, 0.0, 0.5], limit).unwrap();
         assert!((overlap[0] + 0.7).abs() < 0.01 && (overlap[1] - 0.7).abs() < 0.01);
-        for (tx, expected) in [(-0.5, 0.0), (0.0, 0.5), (0.5, 1.0)] {
-            assert!((blend_weight(tx, overlap) - expected).abs() < 1e-10);
+        // the left eye only out to the right eye's inner edge, then a linear
+        // fade over a tenth of the overlap, then the right eye
+        let width = overlap[1] - overlap[0];
+        for (tx, expected) in [(-0.8, 0.0), (overlap[0], 0.0), (overlap[0] + width * 0.05, 0.5), (overlap[0] + width * 0.1, 1.0), (0.0, 1.0), (0.5, 1.0)] {
+            assert!((blend_weight(tx, overlap) - expected).abs() < 1e-9, "{tx}");
         }
-        assert!(blend_weight(-0.05, overlap) < 0.5);
-        assert!(blend_weight(0.05, overlap) > 0.5);
         for (w, h, expected) in [(256, 144, 16.0 / 9.0), (96, 96, 1.0), (144, 256, 9.0 / 16.0)] {
             let fitted = stereo_fit(&models, h as f64 / w as f64, 0.0, limit);
             assert!((fitted - expected).abs() < 1e-6);
@@ -688,7 +709,7 @@ mod tests {
                 let center = (lut.height / 2 * lut.width + lut.width / 2) as usize;
                 assert!((lut.points[center * 3 + 1][0] - 10.0 / 27.0).abs() < 1e-6);
                 assert!((lut.points[count * 3 + center * 3 + 1][0] - 17.0 / 27.0).abs() < 1e-6);
-                assert_eq!(lut.points[count * 6 + center][0], 0.5);
+                assert_eq!(lut.points[count * 6 + center][0], 1.0);
             }
             for j in 0..lut.height - 1 {
                 for i in 0..lut.width - 1 {
