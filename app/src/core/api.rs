@@ -79,6 +79,10 @@ pub struct Recording {
     pub clip: u32,
     #[serde(default)]
     pub eye: Option<String>,
+    /// With both eyes blended, the eye that fills the middle. Older headsets
+    /// don't have it.
+    #[serde(default)]
+    pub dominant: Option<String>,
     /// The game and the mic on their own tracks too. Older headsets can't.
     #[serde(default)]
     pub split_audio: Option<bool>,
@@ -145,6 +149,8 @@ pub struct RecordingPatch {
     pub clip: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eye: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub split_audio: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -16,9 +16,16 @@ use crate::theme::{self, a, c};
 use crate::widgets::{card, data, dot, icon, label, outline, primary, spinner, switch, title};
 
 const SHAPES: [(&str, &str); 4] = [("wide", "16:9"), ("square", "1:1"), ("tall", "9:16"), ("both", "both eyes")];
-/// "both" blends the two into one level picture, like steamvr's own view. only
-/// headsets new enough to say who's watching live can do it
-const EYES: [(&str, &str); 3] = [("left", "left eye"), ("right", "right eye"), ("both", "both eyes blended")];
+/// "both" blends the two into one level picture, like steamvr's own view, the
+/// dominant eye filling the middle. only headsets new enough to say who's
+/// watching live can blend, and older ones than that can't pick the dominant eye
+const EYES: [(&str, Option<&str>, &str); 4] = [
+    ("left", None, "left eye"),
+    ("right", None, "right eye"),
+    ("both", Some("left"), "both, left dominant"),
+    ("both", Some("right"), "both, right dominant"),
+];
+const EYES_OLD: [(&str, Option<&str>, &str); 3] = [("left", None, "left eye"), ("right", None, "right eye"), ("both", None, "both eyes blended")];
 /// 0 is clips off
 const LENGTHS: [(u32, &str); 5] = [(0, "off"), (15, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
 const QUALITIES: [(&str, &str); 3] = [("standard", "standard"), ("high", "high"), ("max", "max")];
@@ -37,6 +44,7 @@ fn defaults() -> Recording {
         clips: true,
         clip: 30,
         eye: None,
+        dominant: None,
         panels: None,
         split_audio: None,
         mic_source: None,
@@ -609,7 +617,9 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
     let locked = r.panels == Some(false);
     let shape = if locked { 0 } else { SHAPES.iter().position(|(v, _)| *v == r.shape).unwrap_or(0) };
     let both = SHAPES[shape].0 == "both";
-    let eye = r.eye.as_deref().map(|e| if locked { 0 } else { EYES.iter().position(|(v, _)| *v == e).unwrap_or(0) });
+    let eye_options: &'static [(&str, Option<&str>, &str)] = if r.dominant.is_some() { &EYES } else { &EYES_OLD };
+    let picked = |&(e, d, _): &(&str, Option<&str>, &str)| Some(e) == r.eye.as_deref() && (d.is_none() || d == r.dominant.as_deref());
+    let eye = r.eye.as_deref().map(|_| if locked { 0 } else { eye_options.iter().position(picked).unwrap_or(0) });
     let length = if r.clips { LENGTHS.iter().position(|(v, _)| *v == r.clip).unwrap_or(2) } else { 0 };
     let quality = QUALITIES.iter().position(|(v, _)| *v == r.quality).unwrap_or(1);
     let rate = RATES.iter().position(|(v, _)| *v == r.fps).unwrap_or(0);
@@ -622,9 +632,9 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
     };
     let shapes: Vec<Choice> =
         SHAPES.iter().enumerate().map(|(i, &(v, l))| Choice { label: l.into(), glyph: Some(v), off: locked && i > 0 }).collect();
-    let eyes: Vec<Choice> = EYES
+    let eyes: Vec<Choice> = eye_options
         .iter()
-        .map(|&(v, l)| Choice { label: l.into(), glyph: None, off: locked || both || (v == "both" && !can_blend) })
+        .map(|&(v, _, l)| Choice { label: l.into(), glyph: None, off: locked || both || (v == "both" && !can_blend) })
         .collect();
     let eye_hint = if both {
         None
@@ -656,7 +666,13 @@ fn next_recording(s: &Status, settings: Option<&Recording>, connected: bool, can
                 &eyes,
                 eye,
                 enabled,
-                with(|r, i| Recording { eye: Some(EYES[i].0.into()), ..r.clone() }),
+                {
+                    let r = r.clone();
+                    Rc::new(move |i| match eye_options.get(i) {
+                        Some(&(e, d, _)) => Recording { eye: Some(e.into()), dominant: d.map(Into::into).or(r.dominant.clone()), ..r.clone() },
+                        None => r.clone(),
+                    })
+                },
                 cx,
             )))
         })

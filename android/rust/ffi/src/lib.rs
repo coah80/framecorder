@@ -243,6 +243,9 @@ pub struct RecordingSettings {
     /// 15, 30, 60 or 120
     pub clip_secs: u32,
     pub eye: Option<String>,
+    /// With both eyes blended, the eye that fills the middle. Older headsets
+    /// don't have it.
+    pub dominant: Option<String>,
     pub panels: Option<bool>,
     /// The game and the mic on their own tracks too. Older headsets can't.
     pub split_audio: Option<bool>,
@@ -289,6 +292,7 @@ impl From<api::Recording> for RecordingSettings {
             clips: r.clips,
             clip_secs: r.clip,
             eye: r.eye,
+            dominant: r.dominant,
             panels: r.panels,
             split_audio: r.split_audio,
             mic_source: r.mic_source,
@@ -321,6 +325,8 @@ pub struct RecordingPatch {
     #[uniffi(default = None)]
     pub eye: Option<String>,
     #[uniffi(default = None)]
+    pub dominant: Option<String>,
+    #[uniffi(default = None)]
     pub split_audio: Option<bool>,
     #[uniffi(default = None)]
     pub mic_source: Option<String>,
@@ -345,6 +351,7 @@ impl From<RecordingPatch> for api::RecordingPatch {
             clips: r.clips,
             clip: r.clip_secs,
             eye: r.eye,
+            dominant: r.dominant,
             split_audio: r.split_audio,
             mic_source: r.mic_source,
             codec: r.codec,

@@ -144,6 +144,7 @@ fn recording() -> Recording {
         clips: true,
         clip: 30,
         eye: Some("left".into()),
+        dominant: Some("right".into()),
         panels: Some(true),
         split_audio: Some(true),
         mic_source: Some(String::new()),

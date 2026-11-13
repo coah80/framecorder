@@ -475,16 +475,18 @@ pub fn undistorted(vr: &OpenVr, eye: usize, fov_deg: Option<f64>, out_w: u32, ou
 }
 
 /// Where in the overlap the left eye fades into the right, as SteamVR's own
-/// headset view does in its default "both eyes, right dominant" mode
-/// (`SetHeadsetViewBlendRange(0.0, 0.1)` from vrmonitor): the right eye
-/// wherever it sees, and the left eye only past the right eye's inner edge,
-/// fading out linearly over the tenth of the overlap next to that edge. The
-/// middle of the picture comes from one eye, so nothing ghosts there.
-const BLEND_RANGE: [f64; 2] = [0.0, 0.1];
+/// headset view does in its blended "both eyes" modes (vrmonitor's
+/// `SetHeadsetViewBlendRange`): the dominant eye wherever it sees, and the
+/// other eye only past the dominant eye's inner edge, fading in linearly over
+/// the tenth of the overlap next to that edge. The middle of the picture comes
+/// from one eye, so nothing ghosts there.
+const RIGHT_DOMINANT: [f64; 2] = [0.0, 0.1];
+const LEFT_DOMINANT: [f64; 2] = [0.9, 1.0];
 
-fn blend_weight(tx: f64, overlap: [f64; 2]) -> f64 {
-    let start = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[0];
-    let end = overlap[0] + (overlap[1] - overlap[0]) * BLEND_RANGE[1];
+/// How much of the right eye goes into a direction `tx` across `overlap`.
+fn blend_weight(tx: f64, overlap: [f64; 2], range: [f64; 2]) -> f64 {
+    let start = overlap[0] + (overlap[1] - overlap[0]) * range[0];
+    let end = overlap[0] + (overlap[1] - overlap[0]) * range[1];
     ((tx - start) / (end - start)).clamp(0.0, 1.0)
 }
 
@@ -531,12 +533,15 @@ fn stereo_fit(models: &[EyeModel; 2], aspect: f64, cy: f64, limit: f64) -> f64 {
     lo
 }
 
-pub fn blended(vr: &OpenVr, fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
+/// Both eyes blended into one flat view, `left_dominant` picking which eye
+/// fills the middle.
+pub fn blended(vr: &OpenVr, fov_deg: Option<f64>, out_w: u32, out_h: u32, left_dominant: bool) -> Result<Lut> {
     let models = [EyeModel::new(vr, 0)?, EyeModel::new(vr, 1)?];
-    stereo_lut(&models, fov_deg, out_w, out_h)
+    stereo_lut(&models, fov_deg, out_w, out_h, left_dominant)
 }
 
-fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u32) -> Result<Lut> {
+fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u32, left_dominant: bool) -> Result<Lut> {
+    let range = if left_dominant { LEFT_DOMINANT } else { RIGHT_DOMINANT };
     let aspect = out_h as f64 / out_w as f64;
     let cy = (models[0].middle().1 + models[1].middle().1) / 2.0;
     let limit = stereo_limit(models);
@@ -587,7 +592,7 @@ fn stereo_lut(models: &[EyeModel; 2], fov_deg: Option<f64>, out_w: u32, out_h: u
         let weight = match (lut.points[idx + 1] != INVALID, lut.points[count * 3 + idx + 1] != INVALID) {
             (true, false) => 0.0,
             (false, true) => 1.0,
-            _ => blend_weight(tx, overlap),
+            _ => blend_weight(tx, overlap, range),
         };
         lut.points[count * 6 + idx / 3] = [weight as f32, 0.0];
     }
@@ -693,16 +698,25 @@ mod tests {
         let limit = stereo_limit(&models);
         let overlap = stereo_overlap(&models, &[-0.5, 0.0, 0.5], limit).unwrap();
         assert!((overlap[0] + 0.7).abs() < 0.01 && (overlap[1] - 0.7).abs() < 0.01);
-        // the left eye only out to the right eye's inner edge, then a linear
-        // fade over a tenth of the overlap, then the right eye
+        // the other eye only past the dominant eye's inner edge, with a linear
+        // fade over the tenth of the overlap next to it
         let width = overlap[1] - overlap[0];
-        for (tx, expected) in [(-0.8, 0.0), (overlap[0], 0.0), (overlap[0] + width * 0.05, 0.5), (overlap[0] + width * 0.1, 1.0), (0.0, 1.0), (0.5, 1.0)] {
-            assert!((blend_weight(tx, overlap) - expected).abs() < 1e-9, "{tx}");
+        for (tx, right, left) in [
+            (-0.8, 0.0, 0.0),
+            (overlap[0], 0.0, 0.0),
+            (overlap[0] + width * 0.05, 0.5, 0.0),
+            (overlap[0] + width * 0.1, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (overlap[1] - width * 0.05, 1.0, 0.5),
+            (0.8, 1.0, 1.0),
+        ] {
+            assert!((blend_weight(tx, overlap, RIGHT_DOMINANT) - right).abs() < 1e-9, "right dominant at {tx}");
+            assert!((blend_weight(tx, overlap, LEFT_DOMINANT) - left).abs() < 1e-9, "left dominant at {tx}");
         }
         for (w, h, expected) in [(256, 144, 16.0 / 9.0), (96, 96, 1.0), (144, 256, 9.0 / 16.0)] {
             let fitted = stereo_fit(&models, h as f64 / w as f64, 0.0, limit);
             assert!((fitted - expected).abs() < 1e-6);
-            let lut = stereo_lut(&models, None, w, h).unwrap();
+            let lut = stereo_lut(&models, None, w, h, false).unwrap();
             let count = (lut.width * lut.height) as usize;
             assert!(lut.blended);
             if w == h {
@@ -710,6 +724,8 @@ mod tests {
                 assert!((lut.points[center * 3 + 1][0] - 10.0 / 27.0).abs() < 1e-6);
                 assert!((lut.points[count * 3 + center * 3 + 1][0] - 17.0 / 27.0).abs() < 1e-6);
                 assert_eq!(lut.points[count * 6 + center][0], 1.0);
+                let left = stereo_lut(&models, None, w, h, true).unwrap();
+                assert_eq!(left.points[count * 6 + center][0], 0.0);
             }
             for j in 0..lut.height - 1 {
                 for i in 0..lut.width - 1 {
@@ -731,13 +747,13 @@ mod tests {
         models[0].cant[0][2] = -0.2;
         assert!(!models[0].shown(0.0, 0.0));
         assert!(models[1].shown(0.0, 0.0));
-        let lut = stereo_lut(&models, Some(60.0), 96, 96).unwrap();
+        let lut = stereo_lut(&models, Some(60.0), 96, 96, false).unwrap();
         let count = (lut.width * lut.height) as usize;
         let center = (lut.height / 2 * lut.width + lut.width / 2) as usize;
         assert_eq!(lut.points[center * 3 + 1], INVALID);
         assert_ne!(lut.points[count * 3 + center * 3 + 1], INVALID);
         assert_eq!(lut.points[count * 6 + center][0], 1.0);
         models[1].hidden.fill(true);
-        assert!(stereo_lut(&models, None, 96, 96).is_err());
+        assert!(stereo_lut(&models, None, 96, 96, false).is_err());
     }
 }

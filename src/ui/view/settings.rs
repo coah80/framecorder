@@ -90,10 +90,12 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     };
     choice(c, f, m, hits, shape_row, "Shape", meaning, &shapes, locked || !m.unlocked);
 
+    let blended = |d: Dominant| eye == Eye::Both && s.dominant == d;
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), eye == Eye::Right),
-        ("Both eyes blended", Action::Eye(Eye::Both), eye == Eye::Both),
+        ("Both, left dominant", Action::Blended(Dominant::Left), blended(Dominant::Left)),
+        ("Both, right dominant", Action::Blended(Dominant::Right), blended(Dominant::Right)),
     ];
     // SteamVR's view is always the left eye, and both-eyes shape already has both.
     let fixed = !m.unlocked || shape == Shape::BothEyes;

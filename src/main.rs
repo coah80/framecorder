@@ -95,6 +95,12 @@ enum Eye {
     Both,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Dominant {
+    Left,
+    Right,
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about = "Low overhead recorder for the Steam Frame's real headset view")]
 struct Args {
@@ -123,6 +129,11 @@ struct Args {
     /// Which eye to record in `eye` view. Both blends a flat view from the panels.
     #[arg(long, value_enum, default_value_t = Eye::Left)]
     eye: Eye,
+
+    /// With `--eye both`, the eye that fills the middle. The other one only
+    /// shows past its inner edge, like SteamVR's own blended view.
+    #[arg(long, value_enum, default_value_t = Dominant::Right)]
+    dominant: Dominant,
 
     /// Shape of the video in `eye` view.
     #[arg(long, value_enum, default_value_t = Aspect::Landscape)]
@@ -307,7 +318,7 @@ fn run(args: Args) -> Result<()> {
         (false, View::Eye) => {
             let vr = openvr::OpenVr::connect().context("asking SteamVR for the lens distortion (try --view raw)")?;
             if args.eye == Eye::Both {
-                lut::blended(&vr, args.fov, width, height)?
+                lut::blended(&vr, args.fov, width, height, args.dominant == Dominant::Left)?
             } else {
                 lut::undistorted(&vr, args.eye as usize, args.fov, width, height)?
             }

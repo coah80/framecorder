@@ -19,7 +19,7 @@ use std::time::Duration;
 use super::pairing::clients::Update;
 use super::pairing::{Device, Pairing, Presence};
 use super::paint::{Canvas, Rect, Rgb};
-use super::settings::{Codec, Eye, Format, FrameRate, Quality, Settings, Shape};
+use super::settings::{Codec, Dominant, Eye, Format, FrameRate, Quality, Settings, Shape};
 use super::text::{Face, Fonts};
 
 pub use onboarding::Step;
@@ -82,6 +82,8 @@ pub enum Action {
     Close,
     Shape(Shape),
     Eye(Eye),
+    /// Both eyes blended, with this one filling the middle.
+    Blended(Dominant),
     Quality(Quality),
     Fps(FrameRate),
     Codec(Codec),

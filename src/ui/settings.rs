@@ -21,6 +21,14 @@ pub enum Eye {
     Both,
 }
 
+/// With both eyes blended, the eye that fills the middle; the other only
+/// shows past its inner edge, like SteamVR's own blended view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dominant {
+    Left,
+    Right,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quality {
     Standard,
@@ -63,6 +71,7 @@ impl Format {
 pub struct Settings {
     pub shape: Shape,
     pub eye: Eye,
+    pub dominant: Dominant,
     pub quality: Quality,
     pub fps: FrameRate,
     pub codec: Codec,
@@ -94,6 +103,7 @@ impl Default for Settings {
         Self {
             shape: Shape::Wide,
             eye: Eye::Left,
+            dominant: Dominant::Right,
             quality: Quality::High,
             fps: FrameRate::Auto,
             codec: Codec::Hevc,
@@ -149,6 +159,8 @@ impl Settings {
                 ("eye", "left") => s.eye = Eye::Left,
                 ("eye", "right") => s.eye = Eye::Right,
                 ("eye", "both") => s.eye = Eye::Both,
+                ("dominant", "left") => s.dominant = Dominant::Left,
+                ("dominant", "right") => s.dominant = Dominant::Right,
                 ("quality", "standard") => s.quality = Quality::Standard,
                 ("quality", "high") => s.quality = Quality::High,
                 ("quality", "max") => s.quality = Quality::Max,
@@ -201,7 +213,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -212,6 +224,10 @@ impl Settings {
                 Eye::Left => "left",
                 Eye::Right => "right",
                 Eye::Both => "both",
+            },
+            match self.dominant {
+                Dominant::Left => "left",
+                Dominant::Right => "right",
             },
             match self.quality {
                 Quality::Standard => "standard",
@@ -295,6 +311,9 @@ impl Settings {
                 args.extend(["--view".into(), "eye".into(), "--aspect".into(), aspect.into()]);
                 let eye = match self.eye { Eye::Left => "left", Eye::Right => "right", Eye::Both => "both" };
                 args.extend(["--eye".into(), eye.into()]);
+                if self.eye == Eye::Both && self.dominant == Dominant::Left {
+                    args.extend(["--dominant".into(), "left".into()]);
+                }
             }
         }
         args.extend(["--bitrate".into(), self.quality.mbps().to_string()]);
@@ -476,10 +495,12 @@ mod tests {
 
     #[test]
     fn blended_eye_round_trips_and_falls_back_without_panels() {
-        for shape in [Shape::Wide, Shape::Square, Shape::Tall] {
-            let settings = Settings { eye: Eye::Both, shape, ..Settings::default() };
+        for (shape, dominant) in [(Shape::Wide, Dominant::Right), (Shape::Square, Dominant::Left), (Shape::Tall, Dominant::Left)] {
+            let settings = Settings { eye: Eye::Both, dominant, shape, ..Settings::default() };
             assert_eq!(Settings::parse(&settings.text()), Settings { onboarded: false, ..settings.clone() });
-            assert!(settings.recorder_args(true).join(" ").contains("--eye both"));
+            let args = settings.recorder_args(true).join(" ");
+            assert!(args.contains("--eye both"));
+            assert_eq!(args.contains("--dominant left"), dominant == Dominant::Left);
             assert_eq!(settings.recorder_args(false).join(" "), "--view eye --aspect 16:9 --source headset --bitrate 40 --mic --mic-track");
         }
     }

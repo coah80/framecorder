@@ -19,9 +19,11 @@ const MICS_FOR: Duration = Duration::from_secs(3);
 static MICS: Mutex<Option<(Instant, Value)>> = Mutex::new(None);
 
 /// What a phone may change, with the tab's defaults. `clip` is seconds.
-const KEYS: [(&str, &str); 14] = [
+const KEYS: [(&str, &str); 15] = [
     ("shape", "wide"),
     ("eye", "left"),
+    // with both eyes blended, the eye that fills the middle
+    ("dominant", "right"),
     ("quality", "high"),
     ("fps", "auto"),
     ("codec", "hevc"),
@@ -42,6 +44,7 @@ const KEYS: [(&str, &str); 14] = [
 fn allowed(key: &str, value: &str) -> bool {
     match key {
         "eye" => matches!(value, "left" | "right" | "both"),
+        "dominant" => matches!(value, "left" | "right"),
         "shape" => matches!(value, "wide" | "square" | "tall" | "both"),
         "quality" => matches!(value, "standard" | "high" | "max"),
         "fps" => matches!(value, "auto" | "60" | "30"),
@@ -106,7 +109,7 @@ pub fn read(path: &Path) -> Value {
 pub fn change(path: &Path, changes: &Value) -> Result<Value, String> {
     let _guard = CHANGES.lock().unwrap();
     let Some(changes) = changes.as_object().filter(|c| !c.is_empty()) else {
-        return Err("expected an object with some of eye, shape, quality, fps, codec, format, remux, folder, game_audio, mic, mic_source, split_audio, clips, clip".into());
+        return Err("expected an object with some of eye, dominant, shape, quality, fps, codec, format, remux, folder, game_audio, mic, mic_source, split_audio, clips, clip".into());
     };
     let mut updates: Vec<(String, String)> = Vec::new();
     for (key, v) in changes {
@@ -196,7 +199,7 @@ mod tests {
         let s = read(&dir.path().join("ui.conf"));
         assert_eq!(
             s,
-            json!({"shape": "wide", "eye": "left", "quality": "high", "fps": "auto", "codec": "hevc", "format": "mp4", "remux": false, "folder": "", "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
+            json!({"shape": "wide", "eye": "left", "dominant": "right", "quality": "high", "fps": "auto", "codec": "hevc", "format": "mp4", "remux": false, "folder": "", "game_audio": true, "mic": true, "mic_source": "", "split_audio": true, "clips": true, "clip": 30})
         );
     }
 
@@ -204,11 +207,12 @@ mod tests {
     fn blended_eye_persists_and_can_be_changed_back() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ui.conf");
-        for eye in ["both", "right", "left"] {
-            let changed = change(&path, &json!({"eye": eye})).unwrap();
-            assert_eq!(changed["eye"], eye);
+        for (eye, dominant) in [("both", "left"), ("both", "right"), ("right", "right"), ("left", "right")] {
+            let changed = change(&path, &json!({"eye": eye, "dominant": dominant})).unwrap();
+            assert_eq!((changed["eye"].as_str(), changed["dominant"].as_str()), (Some(eye), Some(dominant)));
             assert_eq!(read(&path)["eye"], eye);
         }
+        assert!(change(&path, &json!({"dominant": "both"})).is_err());
     }
 
     #[test]
