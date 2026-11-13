@@ -767,6 +767,10 @@ impl App {
             }
             Action::Shape(shape) => s.shape = shape,
             Action::Eye(eye) => s.eye = eye,
+            Action::Blended(dominant) => {
+                s.eye = settings::Eye::Both;
+                s.dominant = dominant;
+            }
             Action::Quality(q) => s.quality = q,
             Action::Fps(fps) => s.fps = fps,
             Action::Codec(codec) => s.codec = codec,

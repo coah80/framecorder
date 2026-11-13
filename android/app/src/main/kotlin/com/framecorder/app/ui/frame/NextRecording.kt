@@ -60,11 +60,29 @@ import com.framecorder.core.RecordingSettings
 
 private val Shapes = listOf("wide" to "16:9", "square" to "1:1", "tall" to "9:16", "both" to "both eyes")
 private val Eyes = listOf("left" to "left eye", "right" to "right eye")
-/** Both eyes blended into one level view, the way SteamVR's own mirror does it. */
+/**
+ * Both eyes blended into one level view, the way SteamVR's own view does it,
+ * the dominant eye filling the middle. Older headsets can't pick that eye.
+ */
 private val BlendedEye = "both" to "both eyes blended"
+private val Dominant = listOf("both:left" to "both, left dominant", "both:right" to "both, right dominant")
 
-/** The eyes on offer: the blend only for a headset whose framecorder can do it. */
-fun eyeChoices(blend: Boolean): List<Pair<String, String>> = if (blend) Eyes + BlendedEye else Eyes
+/**
+ * The eyes on offer: the blend only for a headset whose framecorder can do it,
+ * with a dominant eye once it [dominant] can pick one. A blend with a dominant
+ * eye is keyed "both:left" or "both:right", see [eyeKey] and [eyePatch].
+ */
+fun eyeChoices(blend: Boolean, dominant: Boolean): List<Pair<String, String>> = when {
+    !blend -> Eyes
+    dominant -> Eyes + Dominant
+    else -> Eyes + BlendedEye
+}
+
+/** The choice that's on for [eye] and [dominant], as [eyeChoices] keys them. */
+fun eyeKey(eye: String, dominant: String?): String = if (eye == "both" && dominant != null) "both:$dominant" else eye
+
+/** What picking [key] changes on the headset. */
+fun eyePatch(key: String): RecordingPatch = key.split(':').let { RecordingPatch(eye = it[0], dominant = it.getOrNull(1)) }
 /** 0 is clips off, like the desktop app's. */
 private val Lengths = listOf(0u to "off", 15u to "15 s", 30u to "30 s", 60u to "1 min", 120u to "2 min")
 
@@ -76,7 +94,7 @@ private val Codecs = listOf("hevc" to "HEVC", "h264" to "H.264")
 private val Formats = listOf("mp4" to "hybrid MP4", "mkv" to "MKV")
 
 /** What the headset uses when nothing's been read from it yet. */
-private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null, format = null, remux = null, folder = null, folders = null)
+private val Defaults = RecordingSettings("wide", "high", "auto", gameAudio = true, mic = true, clips = true, clipSecs = 30u, eye = null, dominant = null, panels = null, splitAudio = null, micSource = null, mics = null, codec = null, format = null, remux = null, folder = null, folders = null)
 
 private fun mbps(quality: String) = when (quality) {
     "standard" -> 20
@@ -118,7 +136,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
     val eyes = s.eye != null
     val panels = s.panels != false
     val rows = if (eyes) 4 else 3
-    val eyeChoices = eyeChoices(blend)
+    val eyeChoices = eyeChoices(blend, s.dominant != null)
     Column(modifier) {
         GroupLabel("next recording")
         Column(Modifier.alpha(if (enabled) 1f else 0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -132,7 +150,7 @@ fun NextRecording(settings: RecordingSettings?, note: String?, blend: Boolean, o
             }
             if (eyes) {
                 Group(1, rows, "eye") {
-                    Choices(eyeChoices, if (panels) s.eye ?: "left" else "left", enabled && panels, lines = if (blend) 2 else 1) { onChange(RecordingPatch(eye = it)) }
+                    Choices(eyeChoices, if (panels) eyeKey(s.eye ?: "left", s.dominant) else "left", enabled && panels, lines = if (blend) 2 else 1) { onChange(eyePatch(it)) }
                 }
             }
             Group(rows - 2, rows, "clip length") {

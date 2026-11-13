@@ -122,12 +122,14 @@ fn shape(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         return;
     }
     label(c, f, inner.x, y + TILE_H + 40.0, "EYE");
+    let blended = |d: Dominant| s.eye == Eye::Both && s.dominant == d;
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), s.eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), s.eye == Eye::Right),
-        ("Both eyes blended", Action::Eye(Eye::Both), s.eye == Eye::Both),
+        ("Both, left dominant", Action::Blended(Dominant::Left), blended(Dominant::Left)),
+        ("Both, right dominant", Action::Blended(Dominant::Right), blended(Dominant::Right)),
     ];
-    segmented(c, f, m, hits, Rect::new(inner.x, y + TILE_H + 56.0, 640.0, 52.0), &eyes, false);
+    segmented(c, f, m, hits, Rect::new(inner.x, y + TILE_H + 56.0, inner.w, 52.0), &eyes, false);
 }
 
 /// One shape to pick: a little outline of it, its ratio and a word on it.
