@@ -148,6 +148,21 @@ what goes with it, so nobody has to ask for it afterwards: the framecorder versi
 
 over ssh, `framecorder-ui --report "what went wrong"` does the same, and `framecorder-ui --diagnostics` prints exactly what would be sent.
 
+## the discord
+
+there's a discord for questions, ideas and complaints. the desktop and android apps have a "join the discord" button next to "report an issue". it opens [discord.coah80.com](https://discord.coah80.com), which counts the visit (which app it came from and which country, nothing else) and passes you on to the invite.
+
+## anonymous stats
+
+framecorder says one small thing about itself once a day, so we can see how many people use it and which versions are out there:
+
+- the tab on the headset: its version, how many recordings and clips were made since the last time, and how ten settings stand (shape, eye, quality, frame rate, codec, format, and whether clips, the mic, split tracks and the panels are on)
+- the desktop and android apps: which app it is, its version, and what it runs on (windows, macos, linux, android)
+
+that's all of it. there's no id in it, no names, nothing from your videos, and no address is kept: the service adds each message to a total for the day and throws the message away, so it can't tell one install from another. it never runs while you're recording.
+
+to turn it off: settings, general, "anonymous stats" in the tab, and "anonymous stats" in each app's settings. the code that sends it is `src/stats.rs` and `app/src/core/stats.rs`, and the service that counts it is `stats/`.
+
 ## notes
 
 - mp4s get finished when the recording stops cleanly, which includes ctrl+c, ssh dropping, and the dashboard tab quitting. if the headset dies mid recording, the `.mp4.part` still plays up to the last couple of seconds, and the tab names it back next time it starts
