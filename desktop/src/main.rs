@@ -172,6 +172,28 @@ fn main() {
     };
     let state_dir = core.state_dir.clone();
     let is_demo = demo.is_some();
+    // the once-a-day anonymous ping, for as long as its switch is on
+    if !is_demo {
+        let dir = state_dir.clone();
+        let engine = core.engine.clone();
+        core.rt.spawn(async move {
+            loop {
+                let p = prefs::load(&dir);
+                if p.stats {
+                    let on = |b: bool| if b { "on" } else { "off" }.to_owned();
+                    let settings = [
+                        ("background", on(p.background)),
+                        ("notify", on(p.notify)),
+                        ("view", if p.grid { "grid" } else { "list" }.to_owned()),
+                        ("arch", if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }.to_owned()),
+                        ("paired", framecorder_app_lib::core::stats::paired(engine.hosts().len())),
+                    ];
+                    framecorder_app_lib::core::stats::ping(&dir, "desktop", env!("CARGO_PKG_VERSION"), &settings, &engine.clips()).await;
+                }
+                tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+            }
+        });
+    }
 
     let application = gpui_platform::application().with_assets(assets::Assets);
     application.on_reopen(open_main);

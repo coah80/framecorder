@@ -199,6 +199,7 @@ impl Mock {
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
             Action::Promo => s.promo = !s.promo,
+            Action::Stats => s.stats = !s.stats,
             Action::MicSource(i) => {
                 if let Some(mic) = self.mics.get(i) {
                     s.mic_source = mic.name.clone();

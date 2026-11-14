@@ -102,6 +102,8 @@ pub enum Action {
     SplitAudio,
     /// Promo footage on or off: every view of each recording.
     Promo,
+    /// The once-a-day anonymous ping on or off.
+    Stats,
     /// Replay buffer length.
     ClipLength(u32),
     /// SteamVR's binding screen, to change the clip button.

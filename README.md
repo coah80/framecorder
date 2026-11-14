@@ -149,6 +149,23 @@ what goes with it, so nobody has to ask for it afterwards: the framecorder versi
 
 over ssh, `framecorder-ui --report "what went wrong"` does the same, and `framecorder-ui --diagnostics` prints exactly what would be sent.
 
+## the discord
+
+there's a discord for questions, ideas and complaints. the desktop and android apps have a "join the discord" button next to "report an issue". it opens [discord.coah80.com](https://discord.coah80.com), which counts the visit (which app it came from and which country, nothing else) and passes you on to the invite.
+
+## anonymous stats
+
+framecorder says one small thing about itself once a day, so we can see how many people use it and which versions are out there:
+
+- the tab on the headset: its version, roughly how long it's been installed (new today, under a week, under a month, under three months, longer), and what was made since the last time: how many recordings and clips, how many minutes of recording, how many times someone watched live or started a recording from an app, and how many bug reports were sent. plus how its settings stand: shape, eye, dominant eye, quality, frame rate, codec, format, clip length, whether clips, the mic, split tracks, the panels, start with steamvr and automatic updates are on, whether it saves to the headset or a card, and how many devices are paired (none, 1, 2, 3 or more)
+- the desktop and android apps: which app it is, its version, what it runs on (windows, macos, linux, android), roughly how long it's been installed, how many files it brought over since the last time and their size, how many headsets are paired, and a few of its own switches (background sync, notifications, grid or list and the processor type on desktop, the wallpaper switch and the android version on the phone)
+
+the service also counts which country a message came from and the hour it arrived, from the connection itself, and keeps only those two totals.
+
+that's all of it. there's no id in it, no names, nothing from your videos, and no address is kept: the service adds each message to a total for the day and throws the message away, so it can't tell one install from another. it never runs while you're recording.
+
+to turn it off: settings, general, "anonymous stats" in the tab, and "anonymous stats" in each app's settings. the code that sends it is `src/stats.rs` and `app/src/core/stats.rs`, and the service that counts it is `stats/`.
+
 ## notes
 
 - mp4s get finished when the recording stops cleanly, which includes ctrl+c, ssh dropping, and the dashboard tab quitting. if the headset dies mid recording, the `.mp4.part` still plays up to the last couple of seconds, and the tab names it back next time it starts

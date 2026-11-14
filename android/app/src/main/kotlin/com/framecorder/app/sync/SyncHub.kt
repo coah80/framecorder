@@ -124,6 +124,9 @@ class SyncHub(private val app: Application) : Events {
         _clips.value = core.clips()
     }
 
+    /** The once-a-day anonymous ping; does nothing when today's has gone. */
+    suspend fun statsPing(settings: List<String>) = core.statsPing(stateDir(app).path, BuildConfig.VERSION_NAME, settings)
+
     /** Starts following every paired Frame. Safe to call again. */
     fun start() = core.start()
 

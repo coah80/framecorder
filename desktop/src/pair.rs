@@ -46,20 +46,38 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
             .child(code(app, window, cx))
             .child(
                 div()
-                    .id("pair-report")
                     .absolute()
                     .bottom(px(26.))
                     .left(px(pad))
                     .flex()
                     .items_center()
-                    .gap(px(6.))
+                    .gap(px(18.))
                     .text_size(px(12.))
                     .text_color(c(theme::OVERLAY2))
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(c(theme::MAUVE)))
-                    .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
-                    .child(icon("flag", 13., c(theme::OVERLAY2)))
-                    .child("report an issue"),
+                    .child(
+                        div()
+                            .id("pair-report")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(c(theme::MAUVE)))
+                            .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
+                            .child(icon("bug", 13., c(theme::OVERLAY2)))
+                            .child("report an issue"),
+                    )
+                    .child(
+                        div()
+                            .id("pair-discord")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(c(theme::MAUVE)))
+                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::sidebar::DISCORD)))
+                            .child(icon("discord", 13., c(theme::OVERLAY2)))
+                            .child("join the discord"),
+                    ),
             ),
     )
 }
