@@ -224,7 +224,11 @@ impl Session {
     }
 
     fn video(&mut self, p: VideoPacket) -> Result<()> {
-        let (params, has_picture) = split_parameter_sets(&p.data, self.cfg.codec);
+        let (params, has_picture, keyframe) = split_parameter_sets(&p.data, self.cfg.codec);
+        // The encoder's own flag isn't to be relied on: since SteamOS's
+        // kernel 7.2 the Frame's driver doesn't set it on anything, while
+        // the keyframes themselves still come. So the stream decides too.
+        let key = p.key || keyframe;
         if self.streams.is_none() {
             if params.is_empty() {
                 log::warn!("encoder output started without stream headers, dropping a packet");
@@ -256,12 +260,12 @@ impl Session {
         }
         self.last_video_pts = pts;
 
-        if p.key {
+        if key {
             if let Some(path) = self.start_request.take() {
                 self.start(Kind::Recording, path, pts, Vec::new(), None);
             }
         }
-        self.route(Packet { stream: 0, pts, duration: 1, key: p.key, data: p.data.into() });
+        self.route(Packet { stream: 0, pts, duration: 1, key, data: p.data.into() });
 
         // Keep audio running through quiet stretches.
         let quiet = audio_pos(pts, self.fps) - QUIET_AFTER;
@@ -538,10 +542,11 @@ fn recorded_time(pauses: &[(i64, i64)], paused_at: Option<i64>, t: i64) -> Optio
 }
 
 /// Pulls the parameter sets (VPS/SPS/PPS) out of an Annex B packet. Also
-/// says whether the packet carries an actual picture.
-fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool) {
+/// says whether the packet carries an actual picture, and whether that
+/// picture is a keyframe: one a file, a clip or a viewer can start on.
+fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool, bool) {
     let mut params = Vec::new();
-    let mut has_picture = false;
+    let (mut has_picture, mut keyframe) = (false, false);
     for nal in nal_units(data) {
         let Some(&first) = nal.first() else { continue };
         let is_param = match codec {
@@ -557,9 +562,14 @@ fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool) {
                 Codec::H264 => matches!(first & 0x1f, 1..=5),
             };
             has_picture |= is_vcl;
+            keyframe |= match codec {
+                // the random access pictures: BLA, IDR and CRA
+                Codec::Hevc => matches!((first >> 1) & 0x3f, 16..=21),
+                Codec::H264 => first & 0x1f == 5,
+            };
         }
     }
-    (params, has_picture)
+    (params, has_picture, keyframe)
 }
 
 fn nal_units(data: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -601,8 +611,8 @@ mod tests {
             0, 0, 1, 0x44, 1, 0xcc, // PPS
             0, 0, 0, 1, 0x26, 1, 0xdd, 0, // IDR slice
         ];
-        let (params, pic) = split_parameter_sets(&data, Codec::Hevc);
-        assert!(pic);
+        let (params, pic, key) = split_parameter_sets(&data, Codec::Hevc);
+        assert!(pic && key);
         assert_eq!(params, [0, 0, 0, 1, 0x40, 1, 0xaa, 0, 0, 0, 1, 0x42, 1, 0xbb, 0, 0, 0, 1, 0x44, 1, 0xcc]);
     }
 
@@ -623,9 +633,21 @@ mod tests {
     #[test]
     fn header_only_packet_has_no_picture() {
         let data = [0, 0, 0, 1, 0x67, 1, 2, 0, 0, 0, 1, 0x68, 3];
-        let (params, pic) = split_parameter_sets(&data, Codec::H264);
-        assert!(!pic);
+        let (params, pic, key) = split_parameter_sets(&data, Codec::H264);
+        assert!(!pic && !key);
         assert_eq!(params.len(), data.len());
+    }
+
+    #[test]
+    fn keyframes_are_told_from_the_stream_not_the_drivers_flag() {
+        // (codec, a keyframe's first slice byte, an ordinary frame's)
+        for (codec, idr, trailing) in [(Codec::Hevc, 19 << 1, 1 << 1), (Codec::H264, 0x65, 0x41)] {
+            assert_eq!(split_parameter_sets(&[0, 0, 0, 1, idr, 1, 0xdd], codec), (Vec::new(), true, true), "{codec:?}");
+            assert_eq!(split_parameter_sets(&[0, 0, 0, 1, trailing, 1, 0xdd], codec), (Vec::new(), true, false), "{codec:?}");
+        }
+        // hevc's other ways in: a clean random access picture counts, a leading picture after one doesn't
+        assert!(split_parameter_sets(&[0, 0, 1, 21 << 1, 1, 0], Codec::Hevc).2);
+        assert!(!split_parameter_sets(&[0, 0, 1, 9 << 1, 1, 0], Codec::Hevc).2);
     }
 
     fn packet(stream: usize, pts: i64) -> Packet {
