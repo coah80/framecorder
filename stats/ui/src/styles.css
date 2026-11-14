@@ -1,0 +1,111 @@
+@import "tailwindcss";
+@import "@fontsource/montserrat/latin-700.css";
+@import "@fontsource/montserrat/latin-800.css";
+@import "@fontsource/poppins/latin-400.css";
+@import "@fontsource/poppins/latin-500.css";
+@import "@fontsource/space-grotesk/latin-500.css";
+
+/* framecorder's colours, the ones the tab and the apps use */
+:root {
+  --crust: #11111b;
+  --mantle: #181825;
+  --base: #1e1e2e;
+  --surface0: #313244;
+  --surface1: #45475a;
+  --overlay2: #9399b2;
+  --subtext0: #a6adc8;
+  --text: #cdd6f4;
+  --mauve: #cba6f7;
+  --sky: #89b4fa;
+  --mint: #a6e3a1;
+  --peach: #fab387;
+  --red: #f38ba8;
+
+  /* what dither-kit's axes, legend and tooltip read */
+  --background: var(--mantle);
+  --foreground: var(--text);
+  --popover: var(--base);
+  --popover-foreground: var(--text);
+  --muted-foreground: var(--overlay2);
+  --border: var(--surface0);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-line: var(--surface0);
+  --color-quiet: var(--subtext0);
+  --color-faint: var(--overlay2);
+  --color-mauve: var(--mauve);
+  --color-sky: var(--sky);
+  --color-mint: var(--mint);
+  --color-peach: var(--peach);
+  --color-red: var(--red);
+  --color-raised: var(--base);
+  --color-surface0: var(--surface0);
+  --font-sans: "Poppins", system-ui, sans-serif;
+  --font-display: "Montserrat", system-ui, sans-serif;
+  /* the kit sets its numbers in font-mono; framecorder's number face is space grotesk */
+  --font-mono: "Space Grotesk", ui-monospace, monospace;
+}
+
+html {
+  background: var(--mantle);
+  scrollbar-color: var(--surface1) var(--mantle);
+}
+
+body {
+  margin: 0;
+  background: var(--mantle);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--mauve) 35%, transparent);
+  color: var(--text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* a chart's swatch in the readout: the series' own texture, not a flat chip */
+.swatch {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 2px;
+  flex: none;
+}
+.swatch-dotted {
+  background-image: radial-gradient(currentColor 45%, transparent 50%);
+  background-size: 4px 4px;
+}
+.swatch-hatched {
+  background-image: repeating-linear-gradient(135deg, currentColor 0 1.5px, transparent 1.5px 4px);
+}
+.swatch-solid {
+  background: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

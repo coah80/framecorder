@@ -17,11 +17,13 @@ pub struct Prefs {
     pub grid: bool,
     /// a system notification per clip that lands
     pub notify: bool,
+    /// the once-a-day anonymous ping, see the core's `stats`
+    pub stats: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { background: true, grid: true, notify: true }
+        Self { background: true, grid: true, notify: true, stats: true }
     }
 }
 

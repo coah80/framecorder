@@ -47,6 +47,8 @@ const TOAST_FOR: Duration = Duration::from_millis(2500);
 const RESUME_DELAY: Duration = Duration::from_millis(350);
 /// Before starting the clipping recorder again after it died.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
+/// How often the tab looks at whether the day's anonymous ping has gone.
+const STATS_EVERY: Duration = Duration::from_secs(600);
 const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
 /// How often to look for settings a phone changed.
@@ -198,6 +200,8 @@ struct App {
     /// With promo footage on, the recorders saving the other views of the
     /// recording under way, by view. They live for that one recording.
     extras: Vec<(&'static str, Recorder)>,
+    /// When the day's anonymous ping was last looked at.
+    stats_checked: Option<Instant>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
     pointer: Option<(f32, f32)>,
@@ -518,6 +522,7 @@ pub fn run() -> Result<()> {
         app.manage_recorder();
         app.auto_pause(tab_visible);
         app.check_recorder();
+        app.check_stats();
         app.check_remote();
         app.check_report();
         // An update swapped this program out. Restart into it once nothing's
@@ -640,6 +645,7 @@ impl App {
             settings_checked: Instant::now(),
             recorder: None,
             extras: Vec::new(),
+            stats_checked: None,
             recording: None,
             note: None,
             pointer: None,
@@ -787,6 +793,7 @@ impl App {
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
             Action::Promo => s.promo = !s.promo,
+            Action::Stats => s.stats = !s.stats,
             Action::MicSource(i) => {
                 let Some(mic) = self.mics.list.get(i) else { return };
                 s.mic_source = mic.name.clone();
@@ -825,6 +832,7 @@ impl App {
             Some(Outcome::Sent { number, url }) => {
                 self.note = Some((format!("Sent as issue #{number} · {url}"), true));
                 self.toast = Some((format!("Report sent, it's issue #{number}"), true));
+                crate::stats::made(crate::stats::Made::Report);
                 self.dirty = true;
             }
             Some(Outcome::Failed(why)) => {
@@ -1081,6 +1089,29 @@ impl App {
         }
     }
 
+    /// With anonymous stats on, sends the day's ping once: looked at every
+    /// ten minutes, and never while something's recording.
+    fn check_stats(&mut self) {
+        if !self.settings.stats || !self.settings.onboarded || self.recording.is_some() {
+            return;
+        }
+        if self.stats_checked.is_some_and(|t| t.elapsed() < STATS_EVERY) {
+            return;
+        }
+        self.stats_checked = Some(Instant::now());
+        if crate::stats::due() {
+            let on = |b: bool| if b { "on" } else { "off" }.to_owned();
+            let mut settings = self.settings.for_stats(self.unlocked);
+            settings.push(("autostart", on(self.autostart)));
+            settings.push(("updates", on(self.auto_update)));
+            settings.push(("paired", match self.sync.devices.len() {
+                n @ 0..=2 => n.to_string(),
+                _ => "3+".into(),
+            }));
+            crate::stats::ping(settings);
+        }
+    }
+
     fn check_recorder(&mut self) {
         self.check_extras();
         let Some(r) = &mut self.recorder else { return };
@@ -1089,11 +1120,13 @@ impl App {
             match event {
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
+                    crate::stats::made(crate::stats::Made::Recording(secs));
                     self.recording = None;
                     let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
                 }
                 recorder::Event::Saved { kind: Kind::Clip, path, bytes, secs } => {
+                    crate::stats::made(crate::stats::Made::Clip);
                     self.note = Some((format!("Clipped {} · {secs:.0} s · {:.1} MB", file_name(&path), bytes as f64 / 1e6), true));
                     self.toast = Some((format!("Clipped the last {secs:.0} s"), true));
                     self.buzz = true;
@@ -1151,6 +1184,9 @@ impl App {
     fn check_remote(&mut self) {
         let viewers = remote::live_viewers();
         if viewers != self.live_viewers {
+            if self.live_viewers == 0 {
+                crate::stats::made(crate::stats::Made::Live);
+            }
             self.live_viewers = viewers;
             self.dirty = true;
         }
@@ -1217,6 +1253,7 @@ impl App {
                         return self.note.as_ref().map_or("couldn't start recording".into(), |(n, _)| n.to_lowercase());
                     }
                     self.toast = Some((format!("Recording, started from {from}"), true));
+                    crate::stats::made(crate::stats::Made::Remote);
                 }
                 "ok".into()
             }

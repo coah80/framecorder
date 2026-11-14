@@ -94,6 +94,8 @@ pub struct Settings {
     /// A recording also saves every other view next to it (each eye, both
     /// blended, the lenses), for cutting promo footage. Only the tab sets it.
     pub promo: bool,
+    /// Send the once-a-day anonymous ping, see `crate::stats`.
+    pub stats: bool,
     /// The first-run setup has been finished or skipped.
     pub onboarded: bool,
 }
@@ -120,6 +122,7 @@ impl Default for Settings {
             clips: true,
             clip_secs: 30,
             promo: false,
+            stats: true,
             onboarded: false,
         }
     }
@@ -183,6 +186,7 @@ impl Settings {
                 ("mic_source", v) if v.is_empty() || crate::mics::valid_name(v) => s.mic_source = v.to_string(),
                 ("clips", v) => s.clips = v == "true",
                 ("promo", v) => s.promo = v == "true",
+                ("stats", v) => s.stats = v == "true",
                 ("onboarded", v) => s.onboarded = v == "true",
                 // Older configs turned clips off with the length.
                 ("clip", "off") => s.clips = false,
@@ -218,7 +222,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\npromo={}\nonboarded={}\n",
+            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\npromo={}\nstats={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -258,6 +262,7 @@ impl Settings {
             self.clips,
             self.clip_secs,
             self.promo,
+            self.stats,
             self.onboarded
         )
     }
@@ -329,6 +334,52 @@ impl Settings {
             ("lenses", Self { shape: Shape::BothEyes, mic: false, ..self.clone() }),
         ];
         views.into_iter().filter(|(name, _)| *name != self.view()).map(|(name, s)| (name, s.recorder_args(true))).collect()
+    }
+
+    /// How things are set, for the anonymous ping, in the stats service's
+    /// words. It only takes these.
+    pub fn for_stats(&self, panel: bool) -> Vec<(&'static str, String)> {
+        let on = |b: bool| if b { "on" } else { "off" };
+        let said: Vec<(&'static str, &str)> = vec![
+            ("shape", match self.shape {
+                Shape::Wide => "wide",
+                Shape::Square => "square",
+                Shape::Tall => "tall",
+                Shape::BothEyes => "both",
+            }),
+            ("eye", match self.eye {
+                Eye::Left => "left",
+                Eye::Right => "right",
+                Eye::Both => "both",
+            }),
+            ("quality", match self.quality {
+                Quality::Standard => "standard",
+                Quality::High => "high",
+                Quality::Max => "max",
+            }),
+            ("fps", match self.fps {
+                FrameRate::Auto => "auto",
+                FrameRate::Sixty => "60",
+                FrameRate::Thirty => "30",
+            }),
+            ("codec", match self.codec {
+                Codec::Hevc => "hevc",
+                Codec::H264 => "h264",
+            }),
+            ("format", self.format.ext()),
+            ("clips", on(self.clips)),
+            ("mic", on(self.mic)),
+            ("split", on(self.splits_audio())),
+            ("panels", on(panel)),
+            ("dominant", match self.dominant {
+                Dominant::Left => "left",
+                Dominant::Right => "right",
+            }),
+            ("folder", if self.folder.is_empty() { "videos" } else { "drive" }),
+        ];
+        let mut said: Vec<(&'static str, String)> = said.into_iter().map(|(k, v)| (k, v.to_owned())).collect();
+        said.push(("clip", self.clip_secs.to_string()));
+        said
     }
 
     /// Recorder arguments, minus the output path.
@@ -495,6 +546,14 @@ mod tests {
         assert!(s.promo_extras(false).is_empty());
         assert!(Settings::default().promo_extras(true).is_empty());
         assert_eq!(promo_file(Path::new("/v/2026-11-14_10-00-00-2.mp4"), "lenses"), PathBuf::from("/v/2026-11-14_10-00-00-2-lenses.mp4"));
+        assert_eq!(Settings::parse(&s.text()), s);
+    }
+
+    #[test]
+    fn the_stats_ping_gets_the_settings_in_the_services_words() {
+        let s = Settings { shape: Shape::BothEyes, eye: Eye::Both, mic: false, clips: false, format: Format::Mkv, fps: FrameRate::Sixty, stats: false, ..Settings::default() };
+        let said: Vec<String> = s.for_stats(false).iter().map(|(k, v)| format!("{k}={v}")).collect();
+        assert_eq!(said.join(" "), "shape=both eye=both quality=high fps=60 codec=hevc format=mkv clips=off mic=off split=off panels=off dominant=right folder=videos clip=30");
         assert_eq!(Settings::parse(&s.text()), s);
     }
 

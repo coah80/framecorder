@@ -1,6 +1,7 @@
-//! the left rail: wordmark, nav, your frame, the desktop update, the folder.
+//! the left rail: wordmark, nav, your frame, the desktop update, and a row of
+//! icons for the folder, the discord and reporting an issue.
 
-use gpui::{canvas, div, fill, prelude::*, px, relative, AnyElement, ContentMask, Context, FontWeight};
+use gpui::{canvas, div, fill, prelude::*, px, relative, AnyElement, ContentMask, Context, FontWeight, Window};
 
 use crate::app::{status_color, status_text, DesktopUpdate, FrameApp, Page};
 use crate::theme::{self, a, c};
@@ -47,8 +48,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .gap(px(8.))
                 .children(frame_cards(app, cx))
                 .children(desktop_pill(app, cx))
-                .child(report(app, cx))
-                .child(folder(app, cx)),
+                .child(actions(app, cx)),
         )
 }
 
@@ -217,57 +217,52 @@ pub fn short_path(p: &std::path::Path) -> String {
     }
 }
 
-fn folder(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
-    div()
-        .id("open-folder")
-        .flex()
-        .items_center()
-        .gap(px(10.))
-        .h(px(44.))
-        .px(px(12.))
-        .rounded(px(10.))
-        .text_color(c(theme::SUBTEXT0))
-        .cursor_pointer()
-        .hover(|s| s.bg(c(theme::SURFACE1)).text_color(c(theme::TEXT)))
-        .on_click(cx.listener(|app, _, _, cx| app.open_folder(cx)))
-        .child(icon("folder", 18., c(theme::SUBTEXT0)))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(
-                    div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).line_height(px(17.)).child("open folder"),
-                )
-                .child(
-                    data(short_path(&app.core.download_dir))
-                        .text_size(px(11.))
-                        .line_height(px(15.))
-                        .text_color(c(theme::OVERLAY2))
-                        .truncate(),
-                ),
-        )
+/// where the discord's reached from this app: the link counts the visit and
+/// passes it on to the invite
+pub const DISCORD: &str = "https://discord.coah80.com/?from=desktop";
+
+/// what an icon on its own does, said when the pointer rests on it
+struct Tip(&'static str);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(9.))
+            .py(px(5.))
+            .rounded(px(8.))
+            .bg(c(theme::SURFACE1))
+            .border_1()
+            .border_color(theme::line())
+            .text_size(px(12.))
+            .text_color(c(theme::TEXT))
+            .child(self.0)
+    }
 }
 
-/// report an issue, right under the frames so it's there on every page
-fn report(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
-    let on = app.page == Page::Report;
-    let fg = if on { theme::MAUVE } else { theme::SUBTEXT0 };
+/// under the frames, three icons in a row so they're there on every page
+/// without taking a row each: the clips folder, the discord, and reporting an issue
+fn actions(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let button = |id: &'static str, glyph: &'static str, says: &'static str, on: bool| {
+        div()
+            .id(id)
+            .flex_1()
+            .h(px(40.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(10.))
+            .cursor_pointer()
+            .when(on, |d| d.bg(a(theme::MAUVE, 0.1)))
+            .when(!on, |d| d.hover(|s| s.bg(c(theme::SURFACE1))))
+            .tooltip(move |_, cx| cx.new(|_| Tip(says)).into())
+            .child(icon(glyph, 18., c(if on { theme::MAUVE } else { theme::SUBTEXT0 })))
+    };
     div()
-        .id("report-issue")
         .flex()
-        .items_center()
-        .gap(px(10.))
-        .h(px(44.))
-        .px(px(12.))
-        .rounded(px(10.))
-        .text_color(c(fg))
-        .cursor_pointer()
-        .when(on, |d| d.bg(a(theme::MAUVE, 0.1)))
-        .when(!on, |d| d.hover(|s| s.bg(c(theme::SURFACE1)).text_color(c(theme::TEXT))))
-        .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
-        .child(icon("flag", 18., c(fg)))
-        .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("report an issue"))
+        .gap(px(6.))
+        .child(button("open-folder", "folder", "open the clips folder", false).on_click(cx.listener(|app, _, _, cx| app.open_folder(cx))))
+        .child(button("join-discord", "discord", "join the discord", false).on_click(cx.listener(|_, _, _, cx| cx.open_url(DISCORD))))
+        .child(button("report-issue", "bug", "report an issue", app.page == Page::Report).on_click(cx.listener(|app, _, _, cx| app.open_report(cx))))
 }
 
 /// "updating", grey, filling in mauve from the left over and over, like a bar

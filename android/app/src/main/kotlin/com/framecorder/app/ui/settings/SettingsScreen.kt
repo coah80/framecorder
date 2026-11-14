@@ -57,6 +57,7 @@ import com.framecorder.app.ui.common.canNotify
 import com.framecorder.app.ui.common.canSeeVideos
 import com.framecorder.app.ui.common.dotted
 import com.framecorder.app.ui.common.lastSync
+import com.framecorder.app.ui.common.openDiscord
 import com.framecorder.app.ui.common.stateText
 
 @Composable
@@ -67,6 +68,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
     val wallpaper by prefs.wallpaper.collectAsStateWithLifecycle()
     val background by prefs.background.collectAsStateWithLifecycle()
     val clipNotes by prefs.clipNotes.collectAsStateWithLifecycle()
+    val stats by prefs.stats.collectAsStateWithLifecycle()
     val newer by appUpdate.newer.collectAsStateWithLifecycle()
     var notifications by remember { mutableStateOf(context.canNotify()) }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notifications = it }
@@ -171,21 +173,37 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item { GroupLabel("this phone") }
             item {
                 SegmentRow(
-                    0, 3, "saved to",
+                    0, 5, "saved to",
                     subtitle = "Movies/framecorder",
                     leading = { Icon(FcIcons.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 )
             }
             item {
                 SegmentRow(
-                    1, 3, "report an issue",
+                    1, 5, "report an issue",
                     onClick = onReport,
                     leading = { Icon(FcIcons.Bug, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     trailing = { Chevron() },
                 )
             }
             item {
-                SegmentRow(2, 3, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
+                SegmentRow(
+                    2, 5, "join the discord",
+                    onClick = { context.openDiscord() },
+                    leading = { Icon(FcIcons.Discord, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailing = { Chevron() },
+                )
+            }
+            item {
+                SegmentRow(
+                    3, 5, "anonymous stats",
+                    subtitle = "once a day: this app's version, system, how it's set up and how many files it synced. nothing about you or your videos",
+                    onClick = { prefs.setStats(!stats) },
+                    trailing = { Toggle(stats, prefs::setStats) },
+                )
+            }
+            item {
+                SegmentRow(4, 5, "framecorder ${BuildConfig.VERSION_NAME}", subtitle = "fonts: montserrat, poppins, space grotesk (sil ofl)")
             }
             item { Spacer(Modifier.height(8.dp)) }
         }

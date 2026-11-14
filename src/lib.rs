@@ -9,5 +9,6 @@ pub mod openvr;
 pub mod overlay;
 pub mod setup;
 pub mod report;
+pub mod stats;
 pub mod toast;
 pub mod ui;

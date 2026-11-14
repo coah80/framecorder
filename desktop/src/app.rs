@@ -149,6 +149,8 @@ pub struct FrameApp {
     pub background: bool,
     /// a system notification per clip that lands, with open and show in folder
     pub notify: bool,
+    /// the once-a-day anonymous ping
+    pub stats: bool,
     pub tray: Option<Tray>,
     told_about_tray: bool,
     pub desktop: DesktopUpdate,
@@ -258,6 +260,7 @@ impl FrameApp {
             autostart: if demo { Some(true) } else { autostart::is_enabled() },
             background: prefs.background,
             notify: prefs.notify,
+            stats: prefs.stats,
             tray: None,
             told_about_tray: false,
             desktop: DesktopUpdate::None,
@@ -603,7 +606,7 @@ impl FrameApp {
         if self.demo {
             return;
         }
-        let p = prefs::Prefs { background: self.background, grid: self.grid, notify: self.notify };
+        let p = prefs::Prefs { background: self.background, grid: self.grid, notify: self.notify, stats: self.stats };
         if let Err(e) = prefs::save(&self.core.state_dir, &p) {
             self.toast(format!("couldn't save that: {e}"), cx);
         }
@@ -687,6 +690,12 @@ impl FrameApp {
 
     pub fn set_grid(&mut self, grid: bool, cx: &mut Context<Self>) {
         self.grid = grid;
+        self.save_prefs(cx);
+        cx.notify();
+    }
+
+    pub fn set_stats(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.stats = on;
         self.save_prefs(cx);
         cx.notify();
     }

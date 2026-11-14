@@ -21,6 +21,10 @@ class Prefs(context: Context) {
     /** A notification per clip that lands. The syncing one is Android's own and stays. */
     val clipNotes: StateFlow<Boolean> = _clipNotes
 
+    private val _stats = MutableStateFlow(store.getBoolean(STATS, true))
+    /** The once-a-day anonymous ping: this app's version and system, nothing else. */
+    val stats: StateFlow<Boolean> = _stats
+
     private val _appUpdate = MutableStateFlow(store.getString(APP_UPDATE, null))
     /** A newer framecorder for this phone, "0.3.0", from the last check that found one. */
     val appUpdate: StateFlow<String?> = _appUpdate
@@ -46,6 +50,11 @@ class Prefs(context: Context) {
         _clipNotes.value = on
     }
 
+    fun setStats(on: Boolean) {
+        store.edit { putBoolean(STATS, on) }
+        _stats.value = on
+    }
+
     fun setAskedOnce() = store.edit { putBoolean(ASKED_ONCE, true) }
 
     fun setAppUpdate(newer: String?, checkedAt: Long) {
@@ -60,6 +69,7 @@ class Prefs(context: Context) {
         const val WALLPAPER = "wallpaper_colors"
         const val BACKGROUND = "background_sync"
         const val CLIP_NOTES = "clip_notifications"
+        const val STATS = "anonymous_stats"
         const val ASKED_ONCE = "asked_once"
         const val APP_UPDATE = "app_update"
         const val APP_UPDATE_AT = "app_update_checked_at"
