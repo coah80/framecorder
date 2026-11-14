@@ -63,7 +63,7 @@ pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp
                             .cursor_pointer()
                             .hover(|s| s.text_color(c(theme::MAUVE)))
                             .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
-                            .child(icon("flag", 13., c(theme::OVERLAY2)))
+                            .child(icon("bug", 13., c(theme::OVERLAY2)))
                             .child("report an issue"),
                     )
                     .child(

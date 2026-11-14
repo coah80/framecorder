@@ -64,7 +64,7 @@ const ICONS: &[(&str, &str)] = &[
     ("mic", r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>"#),
     ("mic-off", r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18"/>"#),
     ("trash", r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#),
-    ("flag", r#"<path d="M5 21V4h12l-2.5 4.5L17 13H5"/>"#),
+    ("bug", r#"<rect x="8" y="8" width="8" height="12" rx="4"/><path d="M12 12v8M8 13H5M8 17l-2 2M16 13h3M16 17l2 2M9.5 8 8 5.5M14.5 8 16 5.5"/>"#),
     // discord's own mark (from simple icons), filled where the rest are strokes
     (
         "discord",
