@@ -48,6 +48,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 .children(frame_cards(app, cx))
                 .children(desktop_pill(app, cx))
                 .child(report(app, cx))
+                .child(discord(cx))
                 .child(folder(app, cx)),
         )
 }
@@ -268,6 +269,28 @@ fn report(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
         .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
         .child(icon("flag", 18., c(fg)))
         .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("report an issue"))
+}
+
+/// where the discord's reached from this app: the link counts the visit and
+/// passes it on to the invite
+pub const DISCORD: &str = "https://discord.coah80.com/?from=desktop";
+
+/// the discord, right under reporting an issue: the other place to say something's wrong
+fn discord(cx: &mut Context<FrameApp>) -> impl IntoElement {
+    div()
+        .id("join-discord")
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .h(px(44.))
+        .px(px(12.))
+        .rounded(px(10.))
+        .text_color(c(theme::SUBTEXT0))
+        .cursor_pointer()
+        .hover(|s| s.bg(c(theme::SURFACE1)).text_color(c(theme::TEXT)))
+        .on_click(cx.listener(|_, _, _, cx| cx.open_url(DISCORD)))
+        .child(icon("discord", 18., c(theme::SUBTEXT0)))
+        .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("join the discord"))
 }
 
 /// "updating", grey, filling in mauve from the left over and over, like a bar

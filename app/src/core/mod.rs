@@ -8,6 +8,7 @@ pub mod live;
 pub mod pairlink;
 pub mod report;
 pub mod space;
+pub mod stats;
 pub mod store;
 pub mod tls;
 

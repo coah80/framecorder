@@ -172,6 +172,18 @@ fn main() {
     };
     let state_dir = core.state_dir.clone();
     let is_demo = demo.is_some();
+    // the once-a-day anonymous ping, for as long as its switch is on
+    if !is_demo {
+        let dir = state_dir.clone();
+        core.rt.spawn(async move {
+            loop {
+                if prefs::load(&dir).stats {
+                    framecorder_app_lib::core::stats::ping(&dir, "desktop", env!("CARGO_PKG_VERSION")).await;
+                }
+                tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+            }
+        });
+    }
 
     let application = gpui_platform::application().with_assets(assets::Assets);
     application.on_reopen(open_main);
