@@ -77,14 +77,22 @@ impl Recorder {
     /// Starts paused; `set_paused(false)` once our tab is out of view. `panel`
     /// is whether it may read the panels, see `Settings::recorder_args`.
     pub fn start(settings: &Settings, panel: bool) -> Result<Self> {
-        let exe = std::env::current_exe()?.with_file_name("framecorder");
-        let log = log_path()?;
-        let log_file = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
-        let args = settings.recorder_args(panel);
-        let replay = settings.clipping();
         if let Ok(folder) = settings.folder() {
             super::settings::finish_leftovers(&folder);
         }
+        Self::spawn(settings.recorder_args(panel), settings.clipping(), "recorder")
+    }
+
+    /// One more recorder beside the main one, for promo footage's `view` of
+    /// a recording. It keeps no replay buffer and logs to its own file.
+    pub fn start_view(view: &str, args: Vec<String>) -> Result<Self> {
+        Self::spawn(args, None, &format!("recorder-{view}"))
+    }
+
+    fn spawn(args: Vec<String>, replay: Option<u32>, log_name: &str) -> Result<Self> {
+        let exe = std::env::current_exe()?.with_file_name("framecorder");
+        let log = log_path(log_name)?;
+        let log_file = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
 
         let mut cmd = Command::new(&exe);
         if let Some(secs) = replay {
@@ -247,13 +255,13 @@ fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).context("HOME isn't set")
 }
 
-fn log_path() -> Result<PathBuf> {
+fn log_path(name: &str) -> Result<PathBuf> {
     let dir = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .map_or_else(|| home().map(|h| h.join(".local/state")), Ok)?
         .join("framecorder");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("recorder.log"))
+    Ok(dir.join(format!("{name}.log")))
 }
 
 #[cfg(test)]
@@ -296,6 +304,24 @@ mod tests {
             observed.push((running, app.recording.is_none(), app.note.as_ref().unwrap().0.contains("00:00:07")));
         }
         assert_eq!(observed, [(false, true, true), (true, true, true)]);
+    }
+
+    #[test]
+    fn promo_views_wrap_up_when_the_recording_stops() {
+        let settings = Settings { onboarded: true, ..Settings::default() };
+        let mut app = super::super::App::new(settings.clone(), false, false);
+        let (recorder, _events) = test_recorder(&settings);
+        app.recorder = Some(recorder);
+        app.toggle_recording();
+        let (view, _view_events) = test_recorder(&settings);
+        app.extras.push(("lenses", view));
+        app.auto_pause(true);
+        app.toggle_recording();
+        let (_, view) = app.extras.pop().unwrap();
+        let mut recorder = app.recorder.take().unwrap();
+        recorder.stdin = None;
+        recorder.child.wait_with_output().unwrap();
+        assert_eq!(view.child.wait_with_output().unwrap().stdout, b"pause\nquit\n");
     }
 
     #[test]
