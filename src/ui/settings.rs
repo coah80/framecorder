@@ -301,9 +301,9 @@ impl Settings {
 
     /// How things are set, for the anonymous ping, in the stats service's
     /// words. It only takes these.
-    pub fn for_stats(&self, panel: bool) -> Vec<(&'static str, &'static str)> {
+    pub fn for_stats(&self, panel: bool) -> Vec<(&'static str, String)> {
         let on = |b: bool| if b { "on" } else { "off" };
-        vec![
+        let said: Vec<(&'static str, &str)> = vec![
             ("shape", match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -334,7 +334,15 @@ impl Settings {
             ("mic", on(self.mic)),
             ("split", on(self.splits_audio())),
             ("panels", on(panel)),
-        ]
+            ("dominant", match self.dominant {
+                Dominant::Left => "left",
+                Dominant::Right => "right",
+            }),
+            ("folder", if self.folder.is_empty() { "videos" } else { "drive" }),
+        ];
+        let mut said: Vec<(&'static str, String)> = said.into_iter().map(|(k, v)| (k, v.to_owned())).collect();
+        said.push(("clip", self.clip_secs.to_string()));
+        said
     }
 
     /// Recorder arguments, minus the output path.
@@ -478,7 +486,7 @@ mod tests {
     fn the_stats_ping_gets_the_settings_in_the_services_words() {
         let s = Settings { shape: Shape::BothEyes, eye: Eye::Both, mic: false, clips: false, format: Format::Mkv, fps: FrameRate::Sixty, stats: false, ..Settings::default() };
         let said: Vec<String> = s.for_stats(false).iter().map(|(k, v)| format!("{k}={v}")).collect();
-        assert_eq!(said.join(" "), "shape=both eye=both quality=high fps=60 codec=hevc format=mkv clips=off mic=off split=off panels=off");
+        assert_eq!(said.join(" "), "shape=both eye=both quality=high fps=60 codec=hevc format=mkv clips=off mic=off split=off panels=off dominant=right folder=videos clip=30");
         assert_eq!(Settings::parse(&s.text()), s);
     }
 

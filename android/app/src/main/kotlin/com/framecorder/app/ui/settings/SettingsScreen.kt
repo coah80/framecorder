@@ -197,7 +197,7 @@ fun SettingsScreen(hub: SyncHub, prefs: Prefs, appUpdate: AppUpdate, onFrame: (S
             item {
                 SegmentRow(
                     3, 5, "anonymous stats",
-                    subtitle = "once a day: this app's version and system. nothing about you or your videos",
+                    subtitle = "once a day: this app's version, system, how it's set up and how many files it synced. nothing about you or your videos",
                     onClick = { prefs.setStats(!stats) },
                     trailing = { Toggle(stats, prefs::setStats) },
                 )

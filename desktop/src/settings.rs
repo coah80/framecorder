@@ -174,7 +174,7 @@ pub fn render(app: &mut FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElemen
                 )
                 .child(
                     row(false)
-                        .child(text("anonymous stats", "once a day: this app's version and system. nothing about you or your videos"))
+                        .child(text("anonymous stats", "once a day: this app's version, system, how it's set up and how many files it synced. nothing about you or your videos"))
                         .child(switch("stats", app.stats).on_click(cx.listener(|app, _, _, cx| app.set_stats(!app.stats, cx)))),
                 )
                 .child(

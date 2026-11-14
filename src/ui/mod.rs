@@ -824,6 +824,7 @@ impl App {
             Some(Outcome::Sent { number, url }) => {
                 self.note = Some((format!("Sent as issue #{number} · {url}"), true));
                 self.toast = Some((format!("Report sent, it's issue #{number}"), true));
+                crate::stats::made(crate::stats::Made::Report);
                 self.dirty = true;
             }
             Some(Outcome::Failed(why)) => {
@@ -1027,7 +1028,15 @@ impl App {
         }
         self.stats_checked = Some(Instant::now());
         if crate::stats::due() {
-            crate::stats::ping(self.settings.for_stats(self.unlocked));
+            let on = |b: bool| if b { "on" } else { "off" }.to_owned();
+            let mut settings = self.settings.for_stats(self.unlocked);
+            settings.push(("autostart", on(self.autostart)));
+            settings.push(("updates", on(self.auto_update)));
+            settings.push(("paired", match self.sync.devices.len() {
+                n @ 0..=2 => n.to_string(),
+                _ => "3+".into(),
+            }));
+            crate::stats::ping(settings);
         }
     }
 
@@ -1038,7 +1047,7 @@ impl App {
             match event {
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
-                    crate::stats::made(crate::stats::Made::Recording);
+                    crate::stats::made(crate::stats::Made::Recording(secs));
                     self.recording = None;
                     let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
@@ -1102,6 +1111,9 @@ impl App {
     fn check_remote(&mut self) {
         let viewers = remote::live_viewers();
         if viewers != self.live_viewers {
+            if self.live_viewers == 0 {
+                crate::stats::made(crate::stats::Made::Live);
+            }
             self.live_viewers = viewers;
             self.dirty = true;
         }
@@ -1168,6 +1180,7 @@ impl App {
                         return self.note.as_ref().map_or("couldn't start recording".into(), |(n, _)| n.to_lowercase());
                     }
                     self.toast = Some((format!("Recording, started from {from}"), true));
+                    crate::stats::made(crate::stats::Made::Remote);
                 }
                 "ok".into()
             }

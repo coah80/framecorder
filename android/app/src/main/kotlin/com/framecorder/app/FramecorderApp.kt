@@ -44,7 +44,15 @@ class FramecorderApp : Application() {
             override fun onActivityDestroyed(activity: Activity) {}
         })
         scope.launch {
-            if (prefs.stats.value) runCatching { hub.statsPing() }
+            if (prefs.stats.value) runCatching {
+                val on = { b: Boolean -> if (b) "on" else "off" }
+                val sdk = when (val v = android.os.Build.VERSION.SDK_INT) {
+                    in 0..33 -> "33-"
+                    in 34..36 -> v.toString()
+                    else -> "37+"
+                }
+                hub.statsPing(listOf("background=${on(prefs.background.value)}", "notes=${on(prefs.clipNotes.value)}", "wallpaper=${on(prefs.wallpaper.value)}", "sdk=$sdk"))
+            }
         }
         scope.launch {
             // Serialize stop/start so reopening can't race an unfinished stop.

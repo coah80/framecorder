@@ -1,7 +1,9 @@
 //! The one thing framecorder says about itself, and only with anonymous
-//! stats on: once a day, which version this is, how many recordings and clips
-//! were made since the last time, and how a few settings stand. No id, no
-//! names, nothing from a video. The service on the other end keeps daily
+//! stats on: once a day, which version this is, roughly how long it's been
+//! installed, how many of a few things happened since the last time
+//! (recordings, clips, minutes recorded, live views, recordings started from
+//! an app, reports sent), and how its settings stand. No id, no names,
+//! nothing from a video. The service on the other end keeps daily
 //! totals only (`stats/` in this repo), so one headset can't be told from
 //! another.
 
@@ -18,18 +20,32 @@ static FILE: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
 pub enum Made {
-    Recording,
+    /// A recording this many seconds long.
+    Recording(f64),
     Clip,
+    /// Someone started watching live.
+    Live,
+    /// A recording started from a phone or computer.
+    Remote,
+    /// An issue report sent.
+    Report,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct State {
     /// The UTC day of the last ping that got through.
     last: String,
     /// Whether one ever has: the first is how new installs are counted.
     ever: bool,
+    /// The day this file first existed, in days since 1970: how old the install is.
+    first: u64,
     recordings: u64,
     clips: u64,
+    /// Seconds recorded; the ping says whole minutes.
+    seconds: u64,
+    live: u64,
+    remote: u64,
+    reports: u64,
 }
 
 impl State {
@@ -39,8 +55,13 @@ impl State {
             match key {
                 "last" => s.last = value.to_owned(),
                 "ever" => s.ever = value == "true",
+                "first" => s.first = value.parse().unwrap_or(0),
                 "recordings" => s.recordings = value.parse().unwrap_or(0),
                 "clips" => s.clips = value.parse().unwrap_or(0),
+                "seconds" => s.seconds = value.parse().unwrap_or(0),
+                "live" => s.live = value.parse().unwrap_or(0),
+                "remote" => s.remote = value.parse().unwrap_or(0),
+                "reports" => s.reports = value.parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -48,7 +69,10 @@ impl State {
     }
 
     fn text(&self) -> String {
-        format!("last={}\never={}\nrecordings={}\nclips={}\n", self.last, self.ever, self.recordings, self.clips)
+        format!(
+            "last={}\never={}\nfirst={}\nrecordings={}\nclips={}\nseconds={}\nlive={}\nremote={}\nreports={}\n",
+            self.last, self.ever, self.first, self.recordings, self.clips, self.seconds, self.live, self.remote, self.reports
+        )
     }
 }
 
@@ -57,8 +81,27 @@ fn path() -> Option<PathBuf> {
     Some(dir.join("framecorder/stats"))
 }
 
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
 fn load() -> State {
-    path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| State::parse(&t)).unwrap_or_default()
+    let mut state = path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| State::parse(&t)).unwrap_or_default();
+    if state.first == 0 {
+        state.first = now() / 86400;
+    }
+    state
+}
+
+/// How long an install has been around, as the stats service buckets it.
+fn age(days: u64) -> &'static str {
+    match days {
+        0 => "0",
+        1..=6 => "1-6",
+        7..=29 => "7-29",
+        30..=89 => "30-89",
+        _ => "90+",
+    }
 }
 
 fn save(state: &State) {
@@ -83,10 +126,10 @@ fn day(secs: u64) -> String {
 }
 
 fn today() -> String {
-    day(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))
+    day(now())
 }
 
-/// One more recording or clip for the next ping to mention.
+/// One more of something for the next ping to mention.
 pub fn made(what: Made) {
     // the tab's own tests save recordings that never happened
     if cfg!(test) {
@@ -95,22 +138,36 @@ pub fn made(what: Made) {
     let _held = FILE.lock().unwrap_or_else(|e| e.into_inner());
     let mut state = load();
     match what {
-        Made::Recording => state.recordings += 1,
+        Made::Recording(secs) => {
+            state.recordings += 1;
+            state.seconds += secs.max(0.0) as u64;
+        }
         Made::Clip => state.clips += 1,
+        Made::Live => state.live += 1,
+        Made::Remote => state.remote += 1,
+        Made::Report => state.reports += 1,
     }
     save(&state);
 }
 
 /// Everything a ping says. `settings` are the tab's, as the service names them.
-fn body(state: &State, settings: &[(&str, &str)]) -> Value {
+fn body(state: &State, settings: &[(&str, String)]) -> Value {
     let settings: serde_json::Map<String, Value> = settings.iter().map(|(k, v)| ((*k).to_owned(), json!(v))).collect();
     json!({
         "app": "headset",
         "version": env!("CARGO_PKG_VERSION"),
         "os": "steamos",
         "new": !state.ever,
-        // the service takes up to 10000 of each
-        "counts": {"recordings": state.recordings.min(10_000), "clips": state.clips.min(10_000)},
+        "age": age((now() / 86400).saturating_sub(state.first)),
+        // the service takes no more than this of each
+        "counts": {
+            "recordings": state.recordings.min(10_000),
+            "clips": state.clips.min(10_000),
+            "minutes": (state.seconds / 60).min(100_000),
+            "live": state.live.min(10_000),
+            "remote": state.remote.min(10_000),
+            "reports": state.reports.min(1_000),
+        },
         "settings": settings,
     })
 }
@@ -124,7 +181,7 @@ pub fn due() -> bool {
 /// bytes through curl, the same way a report goes. Whatever it mentioned
 /// comes off the count once it's through; a ping that didn't make it changes
 /// nothing, and tomorrow's carries the lot.
-pub fn ping(settings: Vec<(&'static str, &'static str)>) {
+pub fn ping(settings: Vec<(&'static str, String)>) {
     let spawned = std::thread::Builder::new().name("stats".into()).spawn(move || {
         let sent = load();
         let day = today();
@@ -145,6 +202,11 @@ pub fn ping(settings: Vec<(&'static str, &'static str)>) {
         state.ever = true;
         state.recordings = state.recordings.saturating_sub(sent.recordings);
         state.clips = state.clips.saturating_sub(sent.clips);
+        // whole minutes went; the seconds left over wait for the next one
+        state.seconds = state.seconds.saturating_sub(sent.seconds / 60 * 60);
+        state.live = state.live.saturating_sub(sent.live);
+        state.remote = state.remote.saturating_sub(sent.remote);
+        state.reports = state.reports.saturating_sub(sent.reports);
         save(&state);
     });
     if let Err(e) = spawned {
@@ -158,17 +220,17 @@ mod tests {
 
     #[test]
     fn a_ping_says_only_what_the_service_takes() {
-        let state = State { last: "2026-11-13".into(), ever: false, recordings: 3, clips: 20_000 };
-        // what the tab's default settings come to, with the panels unlocked
-        let settings = [("shape", "wide"), ("eye", "left"), ("quality", "high"), ("fps", "auto"), ("codec", "hevc"), ("format", "mp4"), ("clips", "on"), ("mic", "on"), ("split", "on"), ("panels", "on")];
+        let state = State { last: "2026-11-13".into(), ever: false, first: now() / 86400 - 12, recordings: 3, clips: 20_000, seconds: 185, live: 2, remote: 1, reports: 0 };
+        let settings = [("shape", "wide".to_string()), ("paired", "3+".to_string())];
         assert_eq!(
             body(&state, &settings).to_string(),
             format!(
-                r#"{{"app":"headset","counts":{{"clips":10000,"recordings":3}},"new":true,"os":"steamos","settings":{{"clips":"on","codec":"hevc","eye":"left","format":"mp4","fps":"auto","mic":"on","panels":"on","quality":"high","shape":"wide","split":"on"}},"version":"{}"}}"#,
+                r#"{{"age":"7-29","app":"headset","counts":{{"clips":10000,"live":2,"minutes":3,"recordings":3,"remote":1,"reports":0}},"new":true,"os":"steamos","settings":{{"paired":"3+","shape":"wide"}},"version":"{}"}}"#,
                 env!("CARGO_PKG_VERSION")
             )
         );
         assert_eq!(State::parse(&state.text()), state);
+        assert_eq!([age(0), age(6), age(7), age(29), age(30), age(89), age(90)], ["0", "1-6", "7-29", "7-29", "30-89", "30-89", "90+"]);
         assert_eq!(day(1_794_700_800 - 1), "2026-11-14");
         assert_eq!(day(951_782_400), "2000-02-29");
     }
