@@ -195,6 +195,9 @@ struct App {
     settings_at: Option<SystemTime>,
     settings_checked: Instant,
     recorder: Option<Recorder>,
+    /// With promo footage on, the recorders saving the other views of the
+    /// recording under way, by view. They live for that one recording.
+    extras: Vec<(&'static str, Recorder)>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
     pointer: Option<(f32, f32)>,
@@ -594,6 +597,9 @@ pub fn run() -> Result<()> {
         log::info!("shutting down, finishing up the recorder");
         rec.finish();
     }
+    for (_, view) in app.extras.drain(..) {
+        view.finish();
+    }
     // SteamVR's client keeps objects on our Vulkan device for the shared
     // texture and cleans them up when we disconnect, so disconnect while the
     // device still exists.
@@ -633,6 +639,7 @@ impl App {
             settings_at: Settings::changed_at(),
             settings_checked: Instant::now(),
             recorder: None,
+            extras: Vec::new(),
             recording: None,
             note: None,
             pointer: None,
@@ -779,6 +786,7 @@ impl App {
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
+            Action::Promo => s.promo = !s.promo,
             Action::MicSource(i) => {
                 let Some(mic) = self.mics.list.get(i) else { return };
                 s.mic_source = mic.name.clone();
@@ -905,6 +913,10 @@ impl App {
                 if let Some(r) = &mut self.recorder {
                     r.stop_record();
                 }
+                // On the same press, so every view ends with the recording.
+                for (_, view) in &mut self.extras {
+                    view.quit();
+                }
             }
             return;
         }
@@ -924,10 +936,67 @@ impl App {
         match self.settings.new_file("") {
             Ok(path) => {
                 r.record(&path);
-                self.recording = Some(Recording::new(r.paused()));
+                let paused = r.paused();
+                self.recording = Some(Recording::new(paused));
                 self.note = None;
+                self.start_extras(&path, paused);
             }
             Err(e) => self.note = Some((format!("Couldn't start: {e:#}"), false)),
+        }
+    }
+
+    /// With promo footage on, starts a recorder for every view the recording
+    /// in `path` doesn't have, each into its own file next to it. One that
+    /// can't start doesn't hold the recording up.
+    fn start_extras(&mut self, path: &Path, paused: bool) {
+        for (view, args) in self.settings.promo_extras(self.unlocked) {
+            match Recorder::start_view(view, args) {
+                Ok(mut r) => {
+                    r.set_paused(paused);
+                    r.record(&settings::promo_file(path, view));
+                    self.extras.push((view, r));
+                }
+                Err(e) => self.note = Some((format!("Promo footage: couldn't start the {view} view: {e:#}"), false)),
+            }
+        }
+        if !self.extras.is_empty() {
+            self.toast = Some((format!("Promo footage: recording {} views", self.extras.len() + 1), true));
+        }
+    }
+
+    /// Promo footage's recorders wrap up when the recording stops, however it
+    /// stopped, and say so when one of them didn't make it.
+    fn check_extras(&mut self) {
+        let over = self.recording.as_ref().is_none_or(|r| r.stopping);
+        let mut i = 0;
+        while i < self.extras.len() {
+            let (view, r) = &mut self.extras[i];
+            let view = *view;
+            let mut failed = None;
+            for event in r.events() {
+                match event {
+                    recorder::Event::Saved { path, .. } => log::info!("promo footage: saved {}", path.display()),
+                    recorder::Event::Failed { message, .. } => failed = Some(format!("didn't record: {message}")),
+                    _ => {}
+                }
+            }
+            if over {
+                r.quit();
+            }
+            let exit = r.exited();
+            if let Some(Err(msg)) = &exit {
+                failed = Some(format!("stopped: {msg}"));
+            }
+            if exit.is_some() {
+                self.extras.remove(i);
+            } else {
+                i += 1;
+            }
+            if let Some(why) = failed {
+                log::warn!("promo footage: the {view} view {why}");
+                self.note = Some((format!("Promo footage: the {view} view {why}"), false));
+                self.dirty = true;
+            }
         }
     }
 
@@ -996,6 +1065,9 @@ impl App {
         let want_paused = tab_visible || self.tab_hidden_at.is_some_and(|t| t.elapsed() < RESUME_DELAY);
         if r.paused() != want_paused {
             r.set_paused(want_paused);
+            for (_, view) in &mut self.extras {
+                view.set_paused(want_paused);
+            }
             if let Some(rec) = &mut self.recording {
                 if want_paused {
                     if let Some(since) = rec.running_since.take() {
@@ -1010,6 +1082,7 @@ impl App {
     }
 
     fn check_recorder(&mut self) {
+        self.check_extras();
         let Some(r) = &mut self.recorder else { return };
         for event in r.events() {
             self.dirty = true;
