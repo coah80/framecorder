@@ -91,6 +91,8 @@ pub struct Settings {
     pub clips: bool,
     /// How much of it, in seconds; remembered while clips are off.
     pub clip_secs: u32,
+    /// Send the once-a-day anonymous ping, see `crate::stats`.
+    pub stats: bool,
     /// The first-run setup has been finished or skipped.
     pub onboarded: bool,
 }
@@ -116,6 +118,7 @@ impl Default for Settings {
             split_audio: true,
             clips: true,
             clip_secs: 30,
+            stats: true,
             onboarded: false,
         }
     }
@@ -178,6 +181,7 @@ impl Settings {
                 ("split_audio", v) => s.split_audio = v == "true",
                 ("mic_source", v) if v.is_empty() || crate::mics::valid_name(v) => s.mic_source = v.to_string(),
                 ("clips", v) => s.clips = v == "true",
+                ("stats", v) => s.stats = v == "true",
                 ("onboarded", v) => s.onboarded = v == "true",
                 // Older configs turned clips off with the length.
                 ("clip", "off") => s.clips = false,
@@ -213,7 +217,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nstats={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -252,6 +256,7 @@ impl Settings {
             self.split_audio,
             self.clips,
             self.clip_secs,
+            self.stats,
             self.onboarded
         )
     }
@@ -292,6 +297,44 @@ impl Settings {
 
     pub fn clipping(&self) -> Option<u32> {
         self.clips.then_some(self.clip_secs)
+    }
+
+    /// How things are set, for the anonymous ping, in the stats service's
+    /// words. It only takes these.
+    pub fn for_stats(&self, panel: bool) -> Vec<(&'static str, &'static str)> {
+        let on = |b: bool| if b { "on" } else { "off" };
+        vec![
+            ("shape", match self.shape {
+                Shape::Wide => "wide",
+                Shape::Square => "square",
+                Shape::Tall => "tall",
+                Shape::BothEyes => "both",
+            }),
+            ("eye", match self.eye {
+                Eye::Left => "left",
+                Eye::Right => "right",
+                Eye::Both => "both",
+            }),
+            ("quality", match self.quality {
+                Quality::Standard => "standard",
+                Quality::High => "high",
+                Quality::Max => "max",
+            }),
+            ("fps", match self.fps {
+                FrameRate::Auto => "auto",
+                FrameRate::Sixty => "60",
+                FrameRate::Thirty => "30",
+            }),
+            ("codec", match self.codec {
+                Codec::Hevc => "hevc",
+                Codec::H264 => "h264",
+            }),
+            ("format", self.format.ext()),
+            ("clips", on(self.clips)),
+            ("mic", on(self.mic)),
+            ("split", on(self.splits_audio())),
+            ("panels", on(panel)),
+        ]
     }
 
     /// Recorder arguments, minus the output path.
@@ -429,6 +472,14 @@ mod tests {
         let mixed = Settings { split_audio: false, ..Settings::default() };
         assert_eq!(mixed.recorder_args(true).join(" "), "--view eye --aspect 16:9 --eye left --bitrate 40 --mic");
         assert_eq!(Settings::parse(&mixed.text()), mixed);
+    }
+
+    #[test]
+    fn the_stats_ping_gets_the_settings_in_the_services_words() {
+        let s = Settings { shape: Shape::BothEyes, eye: Eye::Both, mic: false, clips: false, format: Format::Mkv, fps: FrameRate::Sixty, stats: false, ..Settings::default() };
+        let said: Vec<String> = s.for_stats(false).iter().map(|(k, v)| format!("{k}={v}")).collect();
+        assert_eq!(said.join(" "), "shape=both eye=both quality=high fps=60 codec=hevc format=mkv clips=off mic=off split=off panels=off");
+        assert_eq!(Settings::parse(&s.text()), s);
     }
 
     #[test]
