@@ -197,8 +197,8 @@ struct App {
     settings_at: Option<SystemTime>,
     settings_checked: Instant,
     recorder: Option<Recorder>,
-    /// With promo footage on, the recorders saving the other views of the
-    /// recording under way, by view. They live for that one recording.
+    /// With promo footage on, the recorder saving the panels of the recording
+    /// under way, by name. It lives for that one recording.
     extras: Vec<(&'static str, Recorder)>,
     /// When the day's anonymous ping was last looked at.
     stats_checked: Option<Instant>,
@@ -953,9 +953,9 @@ impl App {
         }
     }
 
-    /// With promo footage on, starts a recorder for every view the recording
-    /// in `path` doesn't have, each into its own file next to it. One that
-    /// can't start doesn't hold the recording up.
+    /// With promo footage on, starts the recorder that saves the panels of
+    /// the recording in `path`, into its own file next to it. If it can't
+    /// start, the recording carries on without it.
     fn start_extras(&mut self, path: &Path, paused: bool) {
         for (view, args) in self.settings.promo_extras(self.unlocked) {
             match Recorder::start_view(view, args) {
@@ -964,16 +964,16 @@ impl App {
                     r.record(&settings::promo_file(path, view));
                     self.extras.push((view, r));
                 }
-                Err(e) => self.note = Some((format!("Promo footage: couldn't start the {view} view: {e:#}"), false)),
+                Err(e) => self.note = Some((format!("Promo footage: couldn't start the {view}: {e:#}"), false)),
             }
         }
         if !self.extras.is_empty() {
-            self.toast = Some((format!("Promo footage: recording {} views", self.extras.len() + 1), true));
+            self.toast = Some(("Promo footage: recording the panels too".into(), true));
         }
     }
 
-    /// Promo footage's recorders wrap up when the recording stops, however it
-    /// stopped, and say so when one of them didn't make it.
+    /// Promo footage's recorder wraps up when the recording stops, however it
+    /// stopped, and says so when it didn't make it.
     fn check_extras(&mut self) {
         let over = self.recording.as_ref().is_none_or(|r| r.stopping);
         let mut i = 0;
@@ -1001,8 +1001,8 @@ impl App {
                 i += 1;
             }
             if let Some(why) = failed {
-                log::warn!("promo footage: the {view} view {why}");
-                self.note = Some((format!("Promo footage: the {view} view {why}"), false));
+                log::warn!("promo footage: the {view} {why}");
+                self.note = Some((format!("Promo footage: the {view} {why}"), false));
                 self.dirty = true;
             }
         }

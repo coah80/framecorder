@@ -84,7 +84,7 @@ impl Recorder {
     }
 
     /// One more recorder beside the main one, for promo footage's `view` of
-    /// a recording. It keeps no replay buffer and logs to its own file.
+    /// a recording (the panels). It keeps no replay buffer and logs to its own file.
     pub fn start_view(view: &str, args: Vec<String>) -> Result<Self> {
         Self::spawn(args, None, &format!("recorder-{view}"))
     }
@@ -307,14 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn promo_views_wrap_up_when_the_recording_stops() {
+    fn promo_footage_wraps_up_when_the_recording_stops() {
         let settings = Settings { onboarded: true, ..Settings::default() };
         let mut app = super::super::App::new(settings.clone(), false, false);
         let (recorder, _events) = test_recorder(&settings);
         app.recorder = Some(recorder);
         app.toggle_recording();
         let (view, _view_events) = test_recorder(&settings);
-        app.extras.push(("lenses", view));
+        app.extras.push(("panels", view));
         app.auto_pause(true);
         app.toggle_recording();
         let (_, view) = app.extras.pop().unwrap();

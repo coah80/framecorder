@@ -91,8 +91,9 @@ pub struct Settings {
     pub clips: bool,
     /// How much of it, in seconds; remembered while clips are off.
     pub clip_secs: u32,
-    /// A recording also saves every other view next to it (each eye, both
-    /// blended, the lenses), for cutting promo footage. Only the tab sets it.
+    /// A recording also saves both panels at 3840x1920 next to it, which
+    /// `tools/promo` makes every eye view from afterwards, for cutting promo
+    /// footage. Only the tab sets it.
     pub promo: bool,
     /// Send the once-a-day anonymous ping, see `crate::stats`.
     pub stats: bool,
@@ -305,35 +306,26 @@ impl Settings {
         self.clips.then_some(self.clip_secs)
     }
 
-    /// The view a recording is with these settings, as promo footage names it.
-    fn view(&self) -> &'static str {
-        match (self.shape, self.eye) {
-            (Shape::BothEyes, _) => "lenses",
-            (_, Eye::Left) => "left",
-            (_, Eye::Right) => "right",
-            (_, Eye::Both) => "both",
-        }
-    }
-
-    /// With promo footage on, the recorders a recording starts beside its
-    /// own: one for each view it doesn't already have, as the view's name and
-    /// its arguments. Eye views keep the recording's shape (16:9 when that's
-    /// both eyes). They take the game's sound, so the files can be lined up
-    /// by ear, and leave the mic to the recording itself. Reading the panels
-    /// is the only way to another view, hence `panel`.
+    /// With promo footage on, the recorder a recording starts beside its own,
+    /// as its name and arguments: both panels as they're scanned out, at
+    /// 3840x1920. That one file holds every pixel any eye view is made of,
+    /// and `tools/promo` turns it into the eye views afterwards, off the
+    /// headset. A recorder per view was tried first: four of them ask 19 ms
+    /// of GPU a frame and ran at 10 to 45 fps, where this one and the
+    /// recording hold the panels' rate. It takes the game's sound, so the
+    /// files can be lined up by ear, and leaves the mic to the recording
+    /// itself. Reading the panels is the only way to them, hence `panel`.
     pub fn promo_extras(&self, panel: bool) -> Vec<(&'static str, Vec<String>)> {
         if !self.promo || !panel {
             return Vec::new();
         }
-        let shape = if self.shape == Shape::BothEyes { Shape::Wide } else { self.shape };
-        let eye = |eye| Self { shape, eye, mic: false, ..self.clone() };
-        let views = [
-            ("left", eye(Eye::Left)),
-            ("right", eye(Eye::Right)),
-            ("both", eye(Eye::Both)),
-            ("lenses", Self { shape: Shape::BothEyes, mic: false, ..self.clone() }),
-        ];
-        views.into_iter().filter(|(name, _)| *name != self.view()).map(|(name, s)| (name, s.recorder_args(true))).collect()
+        // plain bilinear is enough this close to the panels' own size, and a
+        // third cheaper on the GPU than the sharp filter
+        let mut args: Vec<String> = ["--view", "raw", "--width", "3840", "--height", "1920", "--soft", "--no-supersample"].map(String::from).to_vec();
+        // three and a half times a recording's pixels
+        let mbps = (self.quality.mbps() * 3).min(240);
+        args.extend(Self { mic: false, ..self.clone() }.common_args(mbps));
+        vec![("panels", args)]
     }
 
     /// How things are set, for the anonymous ping, in the stats service's
@@ -404,7 +396,14 @@ impl Settings {
                 }
             }
         }
-        args.extend(["--bitrate".into(), self.quality.mbps().to_string()]);
+        args.extend(self.common_args(self.quality.mbps()));
+        args
+    }
+
+    /// What every recorder is told whatever it's looking at: the bitrate,
+    /// frame rate, codec, container and sound.
+    fn common_args(&self, mbps: u32) -> Vec<String> {
+        let mut args: Vec<String> = vec!["--bitrate".into(), mbps.to_string()];
         match self.fps {
             FrameRate::Auto => {}
             FrameRate::Sixty => args.extend(["--fps".into(), "60".into()]),
@@ -433,7 +432,7 @@ impl Settings {
 }
 
 /// Where promo footage's `view` of the recording in `path` goes: next to it,
-/// with the view's name on the end.
+/// with the name on the end.
 pub fn promo_file(path: &Path, view: &str) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     let ext = path.extension().unwrap_or_default().to_string_lossy();
@@ -528,24 +527,18 @@ mod tests {
     }
 
     #[test]
-    fn promo_footage_records_the_views_a_recording_lacks() {
+    fn promo_footage_records_the_panels_beside_a_recording() {
         let s = Settings { promo: true, ..Settings::default() };
         let extras: Vec<String> = s.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
-        assert_eq!(
-            extras,
-            ["right: --view eye --aspect 16:9 --eye right --bitrate 40", "both: --view eye --aspect 16:9 --eye both --bitrate 40", "lenses: --view raw --bitrate 40"]
-        );
-        // a tall recording of both eyes, left dominant: the eye views stay tall
-        let tall = Settings { shape: Shape::Tall, eye: Eye::Both, dominant: Dominant::Left, game_audio: false, ..s.clone() };
+        assert_eq!(extras, ["panels: --view raw --width 3840 --height 1920 --soft --no-supersample --bitrate 120"]);
+        // whatever the recording looks at, with its frame rate, codec and sound, and never the mic
+        let tall = Settings { shape: Shape::Tall, eye: Eye::Both, quality: Quality::Max, fps: FrameRate::Sixty, codec: Codec::H264, game_audio: false, ..s.clone() };
         let extras: Vec<String> = tall.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
-        assert_eq!(
-            extras,
-            ["left: --view eye --aspect 9:16 --eye left --bitrate 40 --no-audio", "right: --view eye --aspect 9:16 --eye right --bitrate 40 --no-audio", "lenses: --view raw --bitrate 40 --no-audio"]
-        );
-        // SteamVR's view is the one view there is without the panels
+        assert_eq!(extras, [format!("panels: --view raw --width 3840 --height 1920 --soft --no-supersample --bitrate {} --fps 60 --codec h264 --no-audio", (Quality::Max.mbps() * 3).min(240))]);
+        // the panels can't be read without the permission
         assert!(s.promo_extras(false).is_empty());
         assert!(Settings::default().promo_extras(true).is_empty());
-        assert_eq!(promo_file(Path::new("/v/2026-11-14_10-00-00-2.mp4"), "lenses"), PathBuf::from("/v/2026-11-14_10-00-00-2-lenses.mp4"));
+        assert_eq!(promo_file(Path::new("/v/2026-11-14_10-00-00-2.mp4"), "panels"), PathBuf::from("/v/2026-11-14_10-00-00-2-panels.mp4"));
         assert_eq!(Settings::parse(&s.text()), s);
     }
 

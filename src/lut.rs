@@ -59,6 +59,21 @@ impl Lut {
         }
     }
 
+    /// Writes the grid for `tools/promo`: a line of text saying how to read
+    /// it (the picture's size, the grid's, the output pixels between points,
+    /// then whether there's a position per colour, a second eye to blend
+    /// and eyes turned in the scanout), then every point as two little
+    /// endian f32s, in the order the shader gets them.
+    pub fn save(&self, path: &std::path::Path, out_w: u32, out_h: u32) -> std::io::Result<()> {
+        let mut bytes = format!(
+            "framecorder-lut 1 {out_w} {out_h} {} {} {} {} {} {}\n",
+            self.width, self.height, self.step, self.per_channel as u8, self.blended as u8, self.rotated_eyes as u8
+        )
+        .into_bytes();
+        bytes.extend(self.points.iter().flatten().flat_map(|v| v.to_le_bytes()));
+        std::fs::write(path, bytes)
+    }
+
     fn grid(&self) -> impl Iterator<Item = (usize, f64, f64)> + '_ {
         (0..self.height).flat_map(move |j| {
             (0..self.width).map(move |i| (((j * self.width + i) * 3) as usize, (i * STEP) as f64, (j * STEP) as f64))

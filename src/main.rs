@@ -222,6 +222,12 @@ struct Args {
     #[arg(long)]
     no_perf_log: bool,
 
+    /// Instead of recording, write the lookup grid for this view to a file
+    /// and stop. `tools/promo` reads it to make this view out of a recording
+    /// of both panels.
+    #[arg(long, value_name = "FILE")]
+    dump_lut: Option<PathBuf>,
+
     #[arg(long, default_value = "/dev/dri/card0")]
     drm_device: PathBuf,
 }
@@ -324,6 +330,11 @@ fn run(args: Args) -> Result<()> {
             }
         }
     };
+    if let Some(path) = &args.dump_lut {
+        lut.save(path, width, height).with_context(|| format!("writing {}", path.display()))?;
+        log::info!("wrote the lookup grid for a {width}x{height} picture to {}", path.display());
+        return Ok(());
+    }
     let extensions = vr.as_ref().map(headset_view::vulkan_extensions).transpose()?;
 
     let enc_cfg = encoder::Config {
