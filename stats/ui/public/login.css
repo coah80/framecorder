@@ -1,0 +1,61 @@
+/* the dashboard's door: served to anyone, so it carries nothing but itself */
+@font-face { font-family: Montserrat; font-weight: 800; font-display: swap; src: url(/fonts/montserrat-latin-800-normal.woff2) format("woff2"); }
+@font-face { font-family: Poppins; font-weight: 400; font-display: swap; src: url(/fonts/poppins-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: Poppins; font-weight: 500; font-display: swap; src: url(/fonts/poppins-latin-500-normal.woff2) format("woff2"); }
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #181825;
+  color: #cdd6f4;
+  font: 0.9375rem/1.5 Poppins, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* the same ordered dots the charts inside are drawn with, rising from the bottom edge */
+body::before {
+  content: "";
+  position: fixed;
+  inset: auto 0 0 0;
+  height: 48vh;
+  background-image: radial-gradient(#cba6f7 36%, transparent 40%);
+  background-size: 6px 6px;
+  -webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 0.5), transparent);
+  mask-image: linear-gradient(to top, rgb(0 0 0 / 0.5), transparent);
+  pointer-events: none;
+}
+main { position: relative; width: min(22rem, calc(100vw - 2.5rem)); }
+h1 { margin: 0 0 1.75rem; font: 800 1.75rem/1 Montserrat, system-ui, sans-serif; letter-spacing: -0.02em; }
+h1 b { color: #cba6f7; }
+label { display: block; margin: 0 0 0.375rem; font-size: 0.8125rem; color: #a6adc8; }
+input {
+  display: block;
+  width: 100%;
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font: inherit;
+  caret-color: #cba6f7;
+}
+input:focus-visible { outline: 2px solid #cba6f7; outline-offset: 2px; }
+#code { font-variant-numeric: tabular-nums; letter-spacing: 0.3em; }
+.err { min-height: 1.4rem; margin: 0 0 0.75rem; font-size: 0.8125rem; color: #f38ba8; }
+button {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: 10px;
+  background: #cba6f7;
+  color: #11111b;
+  font: 500 0.9375rem Poppins, system-ui, sans-serif;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+button:hover { background: #d9bdfa; }
+button:focus-visible { outline: 2px solid #cdd6f4; outline-offset: 3px; }
+::selection { background: rgb(203 166 247 / 0.35); }
