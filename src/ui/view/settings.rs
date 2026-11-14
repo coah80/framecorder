@@ -3,7 +3,7 @@
 //! choice means.
 
 use super::super::settings::CLIP_LENGTHS;
-use super::widgets::{button, card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row};
+use super::widgets::{button, card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row, toggle_row_noted};
 use super::*;
 
 const PILLS_H: f32 = 50.0;
@@ -205,6 +205,10 @@ fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let mkv = s.format == Format::Mkv;
     let r = Rect::new(inner.x, format.y + ROW_H + 16.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, r, "Remux recordings to MP4", Action::Remux, mkv && s.remux, locked || !mkv);
+    // Another view means reading the panels.
+    let r = Rect::new(inner.x, r.y + r.h + 12.0, inner.w, 104.0);
+    let note = "Saves each eye, both eyes and the lenses as separate files. For making framecorder's own videos, heavier on the game.";
+    toggle_row_noted(c, f, m, hits, r, "Promo footage", note, Action::Promo, m.unlocked && s.promo, locked || !m.unlocked);
 }
 
 fn folder_row(inner: Rect) -> Rect {
