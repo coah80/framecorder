@@ -619,6 +619,12 @@ impl Core {
         .await?
     }
 
+    /// The once-a-day anonymous ping, see the core's `stats`. `state_dir` is
+    /// where the core keeps its state, which is where it notes the day.
+    pub async fn stats_ping(&self, state_dir: String, version: String) -> Result<(), CoreError> {
+        self.on_rt(async move { framecorder_app_lib::core::stats::ping(std::path::Path::new(&state_dir), "android", &version).await }).await
+    }
+
     /// `state_dir` keeps pairings and the index, `staging_dir` holds
     /// downloads until they're handed to the gallery. Without a `finder`
     /// the core does its own mDNS (which needs a multicast lock).
