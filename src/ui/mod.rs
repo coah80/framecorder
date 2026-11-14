@@ -47,6 +47,8 @@ const TOAST_FOR: Duration = Duration::from_millis(2500);
 const RESUME_DELAY: Duration = Duration::from_millis(350);
 /// Before starting the clipping recorder again after it died.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
+/// How often the tab looks at whether the day's anonymous ping has gone.
+const STATS_EVERY: Duration = Duration::from_secs(600);
 const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
 /// How often to look for settings a phone changed.
@@ -195,6 +197,8 @@ struct App {
     settings_at: Option<SystemTime>,
     settings_checked: Instant,
     recorder: Option<Recorder>,
+    /// When the day's anonymous ping was last looked at.
+    stats_checked: Option<Instant>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
     pointer: Option<(f32, f32)>,
@@ -515,6 +519,7 @@ pub fn run() -> Result<()> {
         app.manage_recorder();
         app.auto_pause(tab_visible);
         app.check_recorder();
+        app.check_stats();
         app.check_remote();
         app.check_report();
         // An update swapped this program out. Restart into it once nothing's
@@ -633,6 +638,7 @@ impl App {
             settings_at: Settings::changed_at(),
             settings_checked: Instant::now(),
             recorder: None,
+            stats_checked: None,
             recording: None,
             note: None,
             pointer: None,
@@ -779,6 +785,7 @@ impl App {
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
             Action::SplitAudio => s.split_audio = !s.split_audio,
+            Action::Stats => s.stats = !s.stats,
             Action::MicSource(i) => {
                 let Some(mic) = self.mics.list.get(i) else { return };
                 s.mic_source = mic.name.clone();
@@ -1009,6 +1016,21 @@ impl App {
         }
     }
 
+    /// With anonymous stats on, sends the day's ping once: looked at every
+    /// ten minutes, and never while something's recording.
+    fn check_stats(&mut self) {
+        if !self.settings.stats || !self.settings.onboarded || self.recording.is_some() {
+            return;
+        }
+        if self.stats_checked.is_some_and(|t| t.elapsed() < STATS_EVERY) {
+            return;
+        }
+        self.stats_checked = Some(Instant::now());
+        if crate::stats::due() {
+            crate::stats::ping(self.settings.for_stats(self.unlocked));
+        }
+    }
+
     fn check_recorder(&mut self) {
         let Some(r) = &mut self.recorder else { return };
         for event in r.events() {
@@ -1016,11 +1038,13 @@ impl App {
             match event {
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
+                    crate::stats::made(crate::stats::Made::Recording);
                     self.recording = None;
                     let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
                 }
                 recorder::Event::Saved { kind: Kind::Clip, path, bytes, secs } => {
+                    crate::stats::made(crate::stats::Made::Clip);
                     self.note = Some((format!("Clipped {} · {secs:.0} s · {:.1} MB", file_name(&path), bytes as f64 / 1e6), true));
                     self.toast = Some((format!("Clipped the last {secs:.0} s"), true));
                     self.buzz = true;

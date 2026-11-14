@@ -100,6 +100,8 @@ pub enum Action {
     /// One of the mics in the model's list.
     MicSource(usize),
     SplitAudio,
+    /// The once-a-day anonymous ping on or off.
+    Stats,
     /// Replay buffer length.
     ClipLength(u32),
     /// SteamVR's binding screen, to change the clip button.

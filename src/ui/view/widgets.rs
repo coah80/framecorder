@@ -181,11 +181,35 @@ pub fn toggle_row(
     on: bool,
     locked: bool,
 ) {
+    toggle_row_noted(c, f, m, hits, r, name, "", action, on, locked);
+}
+
+/// A toggle row with a line under its name, for a switch whose name can't
+/// say what it does.
+#[allow(clippy::too_many_arguments)]
+pub fn toggle_row_noted(
+    c: &mut Canvas,
+    f: &mut Fonts,
+    m: &Model,
+    hits: &mut Vec<Hit>,
+    r: Rect,
+    name: &str,
+    note: &str,
+    action: Action,
+    on: bool,
+    locked: bool,
+) {
     let alpha = if locked { 0.4 } else { 1.0 };
     let hovered = !locked && m.over(r);
     c.fill_rrect(r, 16.0, SURFACE0, 0.40 * alpha);
     c.stroke_rrect(r, 16.0, 1.5, if hovered { MAUVE } else { SURFACE1 }, if hovered { 0.6 } else { 0.5 } * alpha);
-    c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, name, TEXT, alpha);
+    let middle = r.y + r.h / 2.0;
+    if note.is_empty() {
+        c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, middle + 7.0, name, TEXT, alpha);
+    } else {
+        c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, middle - 6.0, name, TEXT, alpha);
+        c.text(f, Face::Body, 16.0, r.x + 24.0, middle + 21.0, note, OVERLAY2, alpha);
+    }
     switch(c, r, on, alpha);
     if !locked {
         hits.push(Hit { rect: r, action });
