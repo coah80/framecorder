@@ -44,6 +44,9 @@ class FramecorderApp : Application() {
             override fun onActivityDestroyed(activity: Activity) {}
         })
         scope.launch {
+            if (prefs.stats.value) runCatching { hub.statsPing() }
+        }
+        scope.launch {
             // Serialize stop/start so reopening can't race an unfinished stop.
             combine(prefs.background, started) { background, count -> background || count > 0 }
                 .distinctUntilChanged()

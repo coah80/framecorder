@@ -117,6 +117,7 @@ import com.framecorder.app.ui.common.StatusBarBlur
 import com.framecorder.app.ui.common.StatusDot
 import com.framecorder.app.ui.common.day
 import com.framecorder.app.ui.common.dayKey
+import com.framecorder.app.ui.common.openDiscord
 import com.framecorder.app.ui.common.dotted
 import com.framecorder.app.ui.common.isTrouble
 import com.framecorder.app.ui.common.rate
@@ -526,6 +527,9 @@ private fun Header(
                 Row(Modifier.fillMaxWidth().height(56.dp).offset(x = 12.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     // right on the first screen, so nobody has to go looking for it
                     IconButton(onClick = onReport) { Icon(FcIcons.Bug, contentDescription = "report an issue") }
+                    // and the other place to say something's wrong
+                    val context = LocalContext.current
+                    IconButton(onClick = { context.openDiscord() }) { Icon(FcIcons.Discord, contentDescription = "join the discord") }
                     if (searchable) {
                         IconButton(onClick = onSearch) {
                             Icon(if (searching) FcIcons.Close else FcIcons.Search, contentDescription = if (searching) "stop searching" else "search")
