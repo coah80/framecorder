@@ -244,7 +244,7 @@ fn folder_options(m: &Model) -> (Vec<String>, usize, bool) {
 fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", Action::Autostart, m.autostart, false);
     toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, 92.0), "Automatic updates", Action::AutoUpdate, m.auto_update, false);
-    let note = "Once a day: the version, how many recordings and clips, and a few settings. Nothing about you or your videos.";
+    let note = "Once a day: the version, how much was recorded and clipped, and how settings stand. Nothing about you or your videos.";
     toggle_row_noted(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0 + 216.0, inner.w, 104.0), "Anonymous stats", note, Action::Stats, m.settings.stats, false);
 }
 

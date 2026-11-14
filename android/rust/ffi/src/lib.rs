@@ -621,8 +621,16 @@ impl Core {
 
     /// The once-a-day anonymous ping, see the core's `stats`. `state_dir` is
     /// where the core keeps its state, which is where it notes the day.
-    pub async fn stats_ping(&self, state_dir: String, version: String) -> Result<(), CoreError> {
-        self.on_rt(async move { framecorder_app_lib::core::stats::ping(std::path::Path::new(&state_dir), "android", &version).await }).await
+    /// `settings` are the app's own as `name=value`; how many frames are paired and what came over get added here.
+    pub async fn stats_ping(&self, state_dir: String, version: String, settings: Vec<String>) -> Result<(), CoreError> {
+        let paired = framecorder_app_lib::core::stats::paired(self.engine.hosts().len());
+        let clips = self.engine.clips();
+        self.on_rt(async move {
+            let mut said: Vec<(&str, String)> = settings.iter().filter_map(|s| s.split_once('=')).map(|(k, v)| (k, v.to_owned())).collect();
+            said.push(("paired", paired));
+            framecorder_app_lib::core::stats::ping(std::path::Path::new(&state_dir), "android", &version, &said, &clips).await
+        })
+        .await
     }
 
     /// `state_dir` keeps pairings and the index, `staging_dir` holds
