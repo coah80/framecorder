@@ -9,7 +9,7 @@ import { Grid } from "@/components/dither-kit/grid"
 import type { DitherColor } from "@/components/dither-kit/palette"
 import { XAxis } from "@/components/dither-kit/x-axis"
 import { YAxis } from "@/components/dither-kit/y-axis"
-import { APPS, type App as Surface, against, plural, ranked, type Row, rows, type Stats, weekday } from "./data"
+import { APPS, type App as Surface, against, byHour, byWeekday, plural, ranked, type Row, rows, series, type Stats, weekday } from "./data"
 
 const NAMES: Record<Surface, string> = { headset: "Headset", desktop: "Desktop", android: "Android" }
 const COLOURS: Record<Surface, DitherColor> = { headset: "mauve", desktop: "sky", android: "mint" }
@@ -20,6 +20,7 @@ const INK: Record<string, string> = {
   mauve: "text-mauve",
   sky: "text-sky",
   mint: "text-mint",
+  grey: "text-faint",
   peach: "text-peach",
   pink: "text-[#f5a6dc]",
   purple: "text-[#c8afff]",
@@ -138,6 +139,8 @@ function Dashboard({ stats, span, at, setAt }: { stats: Stats; span: number; at:
         )}
       </div>
 
+      {anything && <Totals data={data} span={span} />}
+
       <Readout row={shown} live={at !== null} />
 
       <section aria-label="Day by day" className="mt-2">
@@ -165,6 +168,25 @@ function Dashboard({ stats, span, at, setAt }: { stats: Stats; span: number; at:
             <Bar dataKey="clips" variant="dotted" />
           </BarChart>
         </Strip>
+        <Strip title="Hours recorded">
+          <AreaChart data={data} config={HOURS} className="h-full w-full" {...chart}>
+            <YAxis tickFormatter={whole} tickCount={2} />
+            <Area dataKey="hours" variant="gradient" />
+          </AreaChart>
+        </Strip>
+        <Strip title="Live views and recordings started from an app">
+          <BarChart data={data} config={AWAY} stackType="stacked" className="h-full w-full" {...chart}>
+            <YAxis tickFormatter={whole} tickCount={2} />
+            <Bar dataKey="live" variant="gradient" />
+            <Bar dataKey="remote" variant="hatched" />
+          </BarChart>
+        </Strip>
+        <Strip title="Files synced to apps">
+          <BarChart data={data} config={SYNCED} className="h-full w-full" {...chart}>
+            <YAxis tickFormatter={whole} tickCount={2} />
+            <Bar dataKey="synced" variant="hatched" />
+          </BarChart>
+        </Strip>
         <Strip title="Discord visits">
           <BarChart data={data} config={DISCORD} className="h-full w-full" {...chart}>
             <YAxis tickFormatter={whole} tickCount={2} />
@@ -181,16 +203,38 @@ function Dashboard({ stats, span, at, setAt }: { stats: Stats; span: number; at:
         </Strip>
       </section>
 
-      <section aria-label="This week" className="mt-14 grid gap-x-12 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+      <section aria-label="Versions" className="mt-14 grid gap-x-12 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
         {APPS.map((app) => (
-          <Ranked key={app} title={`${NAMES[app]} versions`} rows={ranked(stats, `version:${app}:`, 7)} colour={COLOURS[app]} />
+          <Versions key={app} stats={stats} app={app} span={span} />
         ))}
-        <Ranked title="Desktop systems" rows={ranked(stats, "os:desktop:", 7)} colour="sky" />
-        <Ranked title="Discord visits from" rows={ranked(stats, "discord:from=", 30)} colour="purple" note="30 days" />
-        <Ranked title="Discord visits by country" rows={ranked(stats, "discord:country=", 30)} colour="purple" note="30 days" />
       </section>
 
-      <Settings stats={stats} />
+      <section aria-label="Who and when" className="mt-14 grid gap-x-12 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+        <Ranked title="Where installs are" rows={countries(ranked(stats, "country:", 7))} colour="mauve" />
+        <Ranked title="Install age" rows={ages(stats)} colour="mint" ordered />
+        <Ranked title="Desktop systems" rows={ranked(stats, "os:desktop:", 7)} colour="sky" />
+        <Small title="Installs on an average weekday" note={`${span} days`}>
+          <BarChart data={byWeekday(data)} config={WEEK} className="h-full w-full" animate={false} margins={{ ...MARGINS, bottom: 22 }}>
+            <YAxis tickFormatter={whole} tickCount={2} />
+            <XAxis dataKey="label" />
+            <Bar dataKey="ran" variant="gradient" />
+          </BarChart>
+        </Small>
+        <Small title="When pings arrive, by hour" note="UTC, this week">
+          <BarChart data={byHour(stats, 7)} config={HOUR} className="h-full w-full" animate={false} margins={{ ...MARGINS, bottom: 22 }}>
+            <YAxis tickFormatter={whole} tickCount={2} />
+            <XAxis dataKey="label" maxTicks={6} />
+            <Bar dataKey="pings" variant="dotted" />
+          </BarChart>
+        </Small>
+        <Ranked title="Discord visits from" rows={ranked(stats, "discord:from=", 30)} colour="purple" note="30 days" />
+        <Ranked title="Discord visits by country" rows={countries(ranked(stats, "discord:country=", 30))} colour="purple" note="30 days" />
+      </section>
+
+      {APPS.map((app) => (
+        <Settings key={app} stats={stats} app={app} />
+      ))}
+
 
       <footer className="mt-16">
         <p className="text-[0.8125rem] text-quiet">Every number is a total for a day. No install, device or address is stored, so none can be shown.</p>
@@ -210,6 +254,22 @@ const FRESH = {
 } as const
 const MADE = { recordings: { label: "Recordings", color: "peach" }, clips: { label: "Clips", color: "pink" } } as const
 const DISCORD = { discord: { label: "Visits", color: "purple" } } as const
+const HOURS = { hours: { label: "Hours", color: "peach" } } as const
+const AWAY = { live: { label: "Live views", color: "mauve" }, remote: { label: "Started from an app", color: "sky" } } as const
+const SYNCED = { synced: { label: "Files", color: "mint" } } as const
+const WEEK = { ran: { label: "Installs", color: "mauve" } } as const
+const HOUR = { pings: { label: "Pings", color: "sky" } } as const
+const SHADES: DitherColor[] = ["mauve", "sky", "mint", "peach", "grey"]
+const VARIANTS = ["gradient", "hatched", "dotted", "solid", "dotted"] as const
+const AGE_ORDER = ["0", "1-6", "7-29", "30-89", "90+"]
+const AGE_NAMES: Record<string, string> = { "0": "new today", "1-6": "under a week", "7-29": "a week to a month", "30-89": "one to three months", "90+": "over three months" }
+
+/** Installs by how long they've been around, all three apps together, youngest first. */
+function ages(stats: Stats): [string, number][] {
+  const totals = new Map<string, number>()
+  for (const app of APPS) for (const [bucket, n] of ranked(stats, `age:${app}:`, 7)) totals.set(bucket, (totals.get(bucket) ?? 0) + n)
+  return AGE_ORDER.filter((bucket) => totals.has(bucket)).map((bucket) => [AGE_NAMES[bucket], totals.get(bucket)!])
+}
 const DOOR = { wrong: { label: "Wrong", color: "red" }, locked: { label: "Locked out", color: "orange" } } as const
 
 /** One chart of the timeline: its name beside it on a wide screen, over it on a narrow one. */
@@ -242,6 +302,9 @@ function Readout({ row, live }: { row: Row; live: boolean }) {
       {cell("New", row.fresh, "quiet", "solid")}
       {cell("Recordings", row.recordings, "peach", "solid")}
       {cell("Clips", row.clips, "pink", "dotted")}
+      {cell("Hours", row.hours, "peach", "hatched")}
+      {cell("Live views", row.live, "mauve", "dotted")}
+      {cell("Synced", row.synced, "mint", "hatched")}
       {cell("Discord", row.discord, "purple", "solid")}
       {row.wrong + row.locked > 0 && cell("Wrong logins", row.wrong + row.locked, "red", "solid")}
     </dl>
@@ -249,7 +312,24 @@ function Readout({ row, live }: { row: Row; live: boolean }) {
 }
 
 /** A list of things and how many, biggest first, each with its share as a dithered bar. */
-function Ranked({ title, rows, colour, note = "this week" }: { title: string; rows: [string, number][]; colour: DitherColor; note?: string }) {
+const regions = new Intl.DisplayNames("en", { type: "region" })
+
+/** Country codes as names, biggest first; the ones the request couldn't place add up under "Unknown". */
+function countries(rows: [string, number][]): [string, number][] {
+  const name = (code: string) => {
+    try {
+      const said = regions.of(code)
+      return said && said !== code && code !== "XX" ? said : "Unknown"
+    } catch {
+      return "Unknown"
+    }
+  }
+  const named = new Map<string, number>()
+  for (const [code, count] of rows) named.set(name(code), (named.get(name(code)) ?? 0) + count)
+  return [...named].sort((a, b) => b[1] - a[1])
+}
+
+function Ranked({ title, rows, colour, note = "this week", ordered }: { title: string; rows: [string, number][]; colour: DitherColor; note?: string; ordered?: boolean }) {
   const total = rows.reduce((n, [, count]) => n + count, 0)
   return (
     <div>
@@ -259,7 +339,7 @@ function Ranked({ title, rows, colour, note = "this week" }: { title: string; ro
       {rows.length === 0 ? (
         <p className="pt-3 text-[0.8125rem] text-faint">Nothing yet.</p>
       ) : (
-        <ol>
+        <ol aria-label={ordered ? undefined : "Biggest first"}>
           {rows.slice(0, 8).map(([name, count]) => (
             <li key={name} className="grid grid-cols-[1fr_auto] items-center gap-x-3 pt-2.5">
               <span className="truncate">{name}</span>
@@ -279,23 +359,33 @@ function Ranked({ title, rows, colour, note = "this week" }: { title: string; ro
   )
 }
 
-const SETTING_NAMES: Record<string, string> = {
-  shape: "Shape",
-  eye: "Eye",
-  quality: "Quality",
-  fps: "Frame rate",
-  codec: "Codec",
-  format: "File format",
-  clips: "Clips",
-  mic: "Microphone",
-  split: "Split tracks",
-  panels: "Panels unlocked",
+const SETTING_NAMES: Record<Surface, Record<string, string>> = {
+  headset: {
+    shape: "Shape",
+    eye: "Eye",
+    dominant: "Dominant eye",
+    quality: "Quality",
+    fps: "Frame rate",
+    codec: "Codec",
+    format: "File format",
+    folder: "Saves to",
+    clips: "Clips",
+    clip: "Clip length, seconds",
+    mic: "Microphone",
+    split: "Split tracks",
+    panels: "Panels unlocked",
+    autostart: "Starts with SteamVR",
+    updates: "Automatic updates",
+    paired: "Devices paired",
+  },
+  desktop: { view: "Clips shown as", background: "Keeps running when closed", notify: "Says when a clip lands", arch: "Processor", paired: "Headsets paired" },
+  android: { sdk: "Android API level", background: "Syncs in the background", notes: "Clip notifications", wallpaper: "Wallpaper colours", paired: "Headsets paired" },
 }
 
-/** How the headset's settings stand this week: each setting's values and the share of headsets on it. */
-function Settings({ stats }: { stats: Stats }) {
+/** How one app's settings stand this week: each setting's values and the share of installs on it. */
+function Settings({ stats, app }: { stats: Stats; app: Surface }) {
   const byKey = new Map<string, [string, number][]>()
-  for (const [pair, n] of ranked(stats, "setting:", 7)) {
+  for (const [pair, n] of ranked(stats, `setting:${app}:`, 7)) {
     const [key, value] = pair.split("=")
     byKey.set(key, [...(byKey.get(key) ?? []), [value, n]])
   }
@@ -303,17 +393,17 @@ function Settings({ stats }: { stats: Stats }) {
   return (
     <section className="mt-14">
       <h2 className="flex items-baseline justify-between border-b border-line pb-2 text-[0.9375rem] font-medium">
-        How headsets are set up <span className="text-xs font-normal text-faint">this week</span>
+        How the {NAMES[app].toLowerCase()} {app === "headset" ? "is" : "app is"} set up <span className="text-xs font-normal text-faint">this week</span>
       </h2>
       <dl className="grid gap-x-12 sm:grid-cols-2">
-        {Object.keys(SETTING_NAMES)
+        {Object.keys(SETTING_NAMES[app])
           .filter((key) => byKey.has(key))
           .map((key) => {
             const values = byKey.get(key)!
             const total = values.reduce((n, [, count]) => n + count, 0)
             return (
               <div key={key} className="flex items-baseline justify-between gap-4 border-b border-line/60 py-2.5">
-                <dt className="text-quiet">{SETTING_NAMES[key]}</dt>
+                <dt className="text-quiet">{SETTING_NAMES[app][key]}</dt>
                 <dd className="flex flex-wrap justify-end gap-x-4">
                   {values.map(([value, count]) => (
                     <span key={value}>
@@ -326,5 +416,85 @@ function Settings({ stats }: { stats: Stats }) {
           })}
       </dl>
     </section>
+  )
+}
+
+/** What the window adds up to, in one line under the headline. */
+function Totals({ data, span }: { data: Row[]; span: number }) {
+  const sum = (pick: (row: Row) => number) => data.reduce((n, row) => n + pick(row), 0)
+  const hours = Math.round(sum((r) => r.hours))
+  const parts = [
+    plural(sum((r) => r.fresh), "new install"),
+    plural(sum((r) => r.recordings), "recording"),
+    plural(sum((r) => r.clips), "clip"),
+    plural(hours, "hour recorded", "hours recorded"),
+    plural(sum((r) => r.live), "live view"),
+    `${plural(sum((r) => r.synced), "file synced", "files synced")} (${Math.round(sum((r) => r.syncedGb)).toLocaleString("en")} GB)`,
+    plural(sum((r) => r.discord), "Discord visit"),
+    plural(sum((r) => r.reports), "report"),
+  ]
+  return (
+    <p className="-mt-3 mb-6 max-w-[75ch] text-quiet">
+      In the last {span} days: <span className="num text-foreground">{parts.join(" · ")}</span>.
+    </p>
+  )
+}
+
+/** A small chart with its heading, sized like the lists it sits among. */
+function Small({ title, note, children }: { title: string; note: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <h2 className="flex items-baseline justify-between border-b border-line pb-2 text-[0.9375rem] font-medium">
+        {title} <span className="text-xs font-normal text-faint">{note}</span>
+      </h2>
+      <div className="mt-3 h-32">{children}</div>
+    </div>
+  )
+}
+
+/** One app's versions: how each spread over the window, then where they stand this week. */
+function Versions({ stats, app, span }: { stats: Stats; app: Surface; span: number }) {
+  const { names, rows: days } = series(stats, `version:${app}:`, span)
+  const config = Object.fromEntries(names.map((name, i) => [name === "other" ? "other" : `s${i}`, { label: name, color: name === "other" ? "grey" : SHADES[i] }]))
+  return (
+    <div className="min-w-0">
+      <h2 className="flex items-baseline justify-between border-b border-line pb-2 text-[0.9375rem] font-medium">
+        {NAMES[app]} versions <span className="text-xs font-normal text-faint">{span} days</span>
+      </h2>
+      {names.length === 0 ? (
+        <p className="pt-3 text-[0.8125rem] text-faint">Nothing yet.</p>
+      ) : (
+        <>
+          <div className="mt-3 h-28">
+            <AreaChart data={days} config={config} stackType="stacked" className="h-full w-full" animate={false} margins={{ ...MARGINS, bottom: 22 }}>
+              <YAxis tickFormatter={whole} tickCount={2} />
+              <XAxis dataKey="label" maxTicks={4} />
+              {names.map((name, i) => (
+                <Area key={name} dataKey={name === "other" ? "other" : `s${i}`} variant={VARIANTS[i]} />
+              ))}
+            </AreaChart>
+          </div>
+          <ol className="mt-1">
+            {ranked(stats, `version:${app}:`, 7)
+              .slice(0, 5)
+              .map(([name, count], _, all) => {
+                const at = names.indexOf(name)
+                const total = all.reduce((n, [, c]) => n + c, 0)
+                return (
+                  <li key={name} className="flex items-baseline justify-between gap-3 pt-2">
+                    <span className="flex items-baseline gap-2">
+                      <span className={`swatch swatch-solid translate-y-px ${INK[at >= 0 ? SHADES[at] : "quiet"] ?? "text-quiet"}`} aria-hidden />
+                      {name}
+                    </span>
+                    <span className="num text-quiet">
+                      {count.toLocaleString("en")} <span className="text-faint">· {Math.round((count / total) * 100)}% this week</span>
+                    </span>
+                  </li>
+                )
+              })}
+          </ol>
+        </>
+      )}
+    </div>
   )
 }

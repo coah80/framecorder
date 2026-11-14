@@ -20,6 +20,14 @@ export type Row = {
   fresh: number
   recordings: number
   clips: number
+  /** hours recorded, to one decimal */
+  hours: number
+  live: number
+  remote: number
+  reports: number
+  synced: number
+  /** gigabytes the apps brought over, to one decimal */
+  syncedGb: number
   discord: number
   wrong: number
   locked: number
@@ -55,6 +63,12 @@ export function rows(stats: Stats, span: number): Row[] {
       fresh: newHeadset + newDesktop + newAndroid,
       recordings: c["count:recordings"] ?? 0,
       clips: c["count:clips"] ?? 0,
+      hours: Math.round(((c["count:minutes"] ?? 0) / 60) * 10) / 10,
+      live: c["count:live"] ?? 0,
+      remote: c["count:remote"] ?? 0,
+      reports: c["count:reports"] ?? 0,
+      synced: c["count:synced"] ?? 0,
+      syncedGb: Math.round((c["count:synced_mb"] ?? 0) / 100) / 10,
       discord: sum(c, "discord:from="),
       wrong: c["auth:wrong"] ?? 0,
       locked: c["auth:locked"] ?? 0,
@@ -84,3 +98,46 @@ export function against(today: number, lastWeek: number, dayName: string): strin
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString("en")} ${n === 1 ? one : many}`
+
+/** The biggest `keep` things under `prefix` over the window, and each day's count of them, the rest as "other". */
+export function series(stats: Stats, prefix: string, span: number, keep = 4): { names: string[]; rows: Record<string, number | string>[] } {
+  const top = ranked(stats, prefix, span).map(([name]) => name)
+  const names = top.slice(0, keep)
+  const rest = top.length > keep
+  const end = Date.parse(`${stats.today}T00:00:00Z`)
+  const out = Array.from({ length: span }, (_, i) => {
+    const date = new Date(end - (span - 1 - i) * DAY)
+    const c = stats.days[date.toISOString().slice(0, 10)] ?? {}
+    const row: Record<string, number | string> = { label: month.format(date) }
+    let other = 0
+    for (const [key, n] of Object.entries(c)) {
+      if (!key.startsWith(prefix)) continue
+      const at = names.indexOf(key.slice(prefix.length))
+      if (at >= 0) row[`s${at}`] = n
+      else other += n
+    }
+    names.forEach((_, at) => (row[`s${at}`] ??= 0))
+    if (rest) row.other = other
+    return row
+  })
+  return { names: rest ? [...names, "other"] : names, rows: out }
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+/** Installs that ran on an average Monday, Tuesday and so on, over the window. */
+export function byWeekday(data: Row[]): { label: string; ran: number }[] {
+  const sums = WEEKDAYS.map(() => [0, 0])
+  for (const row of data) {
+    const at = (new Date(`${row.day}T00:00:00Z`).getUTCDay() + 6) % 7
+    sums[at][0] += row.ran
+    sums[at][1] += 1
+  }
+  return WEEKDAYS.map((label, i) => ({ label, ran: sums[i][1] ? Math.round(sums[i][0] / sums[i][1]) : 0 }))
+}
+
+/** Pings by the hour they arrived (UTC), over the window. */
+export function byHour(stats: Stats, span: number): { label: string; pings: number }[] {
+  const counts = new Map(ranked(stats, "hour:", span))
+  return Array.from({ length: 24 }, (_, h) => ({ label: String(h).padStart(2, "0"), pings: counts.get(String(h).padStart(2, "0")) ?? 0 }))
+}

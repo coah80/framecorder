@@ -202,6 +202,13 @@ impl Service {
                 }
                 let day = store::day(time);
                 let mut store = self.store.lock().expect("store lock");
+                // two things the ping doesn't say and the request does: which country it
+                // came from (cloudflare's word for it) and what hour it is. both go
+                // straight into the day's totals like the rest
+                if r.country.len() == 2 && r.country.bytes().all(|b| b.is_ascii_uppercase()) {
+                    store.add(&day, &format!("country:{}", r.country), 1);
+                }
+                store.add(&day, &format!("hour:{:02}", time % 86400 / 3600), 1);
                 for (key, n) in counters {
                     store.add(&day, &key, n);
                 }
@@ -559,6 +566,10 @@ mod tests {
         assert_eq!(ping().status, 429);
         assert_eq!(s.route(&Request { body: b"{}".to_vec(), ..request("POST", "stats.test", "/v1/ping") }).status, 400);
         let days = &s.store.lock().unwrap().days;
-        assert_eq!(days.values().next().unwrap()["active:desktop"], PINGS_A_DAY as u64);
+        let today = days.values().next().unwrap();
+        assert_eq!(today["active:desktop"], PINGS_A_DAY as u64);
+        // where and when, from the request itself
+        assert_eq!(today["country:US"], PINGS_A_DAY as u64);
+        assert_eq!(today.iter().filter(|(k, _)| k.starts_with("hour:")).map(|(_, n)| n).sum::<u64>(), PINGS_A_DAY as u64);
     }
 }
