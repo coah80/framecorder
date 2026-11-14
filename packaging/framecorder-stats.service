@@ -1,0 +1,20 @@
+[Unit]
+Description=framecorder stats: the discord link, the daily pings and the dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/framecorder-stats
+EnvironmentFile=%h/.config/framecorder-stats/env
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/framecorder-stats
+
+[Install]
+WantedBy=default.target
