@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=%h/.local/bin/framecorder-stats
 EnvironmentFile=%h/.config/framecorder-stats/env
+EnvironmentFile=%h/.config/framecorder-stats/auth.env
 Restart=on-failure
 RestartSec=5
 UMask=0077
