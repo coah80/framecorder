@@ -1,6 +1,10 @@
 //! framecorder's stats service, three hosts on one port behind a tunnel:
 //! the discord link (counts the visit, sends it on to the invite), the ping
 //! endpoint the apps call once a day, and the locked dashboard.
+//!
+//! `framecorder-stats setup <dir>` makes a new password and authenticator
+//! secret for the dashboard: what to type goes in `<dir>/login.txt`, what the
+//! service needs in `<dir>/auth.env`, and neither is printed.
 
 mod auth;
 mod dash;
@@ -18,7 +22,10 @@ use anyhow::{Context, Result};
 use auth::{Auth, Login};
 use store::Store;
 
-const COOKIE: &str = "fc_stats";
+/// `__Host-` keeps any other coah80.com site from setting or overwriting it.
+const COOKIE: &str = "__Host-id";
+/// The days of counts the dashboard gets.
+const WINDOW_DAYS: u64 = 90;
 /// Pings one address may send a day: a household with a few installs, with room.
 const PINGS_A_DAY: usize = 24;
 /// Where a discord link click can say it came from.
@@ -33,6 +40,8 @@ struct Config {
 
 struct Service {
     config: Config,
+    /// The dashboard's built files, see `stats/ui`.
+    ui: PathBuf,
     store: Mutex<Store>,
     auth: Mutex<Auth>,
     pings: Mutex<HashMap<IpAddr, VecDeque<u64>>>,
@@ -48,32 +57,41 @@ struct Request {
     agent: String,
     cookie: String,
     origin: String,
+    /// `Sec-Fetch-Site`, what the browser says about where a request came from.
+    fetch_site: String,
     body: Vec<u8>,
 }
 
 struct Reply {
     status: u16,
     headers: Vec<(&'static str, String)>,
-    body: String,
+    body: Vec<u8>,
 }
 
 fn text(status: u16, body: &str) -> Reply {
     Reply { status, headers: vec![("Content-Type", "text/plain; charset=utf-8".into())], body: body.into() }
 }
 
+/// Everything the dashboard's host sends goes out with these: only its own
+/// files load and run, nothing may frame it or open it as a popup's parent,
+/// no other site may read it, browsers stick to https, and it stays out of
+/// search engines.
+fn locked_down(mut reply: Reply) -> Reply {
+    let csp = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+    reply.headers.extend([
+        ("Content-Security-Policy", csp.to_owned()),
+        ("X-Frame-Options", "DENY".to_owned()),
+        ("Strict-Transport-Security", "max-age=63072000; includeSubDomains".to_owned()),
+        ("Cross-Origin-Opener-Policy", "same-origin".to_owned()),
+        ("Cross-Origin-Resource-Policy", "same-origin".to_owned()),
+        ("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()".to_owned()),
+        ("X-Robots-Tag", "noindex, nofollow".to_owned()),
+    ]);
+    reply
+}
+
 fn html(status: u16, body: String) -> Reply {
-    // nothing on the page comes from anywhere else, and nothing may frame it
-    let csp = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
-    Reply {
-        status,
-        headers: vec![
-            ("Content-Type", "text/html; charset=utf-8".into()),
-            ("Content-Security-Policy", csp.into()),
-            ("X-Frame-Options", "DENY".into()),
-            ("Strict-Transport-Security", "max-age=31536000".into()),
-        ],
-        body,
-    }
+    Reply { status, headers: vec![("Content-Type", "text/html; charset=utf-8".into())], body: body.into_bytes() }
 }
 
 fn redirect(to: &str, cookie: Option<String>) -> Reply {
@@ -81,7 +99,24 @@ fn redirect(to: &str, cookie: Option<String>) -> Reply {
     if let Some(cookie) = cookie {
         headers.push(("Set-Cookie", cookie));
     }
-    Reply { status: 303, headers, body: String::new() }
+    Reply { status: 303, headers, body: Vec::new() }
+}
+
+/// One of the dashboard's built files by name. Names are letters, digits,
+/// dots, dashes and underscores, so nothing outside the folder is reachable.
+fn file(dir: &std::path::Path, name: &str) -> Option<Reply> {
+    let plain = !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+    let mime = match name.rsplit_once('.')?.1 {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "woff2" => "font/woff2",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        _ => return None,
+    };
+    let body = plain.then(|| std::fs::read(dir.join(name)).ok()).flatten()?;
+    Some(Reply { status: 200, headers: vec![("Content-Type", mime.into())], body })
 }
 
 fn now() -> u64 {
@@ -140,7 +175,7 @@ impl Service {
             store.add(&day, &format!("discord:from={from}"), 1);
             store.add(&day, &format!("discord:country={country}"), 1);
         }
-        Reply { status: 302, headers: vec![("Location", self.config.invite.clone())], body: String::new() }
+        Reply { status: 302, headers: vec![("Location", self.config.invite.clone())], body: Vec::new() }
     }
 
     fn ping(&self, r: &Request) -> Reply {
@@ -170,35 +205,58 @@ impl Service {
                 for (key, n) in counters {
                     store.add(&day, &key, n);
                 }
-                Reply { status: 204, headers: Vec::new(), body: String::new() }
+                Reply { status: 204, headers: Vec::new(), body: Vec::new() }
             }
             _ => text(404, "not found"),
         }
     }
 
     fn dash(&self, r: &Request) -> Reply {
+        locked_down(self.dash_route(r))
+    }
+
+    fn dash_route(&self, r: &Request) -> Reply {
         let token = r.cookie.split(';').filter_map(|c| c.trim().split_once('=')).find(|(k, _)| *k == COOKIE).map_or("", |(_, v)| v);
         let time = now();
-        let signed_in = self.auth.lock().expect("auth lock").valid(token, time);
-        // a form post has to come from this page
-        let ours = r.origin == format!("https://{}", self.config.dash_host);
+        let signed_in = self.auth.lock().expect("auth lock").valid(token, &r.agent, time);
+        // a form post has to come from this page: its own origin, and not a cross-site request
+        let ours = r.origin == format!("https://{}", self.config.dash_host) && matches!(r.fetch_site.as_str(), "" | "same-origin");
+        let cookie = |value: &str, age: u64| format!("{COOKIE}={value}; Max-Age={age}; Path=/; HttpOnly; Secure; SameSite=Strict");
         match (r.method.as_str(), r.path.as_str()) {
-            ("GET", "/") if signed_in => {
-                let window: Vec<String> = (0..30).rev().map(|back| store::day(time.saturating_sub(back * 86400))).collect();
-                html(200, dash::dashboard(&self.store.lock().expect("store lock").days, &window))
-            }
+            // what the login page itself needs, and nothing more, is open
+            ("GET", "/login.css") => file(&self.ui, "login.css").unwrap_or_else(|| text(404, "not found")),
+            ("GET", path) if path.starts_with("/fonts/") => file(&self.ui, &path[7..]).filter(|_| path.ends_with(".woff2")).unwrap_or_else(|| text(404, "not found")),
+            ("GET", "/robots.txt") => text(200, "User-agent: *\nDisallow: /\n"),
+            ("GET", "/") if signed_in => file(&self.ui, "index.html").unwrap_or_else(|| text(503, "the dashboard isn't installed")),
             ("GET", "/") => html(200, dash::login("")),
+            ("GET", "/api/stats") if signed_in => {
+                let today = store::day(time);
+                let from = store::day(time.saturating_sub(WINDOW_DAYS * 86400));
+                let store = self.store.lock().expect("store lock");
+                let days: serde_json::Map<String, serde_json::Value> = store.days.range(from..).map(|(day, counts)| (day.clone(), serde_json::json!(counts))).collect();
+                let body = serde_json::json!({"today": today, "days": days}).to_string();
+                Reply { status: 200, headers: vec![("Content-Type", "application/json".into())], body: body.into_bytes() }
+            }
+            ("GET", path) if signed_in && path.starts_with("/assets/") => file(&self.ui, &path[8..]).unwrap_or_else(|| text(404, "not found")),
             ("POST", "/login") if ours => {
-                let password = field(&String::from_utf8_lossy(&r.body), "password").unwrap_or_default();
-                match self.auth.lock().expect("auth lock").login(r.ip, &password, time) {
-                    Login::In(token) => redirect("/", Some(format!("{COOKIE}={token}; Max-Age={}; Path=/; HttpOnly; Secure; SameSite=Strict", auth::SESSION_SECS))),
-                    Login::Wrong => html(401, dash::login("That's not it.")),
-                    Login::Locked => html(429, dash::login("Too many tries. Wait fifteen minutes.")),
-                }
+                let form = String::from_utf8_lossy(&r.body);
+                let (password, code) = (field(&form, "password").unwrap_or_default(), field(&form, "code").unwrap_or_default());
+                let outcome = self.auth.lock().expect("auth lock").login(r.ip, &password, &code, &r.agent, time);
+                let (counter, reply) = match outcome {
+                    Login::In(token) => ("auth:in", redirect("/", Some(cookie(&token, auth::SESSION_SECS)))),
+                    Login::Wrong => ("auth:wrong", html(401, dash::login("That's not it."))),
+                    Login::Locked => ("auth:locked", html(429, dash::login("Too many tries. Wait fifteen minutes."))),
+                };
+                // how often the door's been tried shows on the dashboard itself
+                self.store.lock().expect("store lock").add(&store::day(time), counter, 1);
+                eprintln!("dashboard login: {counter}");
+                reply
             }
             ("POST", "/logout") if ours => {
                 self.auth.lock().expect("auth lock").logout(token);
-                redirect("/", Some(format!("{COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict")))
+                let mut reply = redirect("/", Some(cookie("", 0)));
+                reply.headers.push(("Clear-Site-Data", "\"cache\", \"cookies\", \"storage\"".to_owned()));
+                reply
             }
             _ => text(404, "not found"),
         }
@@ -247,6 +305,7 @@ fn receive(stream: &mut TcpStream) -> Option<Request> {
                     agent: header("User-Agent"),
                     cookie: header("Cookie"),
                     origin: header("Origin"),
+                    fetch_site: header("Sec-Fetch-Site"),
                     body: Vec::new(),
                 };
                 let mut body = bytes[end..].to_vec();
@@ -289,7 +348,7 @@ fn respond(stream: &mut TcpStream, reply: Reply, head_only: bool) {
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(b"\r\n");
     if !head_only {
-        let _ = stream.write_all(reply.body.as_bytes());
+        let _ = stream.write_all(&reply.body);
     }
 }
 
@@ -309,14 +368,44 @@ fn env(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("{name} isn't set"))
 }
 
+/// Makes a new password and authenticator secret. Nothing secret is printed.
+fn setup(dir: &std::path::Path) -> Result<()> {
+    use ring::rand::SecureRandom;
+    use std::os::unix::fs::OpenOptionsExt;
+    let rng = ring::rand::SystemRandom::new();
+    let (mut password, mut secret) = ([0; 20], [0; 20]);
+    rng.fill(&mut password).and_then(|_| rng.fill(&mut secret)).map_err(|_| anyhow::anyhow!("no random numbers"))?;
+    // 160 random bits each; the password is spelled in base32 so it's typable
+    let (password, secret) = (auth::base32(&password), auth::base32(&secret));
+    let uri = format!("otpauth://totp/framecorder:stats?secret={secret}&issuer=framecorder&algorithm=SHA1&digits=6&period=30");
+    let write = |name: &str, body: String| -> Result<()> {
+        let path = dir.join(name);
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path).with_context(|| format!("writing {}", path.display()))?;
+        file.write_all(body.as_bytes())?;
+        Ok(())
+    };
+    std::fs::create_dir_all(dir)?;
+    write("login.txt", format!("password: {password}\nauthenticator: {uri}\n"))?;
+    write("auth.env", format!("STATS_PASSWORD_HASH={}\nSTATS_TOTP_SECRET={secret}\n", auth::hash_password(&password)?))?;
+    println!("wrote login.txt and auth.env in {}", dir.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        [] => {}
+        ["setup", dir] => return setup(std::path::Path::new(dir)),
+        _ => anyhow::bail!("usage: framecorder-stats [setup <dir>]"),
+    }
     let port: u16 = env("STATS_PORT")?.parse().context("STATS_PORT isn't a port")?;
     let dir = PathBuf::from(env("STATS_DIR")?);
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let service = Arc::new(Service {
         config: Config { discord_host: env("STATS_DISCORD_HOST")?, ping_host: env("STATS_PING_HOST")?, dash_host: env("STATS_DASH_HOST")?, invite: env("STATS_DISCORD_INVITE")? },
+        ui: PathBuf::from(env("STATS_UI_DIR")?),
         store: Mutex::new(Store::load(dir.join("days.json"))?),
-        auth: Mutex::new(Auth::new(&env("STATS_PASSWORD_SHA256")?)?),
+        auth: Mutex::new(Auth::new(&env("STATS_PASSWORD_HASH")?, &env("STATS_TOTP_SECRET")?)?),
         pings: Mutex::new(HashMap::new()),
     });
     // only the tunnel on this machine can reach it
@@ -356,16 +445,21 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    const SECRET: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
     fn service() -> Service {
         let dir = std::env::temp_dir().join(format!("fc-stats-test-{}-{:?}", std::process::id(), std::thread::current().id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        // sha256 of "open sesame"
-        let password = "41ef4bb0b23661e66301aac36066912dac037827b4ae63a7b1165a5aa93ed4eb";
+        std::fs::create_dir_all(dir.join("ui")).unwrap();
+        std::fs::write(dir.join("ui/index.html"), "<title>the dashboard</title>").unwrap();
+        std::fs::write(dir.join("ui/app.js"), "let dashboard").unwrap();
+        std::fs::write(dir.join("ui/login.css"), "body{}").unwrap();
+        std::fs::write(dir.join("secret.js"), "outside the folder").unwrap();
         Service {
             config: Config { discord_host: "discord.test".into(), ping_host: "stats.test".into(), dash_host: "db.test".into(), invite: "https://discord.gg/x".into() },
+            ui: dir.join("ui"),
             store: Mutex::new(Store::load(dir.join("days.json")).unwrap()),
-            auth: Mutex::new(Auth::new(password).unwrap()),
+            auth: Mutex::new(Auth::new(&auth::hash_password("open sesame").unwrap(), SECRET).unwrap()),
             pings: Mutex::new(HashMap::new()),
         }
     }
@@ -382,12 +476,17 @@ mod tests {
             agent: "Mozilla/5.0".into(),
             cookie: String::new(),
             origin: String::new(),
+            fetch_site: String::new(),
             body: Vec::new(),
         }
     }
 
     fn header<'a>(reply: &'a Reply, name: &str) -> &'a str {
         reply.headers.iter().find(|(n, _)| *n == name).map_or("", |(_, v)| v)
+    }
+
+    fn body(reply: &Reply) -> String {
+        String::from_utf8_lossy(&reply.body).into_owned()
     }
 
     #[test]
@@ -405,28 +504,49 @@ mod tests {
     }
 
     #[test]
-    fn the_dashboard_only_opens_for_the_password_from_its_own_page() {
+    fn the_dashboard_and_its_numbers_only_open_for_the_password_and_code_from_its_own_page() {
         let s = service();
-        let login = |password: &str, origin: &str| {
-            s.route(&Request { origin: origin.into(), body: format!("password={password}").into_bytes(), ..request("POST", "db.test", "/login") })
+        let code = || {
+            // the authenticator's code for now, worked out the way a phone does
+            let mac = ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, b"12345678901234567890"), &(now() / 30).to_be_bytes());
+            let (mac, at) = (mac.as_ref(), (mac.as_ref()[19] & 15) as usize);
+            format!("{:06}", u32::from_be_bytes([mac[at] & 0x7f, mac[at + 1], mac[at + 2], mac[at + 3]]) % 1_000_000)
         };
-        // shut: the page is the login, and the counts aren't anywhere else
+        let login = |password: &str, code: &str, origin: &str, site: &str| {
+            s.route(&Request { origin: origin.into(), fetch_site: site.into(), body: format!("password={password}&code={code}").into_bytes(), ..request("POST", "db.test", "/login") })
+        };
+        // shut: the page is the login, and neither the app nor the counts are served
         let shut = s.route(&request("GET", "db.test", "/"));
-        assert!(shut.body.contains("name=\"password\"") && !shut.body.contains("Installs"));
+        assert!(body(&shut).contains("name=\"password\"") && body(&shut).contains("name=\"code\"") && !body(&shut).contains("the dashboard"));
+        for path in ["/api/stats", "/assets/app.js", "/assets/index.html", "/days.json", "/assets/..%2Fsecret.js", "/assets/../secret.js"] {
+            assert_eq!(s.route(&request("GET", "db.test", path)).status, 404, "{path}");
+        }
         assert_eq!(s.route(&request("GET", "stats.test", "/")).status, 404);
-        assert_eq!(s.route(&request("GET", "db.test", "/days.json")).status, 404);
-        assert_eq!(login("guess", "https://db.test").status, 401);
-        // the right password posted from another site goes nowhere
-        assert_eq!(login("open+sesame", "https://evil.test").status, 404);
-        let reply = login("open+sesame", "https://db.test");
+        // every answer from this host carries the lockdown headers
+        assert!(header(&shut, "Content-Security-Policy").contains("default-src 'none'") && !header(&shut, "Content-Security-Policy").contains("unsafe"));
+        assert_eq!((header(&shut, "X-Frame-Options"), header(&shut, "Cross-Origin-Opener-Policy")), ("DENY", "same-origin"));
+        assert_eq!(login("guess", &code(), "https://db.test", "same-origin").status, 401);
+        assert_eq!(login("open+sesame", "000000", "https://db.test", "same-origin").status, 401);
+        // the right pair posted from another site goes nowhere
+        assert_eq!(login("open+sesame", &code(), "https://evil.test", "cross-site").status, 404);
+        assert_eq!(login("open+sesame", &code(), "https://db.test", "cross-site").status, 404);
+        let reply = login("open+sesame", &code(), "https://db.test", "same-origin");
         assert_eq!(reply.status, 303);
         let cookie = header(&reply, "Set-Cookie");
-        assert!(cookie.contains("HttpOnly") && cookie.contains("Secure") && cookie.contains("SameSite=Strict"));
-        let open = s.route(&Request { cookie: cookie.split(';').next().unwrap().into(), ..request("GET", "db.test", "/") });
-        assert!(open.status == 200 && open.body.contains("Installs that ran each day"));
-        // a made-up cookie doesn't
-        let forged = s.route(&Request { cookie: format!("{COOKIE}={}", "a".repeat(64)), ..request("GET", "db.test", "/") });
-        assert!(!forged.body.contains("Installs"));
+        assert!(cookie.starts_with("__Host-id=") && cookie.contains("Path=/") && cookie.contains("HttpOnly") && cookie.contains("Secure") && cookie.contains("SameSite=Strict") && !cookie.contains("Domain"));
+        let with = |target: &str| s.route(&Request { cookie: cookie.split(';').next().unwrap().into(), ..request("GET", "db.test", target) });
+        assert!(body(&with("/")).contains("the dashboard"));
+        assert!(body(&with("/api/stats")).contains("\"auth:wrong\":2"));
+        assert_eq!(body(&with("/assets/app.js")), "let dashboard");
+        // signed in or not, nothing outside the folder
+        assert_eq!(with("/assets/../secret.js").status, 404);
+        // a made-up cookie doesn't open it
+        let forged = s.route(&Request { cookie: format!("{COOKIE}={}", "a".repeat(64)), ..request("GET", "db.test", "/api/stats") });
+        assert_eq!(forged.status, 404);
+        // locking clears the browser and ends the session
+        let out = s.route(&Request { cookie: cookie.split(';').next().unwrap().into(), origin: "https://db.test".into(), ..request("POST", "db.test", "/logout") });
+        assert!(header(&out, "Clear-Site-Data").contains("cookies"));
+        assert_eq!(with("/api/stats").status, 404);
     }
 
     #[test]
