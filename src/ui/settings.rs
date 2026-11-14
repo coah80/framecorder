@@ -91,6 +91,9 @@ pub struct Settings {
     pub clips: bool,
     /// How much of it, in seconds; remembered while clips are off.
     pub clip_secs: u32,
+    /// A recording also saves every other view next to it (each eye, both
+    /// blended, the lenses), for cutting promo footage. Only the tab sets it.
+    pub promo: bool,
     /// The first-run setup has been finished or skipped.
     pub onboarded: bool,
 }
@@ -116,6 +119,7 @@ impl Default for Settings {
             split_audio: true,
             clips: true,
             clip_secs: 30,
+            promo: false,
             onboarded: false,
         }
     }
@@ -178,6 +182,7 @@ impl Settings {
                 ("split_audio", v) => s.split_audio = v == "true",
                 ("mic_source", v) if v.is_empty() || crate::mics::valid_name(v) => s.mic_source = v.to_string(),
                 ("clips", v) => s.clips = v == "true",
+                ("promo", v) => s.promo = v == "true",
                 ("onboarded", v) => s.onboarded = v == "true",
                 // Older configs turned clips off with the length.
                 ("clip", "off") => s.clips = false,
@@ -213,7 +218,7 @@ impl Settings {
 
     fn text(&self) -> String {
         format!(
-            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\nonboarded={}\n",
+            "shape={}\neye={}\ndominant={}\nquality={}\nfps={}\ncodec={}\nformat={}\nremux={}\nfolder={}\ngame_audio={}\nmic={}\nmic_source={}\nsplit_audio={}\nclips={}\nclip={}\npromo={}\nonboarded={}\n",
             match self.shape {
                 Shape::Wide => "wide",
                 Shape::Square => "square",
@@ -252,6 +257,7 @@ impl Settings {
             self.split_audio,
             self.clips,
             self.clip_secs,
+            self.promo,
             self.onboarded
         )
     }
@@ -292,6 +298,37 @@ impl Settings {
 
     pub fn clipping(&self) -> Option<u32> {
         self.clips.then_some(self.clip_secs)
+    }
+
+    /// The view a recording is with these settings, as promo footage names it.
+    fn view(&self) -> &'static str {
+        match (self.shape, self.eye) {
+            (Shape::BothEyes, _) => "lenses",
+            (_, Eye::Left) => "left",
+            (_, Eye::Right) => "right",
+            (_, Eye::Both) => "both",
+        }
+    }
+
+    /// With promo footage on, the recorders a recording starts beside its
+    /// own: one for each view it doesn't already have, as the view's name and
+    /// its arguments. Eye views keep the recording's shape (16:9 when that's
+    /// both eyes). They take the game's sound, so the files can be lined up
+    /// by ear, and leave the mic to the recording itself. Reading the panels
+    /// is the only way to another view, hence `panel`.
+    pub fn promo_extras(&self, panel: bool) -> Vec<(&'static str, Vec<String>)> {
+        if !self.promo || !panel {
+            return Vec::new();
+        }
+        let shape = if self.shape == Shape::BothEyes { Shape::Wide } else { self.shape };
+        let eye = |eye| Self { shape, eye, mic: false, ..self.clone() };
+        let views = [
+            ("left", eye(Eye::Left)),
+            ("right", eye(Eye::Right)),
+            ("both", eye(Eye::Both)),
+            ("lenses", Self { shape: Shape::BothEyes, mic: false, ..self.clone() }),
+        ];
+        views.into_iter().filter(|(name, _)| *name != self.view()).map(|(name, s)| (name, s.recorder_args(true))).collect()
     }
 
     /// Recorder arguments, minus the output path.
@@ -342,6 +379,14 @@ impl Settings {
         }
         args
     }
+}
+
+/// Where promo footage's `view` of the recording in `path` goes: next to it,
+/// with the view's name on the end.
+pub fn promo_file(path: &Path, view: &str) -> PathBuf {
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = path.extension().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!("{stem}-{view}.{ext}"))
 }
 
 /// `dir/stem.ext`, or `stem-2.ext` and on when that or its unfinished
@@ -429,6 +474,28 @@ mod tests {
         let mixed = Settings { split_audio: false, ..Settings::default() };
         assert_eq!(mixed.recorder_args(true).join(" "), "--view eye --aspect 16:9 --eye left --bitrate 40 --mic");
         assert_eq!(Settings::parse(&mixed.text()), mixed);
+    }
+
+    #[test]
+    fn promo_footage_records_the_views_a_recording_lacks() {
+        let s = Settings { promo: true, ..Settings::default() };
+        let extras: Vec<String> = s.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
+        assert_eq!(
+            extras,
+            ["right: --view eye --aspect 16:9 --eye right --bitrate 40", "both: --view eye --aspect 16:9 --eye both --bitrate 40", "lenses: --view raw --bitrate 40"]
+        );
+        // a tall recording of both eyes, left dominant: the eye views stay tall
+        let tall = Settings { shape: Shape::Tall, eye: Eye::Both, dominant: Dominant::Left, game_audio: false, ..s.clone() };
+        let extras: Vec<String> = tall.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
+        assert_eq!(
+            extras,
+            ["left: --view eye --aspect 9:16 --eye left --bitrate 40 --no-audio", "right: --view eye --aspect 9:16 --eye right --bitrate 40 --no-audio", "lenses: --view raw --bitrate 40 --no-audio"]
+        );
+        // SteamVR's view is the one view there is without the panels
+        assert!(s.promo_extras(false).is_empty());
+        assert!(Settings::default().promo_extras(true).is_empty());
+        assert_eq!(promo_file(Path::new("/v/2026-11-14_10-00-00-2.mp4"), "lenses"), PathBuf::from("/v/2026-11-14_10-00-00-2-lenses.mp4"));
+        assert_eq!(Settings::parse(&s.text()), s);
     }
 
     #[test]
