@@ -307,21 +307,14 @@ pub fn unlock() -> Result<()> {
     Ok(())
 }
 
-/// What the update timer runs: installs the latest release, unless it's the
-/// one that's installed already.
-/// The newest release where this one came from: its url, checksum and version.
 struct Latest {
     url: String,
     sum: String,
     version: String,
 }
 
-/// The release's file, as its `.sha256` lists it.
 const RELEASE_FILE: &str = "framecorder-arm64.tar.gz";
 
-/// What a release's `.sha256` says, once it's known to be ours: signed with
-/// a release key, for the headset, and no older than `current`. Anything
-/// else could be put up by whoever got into GitHub or the site.
 fn ours(listed: &str, signature: &str, keys: &[[u8; 32]], current: &str) -> Result<crate::signed::Listing> {
     let listing = crate::signed::verify(listed, signature, keys).context("the release isn't signed by framecorder, not installing it")?;
     if listing.name != RELEASE_FILE {
@@ -358,6 +351,8 @@ pub fn check() -> Result<String> {
     .to_string())
 }
 
+/// What the update timer runs: installs the latest release, unless it's the
+/// one that's installed already.
 pub fn update() -> Result<()> {
     use_user_manager();
     let home = home()?;
@@ -458,10 +453,8 @@ mod tests {
         };
         let (listed, signature) = signed(RELEASE_FILE, "0.2.1");
         assert_eq!(ours(&listed, &signature, &keys, "0.2.0").unwrap().sum, "ab".repeat(32));
-        // a checksum alone, the way releases used to come, is anyone's
         assert!(ours(&listed, "", &keys, "0.2.0").is_err());
         assert!(ours(&listed, &signature, &crate::signed::KEYS, "0.2.0").is_err());
-        // ours, but the desktop app's file, or last year's release
         let (listed, signature) = signed("framecorder-setup.exe", "0.2.1");
         assert!(ours(&listed, &signature, &keys, "0.2.0").is_err());
         let (listed, signature) = signed(RELEASE_FILE, "0.1.4");

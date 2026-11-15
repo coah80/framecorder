@@ -4,11 +4,6 @@
 # SteamOS), from the repo's root:
 #
 #   packaging/release.sh
-#
-# then sign the tarball (packaging/sign.sh) and put it, its .sha256 and its
-# .sig on a github release. the site workflow copies them to the site's
-# /dl, where site/install gets the release and
-# installed headsets look for updates (see setup::update).
 set -eu
 
 OUT=dist

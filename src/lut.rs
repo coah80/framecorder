@@ -59,11 +59,6 @@ impl Lut {
         }
     }
 
-    /// Writes the grid for `tools/promo`: a line of text saying how to read
-    /// it (the picture's size, the grid's, the output pixels between points,
-    /// then whether there's a position per colour, a second eye to blend
-    /// and eyes turned in the scanout), then every point as two little
-    /// endian f32s, in the order the shader gets them.
     pub fn save(&self, path: &std::path::Path, out_w: u32, out_h: u32) -> std::io::Result<()> {
         let mut bytes = format!(
             "framecorder-lut 1 {out_w} {out_h} {} {} {} {} {} {}\n",

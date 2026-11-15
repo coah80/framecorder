@@ -91,11 +91,7 @@ pub struct Settings {
     pub clips: bool,
     /// How much of it, in seconds; remembered while clips are off.
     pub clip_secs: u32,
-    /// A recording also saves both panels at 3840x1920 next to it, which
-    /// `tools/promo` makes every eye view from afterwards, for cutting promo
-    /// footage. Only the tab sets it.
     pub promo: bool,
-    /// Send the once-a-day anonymous ping, see `crate::stats`.
     pub stats: bool,
     /// The first-run setup has been finished or skipped.
     pub onboarded: bool,
@@ -306,30 +302,16 @@ impl Settings {
         self.clips.then_some(self.clip_secs)
     }
 
-    /// With promo footage on, the recorder a recording starts beside its own,
-    /// as its name and arguments: both panels as they're scanned out, at
-    /// 3840x1920. That one file holds every pixel any eye view is made of,
-    /// and `tools/promo` turns it into the eye views afterwards, off the
-    /// headset. A recorder per view was tried first: four of them ask 19 ms
-    /// of GPU a frame and ran at 10 to 45 fps, where this one and the
-    /// recording hold the panels' rate. It takes the game's sound, so the
-    /// files can be lined up by ear, and leaves the mic to the recording
-    /// itself. Reading the panels is the only way to them, hence `panel`.
     pub fn promo_extras(&self, panel: bool) -> Vec<(&'static str, Vec<String>)> {
         if !self.promo || !panel {
             return Vec::new();
         }
-        // plain bilinear is enough this close to the panels' own size, and a
-        // third cheaper on the GPU than the sharp filter
         let mut args: Vec<String> = ["--view", "raw", "--width", "3840", "--height", "1920", "--soft", "--no-supersample"].map(String::from).to_vec();
-        // three and a half times a recording's pixels
         let mbps = (self.quality.mbps() * 3).min(240);
         args.extend(Self { mic: false, ..self.clone() }.common_args(mbps));
         vec![("panels", args)]
     }
 
-    /// How things are set, for the anonymous ping, in the stats service's
-    /// words. It only takes these.
     pub fn for_stats(&self, panel: bool) -> Vec<(&'static str, String)> {
         let on = |b: bool| if b { "on" } else { "off" };
         let said: Vec<(&'static str, &str)> = vec![
@@ -400,8 +382,6 @@ impl Settings {
         args
     }
 
-    /// What every recorder is told whatever it's looking at: the bitrate,
-    /// frame rate, codec, container and sound.
     fn common_args(&self, mbps: u32) -> Vec<String> {
         let mut args: Vec<String> = vec!["--bitrate".into(), mbps.to_string()];
         match self.fps {
@@ -431,8 +411,6 @@ impl Settings {
     }
 }
 
-/// Where promo footage's `view` of the recording in `path` goes: next to it,
-/// with the name on the end.
 pub fn promo_file(path: &Path, view: &str) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     let ext = path.extension().unwrap_or_default().to_string_lossy();
@@ -531,11 +509,9 @@ mod tests {
         let s = Settings { promo: true, ..Settings::default() };
         let extras: Vec<String> = s.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
         assert_eq!(extras, ["panels: --view raw --width 3840 --height 1920 --soft --no-supersample --bitrate 120"]);
-        // whatever the recording looks at, with its frame rate, codec and sound, and never the mic
         let tall = Settings { shape: Shape::Tall, eye: Eye::Both, quality: Quality::Max, fps: FrameRate::Sixty, codec: Codec::H264, game_audio: false, ..s.clone() };
         let extras: Vec<String> = tall.promo_extras(true).iter().map(|(name, args)| format!("{name}: {}", args.join(" "))).collect();
         assert_eq!(extras, [format!("panels: --view raw --width 3840 --height 1920 --soft --no-supersample --bitrate {} --fps 60 --codec h264 --no-audio", (Quality::Max.mbps() * 3).min(240))]);
-        // the panels can't be read without the permission
         assert!(s.promo_extras(false).is_empty());
         assert!(Settings::default().promo_extras(true).is_empty());
         assert_eq!(promo_file(Path::new("/v/2026-11-14_10-00-00-2.mp4"), "panels"), PathBuf::from("/v/2026-11-14_10-00-00-2-panels.mp4"));

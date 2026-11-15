@@ -1,18 +1,8 @@
 #!/bin/sh
-# Signs a release file, so installs can tell it's ours before they take it as
-# an update: the headset's updater and the desktop app both refuse one that
-# isn't (src/signed.rs). Run it where the release key is, never in CI: the
-# point is that getting into github isn't enough to ship an update.
-#
-#   packaging/sign.sh <file> <version>
-#
-# Next to <file> it leaves <file>.sha256 (the checksum, the file's name and
-# the version; made here unless the build made it already) and <file>.sig,
-# the signature over that. Both go up with the file.
 set -eu
 
-file=$1
-version=$2
+file=${1:?usage: packaging/sign.sh <file> <version>}
+version=${2:?usage: packaging/sign.sh <file> <version>}
 key=${FRAMECORDER_SIGNING_KEY:-$HOME/.config/framecorder-release/signing.pem}
 [ -r "$key" ] || { echo "the release key isn't at $key" >&2; exit 1; }
 

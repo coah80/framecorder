@@ -100,9 +100,7 @@ pub enum Action {
     /// One of the mics in the model's list.
     MicSource(usize),
     SplitAudio,
-    /// Promo footage on or off: every view of each recording.
     Promo,
-    /// The once-a-day anonymous ping on or off.
     Stats,
     /// Replay buffer length.
     ClipLength(u32),

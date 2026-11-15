@@ -172,7 +172,6 @@ fn main() {
     };
     let state_dir = core.state_dir.clone();
     let is_demo = demo.is_some();
-    // the once-a-day anonymous ping, for as long as its switch is on
     if !is_demo {
         let dir = state_dir.clone();
         let engine = core.engine.clone();
@@ -190,7 +189,6 @@ fn main() {
                     ];
                     framecorder_app_lib::core::stats::ping(&dir, "desktop", env!("CARGO_PKG_VERSION"), &settings, &engine.clips()).await;
                 }
-                // each call also notes what the app is using, which is how a leak shows
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         });

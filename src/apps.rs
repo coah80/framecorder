@@ -72,8 +72,6 @@ pub fn register(vr: &OpenVr) -> Result<()> {
     Ok(())
 }
 
-/// Whether a game is running: SteamVR has a scene app, and it isn't one of
-/// SteamVR's own (its home environment and tools are `openvr.*`).
 pub struct Scene(*const *const c_void);
 
 impl Scene {

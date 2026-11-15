@@ -17,7 +17,6 @@ pub struct Prefs {
     pub grid: bool,
     /// a system notification per clip that lands
     pub notify: bool,
-    /// the once-a-day anonymous ping, see the core's `stats`
     pub stats: bool,
 }
 

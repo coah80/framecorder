@@ -22,7 +22,6 @@ class Prefs(context: Context) {
     val clipNotes: StateFlow<Boolean> = _clipNotes
 
     private val _stats = MutableStateFlow(store.getBoolean(STATS, true))
-    /** The once-a-day anonymous ping: this app's version and system, nothing else. */
     val stats: StateFlow<Boolean> = _stats
 
     private val _appUpdate = MutableStateFlow(store.getString(APP_UPDATE, null))

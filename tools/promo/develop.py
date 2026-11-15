@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""Makes eye views out of promo footage's recording of both panels.
-
-With "Promo footage" on, the tab saves both panels beside each recording, as
-<name>-panels.mp4 at 3840x1920. That file holds every pixel an eye view is
-made of, so this makes the views afterwards, on a computer, where it costs the
-game nothing:
-
-    tools/promo/develop.py ~/Videos/2026-11-14_01-35-10-panels.mp4
-
-writes <name>-left.mp4, <name>-right.mp4 and <name>-both.mp4 next to it, 16:9.
-Pick others with --views and --shape (16:9, 1:1 or 9:16), and --dominant left
-for a both-eyes view with the left eye in the middle.
-
-Where each pixel of a view comes from on the panels depends on the headset's
-own lenses, so the recorder works it out: `framecorder --dump-lut` writes the
-same lookup grid it records that view with. This fetches the grids it's
-missing from the headset over ssh (--frame, "frame" by default, with SteamVR
-running) and keeps them in ~/.cache/framecorder-promo, so the headset only has
-to be on the first time. They belong to that one headset.
-
-Needs python with numpy and opencv, and ffmpeg.
-"""
 
 import argparse
 import pathlib
@@ -31,13 +9,11 @@ import cv2
 import numpy as np
 
 CACHE = pathlib.Path.home() / ".cache/framecorder-promo"
-# the panels' own shape: two square eyes side by side
 PANELS = 2.0
 SIZES = {"16:9": (1920, 1080), "1:1": (1440, 1440), "9:16": (1080, 1920)}
 
 
 def fetch_lut(frame, recorder, view, shape, dominant):
-    """The grid for a view, from the cache or the headset."""
     name = f"{view}-{shape.replace(':', 'x')}" + ("-left" if view == "both" and dominant == "left" else "")
     path = CACHE / f"{name}.lut"
     if path.exists():
@@ -53,7 +29,6 @@ def fetch_lut(frame, recorder, view, shape, dominant):
 
 
 def read_lut(path):
-    """The grid as the shader gets it: per eye, scanout positions per point and colour."""
     data = path.read_bytes()
     head, _, body = data.partition(b"\n")
     words = head.decode().split()
@@ -70,8 +45,6 @@ def read_lut(path):
 
 
 def spread(grid, out_w, out_h, step):
-    """A grid of values at every output pixel's centre, the way the shader
-    reads it: bilinear inside each cell."""
     gx = (np.arange(out_w, dtype=np.float32) + 0.5) / step
     gy = (np.arange(out_h, dtype=np.float32) + 0.5) / step
     i, j = np.floor(gx).astype(int), np.floor(gy).astype(int)
@@ -80,15 +53,11 @@ def spread(grid, out_w, out_h, step):
     a, b = grid[j][:, i], grid[j][:, i + 1]
     d, e = grid[j + 1][:, i], grid[j + 1][:, i + 1]
     value = a + (b - a) * fx + (d - a) * fy + (e - d - b + a) * fx * fy
-    # a cell with a corner outside the lens is black
     inside = np.minimum(np.minimum(a[..., 0], b[..., 0]), np.minimum(d[..., 0], e[..., 0])) >= 0
     return value, inside
 
 
 def eye_maps(eye, per_channel, out_w, out_h, step, width, height):
-    """For one eye, where each output pixel's red, green and blue sit in the
-    panels recording, and which pixels the lens shows at all."""
-    # the recording fits the panels in with black bars if it isn't 2:1
     fit_w = min(width, height * PANELS)
     fit_h = fit_w / PANELS
     ox, oy = (width - fit_w) / 2, (height - fit_h) / 2
@@ -111,13 +80,11 @@ class View:
         if weight is not None:
             w, _ = spread(weight, self.out_w, self.out_h, step)
             w = np.clip(w[..., 0], 0, 1)
-            # where only one eye sees, it's that eye
             w[~self.eyes[0][1]] = 1
             w[~self.eyes[1][1]] = 0
             self.weight = w[..., None].astype(np.float32)
 
     def eye(self, frame, maps, shown):
-        # frames are bgr, the grid is r, g, b
         out = np.dstack([cv2.remap(frame[:, :, 2 - c], *maps[c], cv2.INTER_CUBIC) for c in (2, 1, 0)])
         out[~shown] = 0
         return out
@@ -139,7 +106,7 @@ def probe(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(description="Makes eye views out of promo footage's recording of both panels.")
     ap.add_argument("panels", type=pathlib.Path, help="a <name>-panels.mp4 or .mkv")
     ap.add_argument("--views", nargs="+", default=["left", "right", "both"], choices=["left", "right", "both"])
     ap.add_argument("--shape", default="16:9", choices=list(SIZES))
@@ -156,8 +123,6 @@ def main():
     folder = args.out or args.panels.parent
     views = [(v, View(fetch_lut(args.frame, args.recorder, v, args.shape, args.dominant), width, height)) for v in args.views]
 
-    # the recorder writes bt.709 in limited range and may have dropped frames:
-    # read it at its own steady rate so the sound still fits
     limit = ["-t", str(args.seconds)] if args.seconds else []
     reader = subprocess.Popen(
         ["ffmpeg", "-v", "error", *limit, "-i", str(args.panels), "-vf", f"fps={rate},scale=in_color_matrix=bt709:in_range=limited:out_range=full,format=bgr24", "-f", "rawvideo", "-"],

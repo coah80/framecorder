@@ -124,7 +124,6 @@ class SyncHub(private val app: Application) : Events {
         _clips.value = core.clips()
     }
 
-    /** The once-a-day anonymous ping; does nothing when today's has gone. */
     suspend fun statsPing(settings: List<String>) = core.statsPing(stateDir(app).path, BuildConfig.VERSION_NAME, settings)
 
     /** Starts following every paired Frame. Safe to call again. */
@@ -351,7 +350,6 @@ private fun model(): String {
     return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
 }
 
-/** This app and the Android it runs on, the way an issue report describes them. Which phone it is stays out. */
 private fun appInfo() = ReportAppInfo(
     name = "framecorder android",
     version = BuildConfig.VERSION_NAME,

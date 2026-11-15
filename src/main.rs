@@ -222,9 +222,6 @@ struct Args {
     #[arg(long)]
     no_perf_log: bool,
 
-    /// Instead of recording, write the lookup grid for this view to a file
-    /// and stop. `tools/promo` reads it to make this view out of a recording
-    /// of both panels.
     #[arg(long, value_name = "FILE")]
     dump_lut: Option<PathBuf>,
 
@@ -595,7 +592,6 @@ fn capture_loop(
                 gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64
             );
             if args.control {
-                // the tab keeps these for the anonymous stats
                 println!("perf {:.1} {fps} {:.2}", frames as f64 / secs, gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64);
             }
             gpu_time = Duration::ZERO;

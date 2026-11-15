@@ -1,6 +1,3 @@
-//! the left rail: wordmark, nav, your frame, the desktop update, and a row of
-//! icons for the folder, the discord and reporting an issue.
-
 use gpui::{canvas, div, fill, prelude::*, px, relative, AnyElement, ContentMask, Context, FontWeight, Window};
 
 use crate::app::{status_color, status_text, DesktopUpdate, FrameApp, Page};
@@ -217,11 +214,8 @@ pub fn short_path(p: &std::path::Path) -> String {
     }
 }
 
-/// where the discord's reached from this app: the link counts the visit and
-/// passes it on to the invite
 pub const DISCORD: &str = "https://discord.coah80.com/?from=desktop";
 
-/// what an icon on its own does, said when the pointer rests on it
 struct Tip(&'static str);
 
 impl Render for Tip {
@@ -239,8 +233,6 @@ impl Render for Tip {
     }
 }
 
-/// under the frames, three icons in a row so they're there on every page
-/// without taking a row each: the clips folder, the discord, and reporting an issue
 fn actions(app: &FrameApp, cx: &mut Context<FrameApp>) -> impl IntoElement {
     let button = |id: &'static str, glyph: &'static str, says: &'static str, on: bool| {
         div()

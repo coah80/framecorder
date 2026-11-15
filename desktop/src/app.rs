@@ -149,7 +149,6 @@ pub struct FrameApp {
     pub background: bool,
     /// a system notification per clip that lands, with open and show in folder
     pub notify: bool,
-    /// the once-a-day anonymous ping
     pub stats: bool,
     pub tray: Option<Tray>,
     told_about_tray: bool,

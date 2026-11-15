@@ -12,7 +12,6 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-// the headset's updater checks releases with the same file
 #[allow(dead_code)]
 #[path = "../../src/signed.rs"]
 mod signed;
@@ -24,7 +23,6 @@ pub struct Release {
     pub version: String,
     /// where this platform's build is, and its size
     pub url: String,
-    /// where its `.sha256` and `.sig` are: what it is, and our signature on that
     pub listing: String,
     pub signature: String,
     pub size: u64,
@@ -94,7 +92,6 @@ pub fn check() -> Result<Option<Release>, String> {
         return Ok(None);
     }
     // a release without a build of this app for here has nothing to offer
-    // the app goes up first and gets signed after: until its signature's there, it isn't an update yet
     let url = |name: String| rel.assets.iter().find(|a| a.name == name).map(|a| a.browser_download_url.clone());
     let Some(name) = asset_name() else { return Ok(None) };
     let (Some(listing), Some(signature)) = (url(format!("{name}.sha256")), url(format!("{name}.sig"))) else { return Ok(None) };
@@ -124,9 +121,6 @@ fn update_path() -> Result<PathBuf, String> {
     Ok(file.with_file_name(name))
 }
 
-/// downloads the new build, calling `progress` with 0 to 1. blocking
-/// what `release` has to turn out to be before it's run: the file our
-/// signature names, for this system, at the version it was offered as
 fn ours(listing: &str, signature: &str, keys: &[[u8; 32]], name: &str, version: &str) -> Result<String, String> {
     let unsigned = "this update isn't signed by framecorder, so it wasn't installed";
     let listing = signed::verify(listing, signature, keys).ok_or(unsigned)?;
@@ -141,6 +135,7 @@ fn text(url: &str) -> Result<String, String> {
     res.body_mut().with_config().limit(4096).read_to_string().map_err(|e| e.to_string())
 }
 
+/// downloads the new build, calling `progress` with 0 to 1. blocking
 pub fn download(release: &Release, progress: impl Fn(f32)) -> Result<PathBuf, String> {
     let name = asset_name().ok_or("there's no framecorder for this system")?;
     let sum = ours(&text(&release.listing)?, &text(&release.signature)?, &signed::KEYS, name, &release.version)?;
@@ -277,7 +272,6 @@ mod tests {
         let listing = format!("{}  framecorder-setup.exe\nversion 0.2.1\n", "ab".repeat(32));
         let signature: String = pair.sign(&[b"framecorder release v1\n", listing.as_bytes()].concat()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(ours(&listing, &signature, &keys, "framecorder-setup.exe", "0.2.1"), Ok("ab".repeat(32)));
-        // unsigned, signed by someone else, the mac's file, or an older release offered as this one
         assert!(ours(&listing, "", &keys, "framecorder-setup.exe", "0.2.1").is_err());
         assert!(ours(&listing, &signature, &super::signed::KEYS, "framecorder-setup.exe", "0.2.1").is_err());
         assert!(ours(&listing, &signature, &keys, "framecorder-desktop-macos.dmg", "0.2.1").is_err());

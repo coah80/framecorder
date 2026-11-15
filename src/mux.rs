@@ -225,9 +225,6 @@ impl Session {
 
     fn video(&mut self, p: VideoPacket) -> Result<()> {
         let (params, has_picture, keyframe) = split_parameter_sets(&p.data, self.cfg.codec);
-        // The encoder's own flag isn't to be relied on: since SteamOS's
-        // kernel 7.2 the Frame's driver doesn't set it on anything, while
-        // the keyframes themselves still come. So the stream decides too.
         let key = p.key || keyframe;
         if self.streams.is_none() {
             if params.is_empty() {
@@ -542,8 +539,7 @@ fn recorded_time(pauses: &[(i64, i64)], paused_at: Option<i64>, t: i64) -> Optio
 }
 
 /// Pulls the parameter sets (VPS/SPS/PPS) out of an Annex B packet. Also
-/// says whether the packet carries an actual picture, and whether that
-/// picture is a keyframe: one a file, a clip or a viewer can start on.
+/// says whether the packet carries an actual picture.
 fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool, bool) {
     let mut params = Vec::new();
     let (mut has_picture, mut keyframe) = (false, false);
@@ -563,7 +559,6 @@ fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool, bool) {
             };
             has_picture |= is_vcl;
             keyframe |= match codec {
-                // the random access pictures: BLA, IDR and CRA
                 Codec::Hevc => matches!((first >> 1) & 0x3f, 16..=21),
                 Codec::H264 => first & 0x1f == 5,
             };
@@ -640,12 +635,10 @@ mod tests {
 
     #[test]
     fn keyframes_are_told_from_the_stream_not_the_drivers_flag() {
-        // (codec, a keyframe's first slice byte, an ordinary frame's)
         for (codec, idr, trailing) in [(Codec::Hevc, 19 << 1, 1 << 1), (Codec::H264, 0x65, 0x41)] {
             assert_eq!(split_parameter_sets(&[0, 0, 0, 1, idr, 1, 0xdd], codec), (Vec::new(), true, true), "{codec:?}");
             assert_eq!(split_parameter_sets(&[0, 0, 0, 1, trailing, 1, 0xdd], codec), (Vec::new(), true, false), "{codec:?}");
         }
-        // hevc's other ways in: a clean random access picture counts, a leading picture after one doesn't
         assert!(split_parameter_sets(&[0, 0, 1, 21 << 1, 1, 0], Codec::Hevc).2);
         assert!(!split_parameter_sets(&[0, 0, 1, 9 << 1, 1, 0], Codec::Hevc).2);
     }

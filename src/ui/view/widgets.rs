@@ -184,8 +184,6 @@ pub fn toggle_row(
     toggle_row_noted(c, f, m, hits, r, name, "", action, on, locked);
 }
 
-/// A toggle row with a line under its name, for a switch whose name can't
-/// say what it does.
 #[allow(clippy::too_many_arguments)]
 pub fn toggle_row_noted(
     c: &mut Canvas,

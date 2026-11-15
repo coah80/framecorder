@@ -4,10 +4,6 @@
 # installs' updates download from. Nothing released changes, the site and
 # everyone else stay on main's releases.
 #
-# Run it from a computer with gh, bun and the release key, on the dev branch,
-# with the headset reachable over ssh (FRAME, "frame" by default). It builds
-# the headset release on the headset, signs it and builds the installer here,
-# and uploads them.
 #
 #   packaging/dev.sh
 set -eu
@@ -28,7 +24,6 @@ rsync -a --delete --exclude target --exclude .git --exclude app/target --exclude
     --exclude dist --exclude installer/node_modules --exclude installer/dist ./ "$FRAME:framecorder-dev/"
 ssh "$FRAME" 'cd framecorder-dev && PATH=$HOME/.cargo/bin:$PATH packaging/release.sh >/dev/null'
 scp -q "$FRAME:framecorder-dev/dist/framecorder-arm64.tar.gz" "$FRAME:framecorder-dev/dist/framecorder-arm64.tar.gz.sha256" "$OUT/"
-# a dev install's updater takes it only signed, like a release
 packaging/sign.sh "$OUT/framecorder-arm64.tar.gz" "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >/dev/null
 
 echo "building the installer"

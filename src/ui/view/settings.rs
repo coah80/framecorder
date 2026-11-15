@@ -205,7 +205,6 @@ fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     let mkv = s.format == Format::Mkv;
     let r = Rect::new(inner.x, format.y + ROW_H + 16.0, inner.w, 92.0);
     toggle_row(c, f, m, hits, r, "Remux recordings to MP4", Action::Remux, mkv && s.remux, locked || !mkv);
-    // It's the panels it saves, so it needs them.
     let r = Rect::new(inner.x, r.y + r.h + 12.0, inner.w, 104.0);
     let note = "Also saves both panels in 4K, to make any eye view from later. For framecorder's own videos, heavier on the game.";
     toggle_row_noted(c, f, m, hits, r, "Promo footage", note, Action::Promo, m.unlocked && s.promo, locked || !m.unlocked);

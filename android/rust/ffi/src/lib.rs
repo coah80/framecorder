@@ -619,9 +619,6 @@ impl Core {
         .await?
     }
 
-    /// The once-a-day anonymous ping, see the core's `stats`. `state_dir` is
-    /// where the core keeps its state, which is where it notes the day.
-    /// `settings` are the app's own as `name=value`; how many frames are paired and what came over get added here.
     pub async fn stats_ping(&self, state_dir: String, version: String, settings: Vec<String>) -> Result<(), CoreError> {
         let paired = framecorder_app_lib::core::stats::paired(self.engine.hosts().len());
         let clips = self.engine.clips();

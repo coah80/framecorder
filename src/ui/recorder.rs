@@ -33,8 +33,6 @@ pub enum Event {
     /// A clip was asked for mid recording; the recording has it anyway.
     ClipWhileRecording,
     Failed { kind: Option<Kind>, message: String },
-    /// Every few seconds while it captures: the frame rate it's getting, the
-    /// one it's after, and its GPU time per frame.
     Perf { fps: f64, target: u32, gpu_ms: f64 },
 }
 
@@ -91,8 +89,6 @@ impl Recorder {
         Self::spawn(settings.recorder_args(panel), settings.clipping(), "recorder")
     }
 
-    /// One more recorder beside the main one, for promo footage's `view` of
-    /// a recording (the panels). It keeps no replay buffer and logs to its own file.
     pub fn start_view(view: &str, args: Vec<String>) -> Result<Self> {
         Self::spawn(args, None, &format!("recorder-{view}"))
     }

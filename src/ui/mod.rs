@@ -47,7 +47,6 @@ const TOAST_FOR: Duration = Duration::from_millis(2500);
 const RESUME_DELAY: Duration = Duration::from_millis(350);
 /// Before starting the clipping recorder again after it died.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
-/// How often the tab looks at whether the day's anonymous ping has gone.
 const STATS_EVERY: Duration = Duration::from_secs(600);
 const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
@@ -197,14 +196,9 @@ struct App {
     settings_at: Option<SystemTime>,
     settings_checked: Instant,
     recorder: Option<Recorder>,
-    /// With promo footage on, the recorder saving the panels of the recording
-    /// under way, by name. It lives for that one recording.
     extras: Vec<(&'static str, Recorder)>,
-    /// When the day's anonymous ping was last looked at.
     stats_checked: Option<Instant>,
-    /// What framecorder costs the headset, for the anonymous stats.
     watch: crate::stats::Watch,
-    /// Whether a game's running, from SteamVR. None in previews and tests.
     scene: Option<crate::apps::Scene>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
@@ -928,7 +922,6 @@ impl App {
                 if let Some(r) = &mut self.recorder {
                     r.stop_record();
                 }
-                // On the same press, so every view ends with the recording.
                 for (_, view) in &mut self.extras {
                     view.quit();
                 }
@@ -960,9 +953,6 @@ impl App {
         }
     }
 
-    /// With promo footage on, starts the recorder that saves the panels of
-    /// the recording in `path`, into its own file next to it. If it can't
-    /// start, the recording carries on without it.
     fn start_extras(&mut self, path: &Path, paused: bool) {
         for (view, args) in self.settings.promo_extras(self.unlocked) {
             match Recorder::start_view(view, args) {
@@ -979,8 +969,6 @@ impl App {
         }
     }
 
-    /// Promo footage's recorder wraps up when the recording stops, however it
-    /// stopped, and says so when it didn't make it.
     fn check_extras(&mut self) {
         let over = self.recording.as_ref().is_none_or(|r| r.stopping);
         let mut i = 0;
@@ -1096,8 +1084,6 @@ impl App {
         }
     }
 
-    /// With anonymous stats on, sends the day's ping once: looked at every
-    /// ten minutes, and never while something's recording.
     fn check_stats(&mut self) {
         if !self.settings.stats || !self.settings.onboarded {
             return;

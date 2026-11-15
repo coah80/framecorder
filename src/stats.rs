@@ -1,19 +1,3 @@
-//! The one thing framecorder says about itself, and only with anonymous
-//! stats on: once a day, which version this is, roughly how long it's been
-//! installed, how many of a few things happened since the last time
-//! (recordings, clips, minutes recorded, live views, recordings started from
-//! an app, reports sent), and how its settings stand. No id, no names,
-//! nothing from a video. The service on the other end keeps daily
-//! totals only (`stats/` in this repo), so one headset can't be told from
-//! another.
-//!
-//! It also says what framecorder costs the headset, so a leak or a slow
-//! version shows up across everyone: the tab, the clips recorder and the sync
-//! service's memory and CPU, by how long each had been running and apart for
-//! with no game running and with one, and per recording how close it kept to its frame rate, its
-//! CPU, memory and GPU time, and how little memory the headset had left. All
-//! of it in coarse buckets, counted, never a single reading.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -23,38 +7,28 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 
 const URL: &str = "https://stats.coah80.com/v1/ping";
-/// One at a time at the state file: the tab counting, and a ping finishing.
 static FILE: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
 pub enum Made {
-    /// A recording this many seconds long.
     Recording(f64),
     Clip,
-    /// Someone started watching live.
     Live,
-    /// A recording started from a phone or computer.
     Remote,
-    /// An issue report sent.
     Report,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct State {
-    /// The UTC day of the last ping that got through.
     last: String,
-    /// Whether one ever has: the first is how new installs are counted.
     ever: bool,
-    /// The day this file first existed, in days since 1970: how old the install is.
     first: u64,
     recordings: u64,
     clips: u64,
-    /// Seconds recorded; the ping says whole minutes.
     seconds: u64,
     live: u64,
     remote: u64,
     reports: u64,
-    /// How many times each performance bucket came up, as `name=bucket`.
     perf: BTreeMap<String, u64>,
 }
 
@@ -111,7 +85,6 @@ fn load() -> State {
     state
 }
 
-/// How long an install has been around, as the stats service buckets it.
 fn age(days: u64) -> &'static str {
     match days {
         0 => "0",
@@ -131,9 +104,7 @@ fn save(state: &State) {
     }
 }
 
-/// The UTC date `secs` after 1970 falls on, as 2026-11-14.
 fn day(secs: u64) -> String {
-    // civil-from-days, Howard Hinnant's
     let z = (secs / 86400) as i64 + 719_468;
     let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
@@ -147,9 +118,7 @@ fn today() -> String {
     day(now())
 }
 
-/// One more of something for the next ping to mention.
 pub fn made(what: Made) {
-    // the tab's own tests save recordings that never happened
     if cfg!(test) {
         return;
     }
@@ -168,7 +137,6 @@ pub fn made(what: Made) {
     save(&state);
 }
 
-/// Everything a ping says. `settings` are the tab's, as the service names them.
 fn body(state: &State, settings: &[(&str, String)]) -> Value {
     let settings: serde_json::Map<String, Value> = settings.iter().map(|(k, v)| ((*k).to_owned(), json!(v))).collect();
     json!({
@@ -177,7 +145,6 @@ fn body(state: &State, settings: &[(&str, String)]) -> Value {
         "os": "steamos",
         "new": !state.ever,
         "age": age((now() / 86400).saturating_sub(state.first)),
-        // the service takes no more than this of each
         "counts": {
             "recordings": state.recordings.min(10_000),
             "clips": state.clips.min(10_000),
@@ -191,15 +158,10 @@ fn body(state: &State, settings: &[(&str, String)]) -> Value {
     })
 }
 
-/// Whether today's ping is still to go.
 pub fn due() -> bool {
     load().last != today()
 }
 
-/// Sends today's ping, off to the side on its own thread: a few hundred
-/// bytes, sealed to the stats service's key, through curl over https. Whatever it mentioned
-/// comes off the count once it's through; a ping that didn't make it changes
-/// nothing, and tomorrow's carries the lot.
 pub fn ping(settings: Vec<(&'static str, String)>) {
     let spawned = std::thread::Builder::new().name("stats".into()).spawn(move || {
         let sent = load();
@@ -226,7 +188,6 @@ pub fn ping(settings: Vec<(&'static str, String)>) {
         state.ever = true;
         state.recordings = state.recordings.saturating_sub(sent.recordings);
         state.clips = state.clips.saturating_sub(sent.clips);
-        // whole minutes went; the seconds left over wait for the next one
         state.seconds = state.seconds.saturating_sub(sent.seconds / 60 * 60);
         state.live = state.live.saturating_sub(sent.live);
         state.remote = state.remote.saturating_sub(sent.remote);
@@ -244,15 +205,10 @@ pub fn ping(settings: Vec<(&'static str, String)>) {
     }
 }
 
-/// The most of any one bucket a ping may claim, as the service takes it.
 const PERF_MOST: u64 = 10_000;
-/// How often the tab notes what it, the clips recorder and sync are using.
 const SAMPLE_EVERY: Duration = Duration::from_secs(15 * 60);
-/// How often the tab asks SteamVR whether a game's running.
 const LOOK_EVERY: Duration = Duration::from_secs(10);
 
-/// Which of `edges` `v` falls between, named the way the stats service has
-/// it: `<25`, `25-50`, ..., `800+`.
 fn bucket(v: f64, edges: &[u32]) -> String {
     match edges.iter().position(|&e| v < f64::from(e)) {
         Some(0) => format!("<{}", edges[0]),
@@ -265,7 +221,6 @@ fn mb(v: f64) -> String {
     bucket(v, &[25, 50, 100, 200, 400, 800])
 }
 
-/// How long something had been running.
 fn up(secs: f64) -> &'static str {
     match secs / 3600.0 {
         h if h < 1.0 => "<1h",
@@ -275,12 +230,10 @@ fn up(secs: f64) -> &'static str {
     }
 }
 
-/// Percent of one core.
 fn cpu(pct: f64) -> String {
     bucket(pct, &[1, 5, 15, 40])
 }
 
-/// Counts these `name=bucket`s once each for the next ping.
 fn add(keys: Vec<String>) {
     if cfg!(test) || keys.is_empty() {
         return;
@@ -293,29 +246,24 @@ fn add(keys: Vec<String>) {
     save(&state);
 }
 
-/// What /proc says about one process.
 mod proc {
     use std::time::Duration;
 
     fn ticks_per_sec() -> f64 {
-        // SAFETY: sysconf only reads a value
         (unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).max(1) as f64
     }
 
-    /// The fields after the process name, which can itself hold spaces.
     fn stat(pid: &str) -> Option<Vec<String>> {
         let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         Some(text.rsplit_once(')')?.1.split_whitespace().map(str::to_owned).collect())
     }
 
-    /// CPU time it has had, user and system.
     pub fn cpu(pid: &str) -> Option<Duration> {
         let f = stat(pid)?;
         let ticks: u64 = f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?;
         Some(Duration::from_secs_f64(ticks as f64 / ticks_per_sec()))
     }
 
-    /// How long it has been running.
     pub fn age(pid: &str) -> Option<f64> {
         let started = f64::from(stat(pid)?.get(19)?.parse::<u32>().ok()?) / ticks_per_sec();
         let uptime: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
@@ -328,19 +276,15 @@ mod proc {
         line[field.len()..].trim().trim_end_matches("kB").trim().parse().ok()
     }
 
-    /// Resident memory, MB.
     pub fn rss(pid: &str) -> Option<f64> {
         kb(&format!("/proc/{pid}/status"), "VmRSS:").map(|k| k / 1024.0)
     }
 
-    /// Memory the headset could still hand out, MB.
     pub fn available() -> Option<f64> {
         kb("/proc/meminfo", "MemAvailable:").map(|k| k / 1024.0)
     }
 
-    /// One of our processes by the program it runs.
     pub fn find(program: &str) -> Option<String> {
-        // SAFETY: getuid can't fail
         let uid = unsafe { libc::getuid() };
         std::fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
             let pid = e.file_name().into_string().ok().filter(|p| p.bytes().all(|b| b.is_ascii_digit()))?;
@@ -350,7 +294,6 @@ mod proc {
     }
 }
 
-/// One recording's cost, gathered from the recorder's reports while it runs.
 struct Take {
     pid: String,
     cpu_from: (Instant, Duration),
@@ -360,18 +303,13 @@ struct Take {
     least_free: f64,
 }
 
-/// Keeps an eye on what framecorder costs, for the ping. The tab feeds it
-/// the recorder's reports and calls `tick` as it goes round.
 #[derive(Default)]
 pub struct Watch {
     take: Option<Take>,
     stretch: Option<Stretch>,
-    /// When the tab last asked SteamVR whether a game's running.
     looked: Option<Instant>,
 }
 
-/// A stretch with nothing recording and a game either running the whole
-/// time or not at all, and the CPU time each process had used when it began.
 struct Stretch {
     from: Instant,
     game: bool,
@@ -385,7 +323,6 @@ impl Stretch {
     }
 }
 
-/// The tab, the clips recorder while it runs, and sync, by process id.
 fn processes(clips: Option<u32>) -> Vec<(&'static str, String)> {
     let mut out = vec![("ui", "self".to_string())];
     out.extend(clips.map(|pid| ("clips", pid.to_string())));
@@ -394,8 +331,6 @@ fn processes(clips: Option<u32>) -> Vec<(&'static str, String)> {
 }
 
 impl Watch {
-    /// The recorder's report: the frame rate it got of the one it's after
-    /// and its GPU time per frame. Counts toward the take while `recording`.
     pub fn report(&mut self, recorder: u32, fps: f64, target: u32, gpu_ms: f64, recording: bool) {
         if !recording {
             self.take = None;
@@ -416,7 +351,6 @@ impl Watch {
         take.least_free = take.least_free.min(proc::available().unwrap_or(f64::MAX));
     }
 
-    /// The recording was saved: its cost goes in the next ping.
     pub fn saved(&mut self) {
         let Some(t) = self.take.take() else { return };
         if t.fps.is_empty() {
@@ -437,15 +371,10 @@ impl Watch {
         add(keys);
     }
 
-    /// The recording didn't make it: what it cost counts for nothing.
     pub fn forget(&mut self) {
         self.take = None;
     }
 
-    /// While nothing's recording, notes every so often what the tab, the
-    /// clips recorder (`clips`, while it runs) and sync use, apart for with
-    /// no game running (`idle_*`) and with one (`game_*`). `game` asks
-    /// SteamVR, so it's only called every few seconds.
     pub fn tick(&mut self, clips: Option<u32>, recording: bool, game: impl FnOnce() -> bool) {
         if recording {
             self.stretch = None;
@@ -468,7 +397,6 @@ impl Watch {
     }
 }
 
-/// What each process used over `stretch` and holds now.
 fn readings(stretch: &Stretch, clips: Option<u32>) -> Vec<String> {
     let when = if stretch.game { "game" } else { "idle" };
     let secs = stretch.from.elapsed().as_secs_f64().max(1.0);
@@ -512,7 +440,6 @@ mod tests {
         assert_eq!([mb(3.0), mb(25.0), mb(99.9), mb(799.0), mb(800.0)], ["<25", "25-50", "50-100", "400-800", "800+"]);
         assert_eq!([cpu(0.4), cpu(12.0), cpu(400.0)], ["<1", "5-15", "40+"]);
         assert_eq!([up(60.0), up(3600.0), up(7.0 * 3600.0), up(30.0 * 3600.0)], ["<1h", "1-6h", "6-24h", "1d+"]);
-        // the tab's own process is there to be read
         assert!(proc::rss("self").is_some_and(|m| m > 0.0) && proc::age("self").is_some() && proc::cpu("self").is_some());
     }
 }
