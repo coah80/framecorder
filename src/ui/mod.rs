@@ -202,6 +202,8 @@ struct App {
     extras: Vec<(&'static str, Recorder)>,
     /// When the day's anonymous ping was last looked at.
     stats_checked: Option<Instant>,
+    /// What framecorder costs the headset, for the anonymous stats.
+    watch: crate::stats::Watch,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
     pointer: Option<(f32, f32)>,
@@ -646,6 +648,7 @@ impl App {
             recorder: None,
             extras: Vec::new(),
             stats_checked: None,
+            watch: Default::default(),
             recording: None,
             note: None,
             pointer: None,
@@ -1092,7 +1095,12 @@ impl App {
     /// With anonymous stats on, sends the day's ping once: looked at every
     /// ten minutes, and never while something's recording.
     fn check_stats(&mut self) {
-        if !self.settings.stats || !self.settings.onboarded || self.recording.is_some() {
+        if !self.settings.stats || !self.settings.onboarded {
+            return;
+        }
+        let clips = self.recorder.as_ref().filter(|r| r.replay.is_some()).map(|r| r.pid());
+        self.watch.tick(clips, self.recording.is_some());
+        if self.recording.is_some() {
             return;
         }
         if self.stats_checked.is_some_and(|t| t.elapsed() < STATS_EVERY) {
@@ -1115,12 +1123,19 @@ impl App {
     fn check_recorder(&mut self) {
         self.check_extras();
         let Some(r) = &mut self.recorder else { return };
+        let pid = r.pid();
         for event in r.events() {
+            if let recorder::Event::Perf { fps, target, gpu_ms } = event {
+                self.watch.report(pid, fps, target, gpu_ms, self.recording.is_some());
+                continue;
+            }
             self.dirty = true;
             match event {
+                recorder::Event::Perf { .. } => {}
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
                     crate::stats::made(crate::stats::Made::Recording(secs));
+                    self.watch.saved();
                     self.recording = None;
                     let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
@@ -1142,6 +1157,7 @@ impl App {
                     };
                     if kind == Some(Kind::Recording) {
                         self.recording = None;
+                        self.watch.forget();
                     }
                     if kind == Some(Kind::Clip) {
                         let why = if message.contains("nothing to clip yet") {

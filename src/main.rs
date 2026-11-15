@@ -594,6 +594,10 @@ fn capture_loop(
                 dropped,
                 gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64
             );
+            if args.control {
+                // the tab keeps these for the anonymous stats
+                println!("perf {:.1} {fps} {:.2}", frames as f64 / secs, gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64);
+            }
             gpu_time = Duration::ZERO;
             if dropped > window.1 {
                 log::warn!("the encoder fell behind, try a lower bitrate or resolution");

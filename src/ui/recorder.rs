@@ -33,6 +33,9 @@ pub enum Event {
     /// A clip was asked for mid recording; the recording has it anyway.
     ClipWhileRecording,
     Failed { kind: Option<Kind>, message: String },
+    /// Every few seconds while it captures: the frame rate it's getting, the
+    /// one it's after, and its GPU time per frame.
+    Perf { fps: f64, target: u32, gpu_ms: f64 },
 }
 
 pub fn parse_event(line: &str) -> Option<Event> {
@@ -52,6 +55,11 @@ pub fn parse_event(line: &str) -> Option<Event> {
             Some(Event::Saved { kind, path: PathBuf::from(parts.next()?), bytes, secs })
         }
         "busy" if rest == "recording" => Some(Event::ClipWhileRecording),
+        "perf" => {
+            let mut parts = rest.split(' ');
+            let (fps, target, gpu_ms) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+            Some(Event::Perf { fps, target, gpu_ms })
+        }
         "failed" => {
             let (k, message) = rest.split_once(' ').unwrap_or((rest, ""));
             Some(Event::Failed { kind: kind(k), message: message.to_string() })
@@ -185,6 +193,10 @@ impl Recorder {
 
     pub fn quitting(&self) -> bool {
         self.quitting.is_some()
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
     }
 
     pub fn events(&mut self) -> Vec<Event> {
@@ -376,6 +388,7 @@ mod tests {
             Some(Event::Failed { kind: None, message: "bad clip length".into() })
         );
         assert_eq!(parse_event("busy recording"), Some(Event::ClipWhileRecording));
+        assert_eq!(parse_event("perf 71.5 72 4.44"), Some(Event::Perf { fps: 71.5, target: 72, gpu_ms: 4.44 }));
         assert_eq!(parse_event("hello"), None);
     }
 }

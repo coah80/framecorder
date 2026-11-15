@@ -190,7 +190,8 @@ fn main() {
                     ];
                     framecorder_app_lib::core::stats::ping(&dir, "desktop", env!("CARGO_PKG_VERSION"), &settings, &engine.clips()).await;
                 }
-                tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+                // each call also notes what the app is using, which is how a leak shows
+                tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         });
     }

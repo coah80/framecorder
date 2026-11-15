@@ -6,11 +6,19 @@
 //! nothing from a video. The service on the other end keeps daily
 //! totals only (`stats/` in this repo), so one headset can't be told from
 //! another.
+//!
+//! It also says what framecorder costs the headset, so a leak or a slow
+//! version shows up across everyone: the tab, the clips recorder and the sync
+//! service's memory by how long each had been running, the tab's CPU while
+//! it sits there, and per recording how close it kept to its frame rate, its
+//! CPU, memory and GPU time, and how little memory the headset had left. All
+//! of it in coarse buckets, counted, never a single reading.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -46,12 +54,14 @@ struct State {
     live: u64,
     remote: u64,
     reports: u64,
+    /// How many times each performance bucket came up, as `name=bucket`.
+    perf: BTreeMap<String, u64>,
 }
 
 impl State {
     fn parse(text: &str) -> Self {
         let mut s = Self::default();
-        for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {
+        for (key, value) in text.lines().filter_map(|l| l.rsplit_once('=')) {
             match key {
                 "last" => s.last = value.to_owned(),
                 "ever" => s.ever = value == "true",
@@ -62,17 +72,25 @@ impl State {
                 "live" => s.live = value.parse().unwrap_or(0),
                 "remote" => s.remote = value.parse().unwrap_or(0),
                 "reports" => s.reports = value.parse().unwrap_or(0),
-                _ => {}
+                _ => {
+                    if let (Some(name), Ok(n)) = (key.strip_prefix("perf."), value.parse()) {
+                        s.perf.insert(name.to_owned(), n);
+                    }
+                }
             }
         }
         s
     }
 
     fn text(&self) -> String {
-        format!(
+        let mut text = format!(
             "last={}\never={}\nfirst={}\nrecordings={}\nclips={}\nseconds={}\nlive={}\nremote={}\nreports={}\n",
             self.last, self.ever, self.first, self.recordings, self.clips, self.seconds, self.live, self.remote, self.reports
-        )
+        );
+        for (name, n) in &self.perf {
+            text += &format!("perf.{name}={n}\n");
+        }
+        text
     }
 }
 
@@ -169,6 +187,7 @@ fn body(state: &State, settings: &[(&str, String)]) -> Value {
             "reports": state.reports.min(1_000),
         },
         "settings": settings,
+        "perf": state.perf.iter().map(|(k, n)| (k.clone(), json!(n.min(&PERF_MOST)))).collect::<serde_json::Map<_, _>>(),
     })
 }
 
@@ -207,10 +226,230 @@ pub fn ping(settings: Vec<(&'static str, String)>) {
         state.live = state.live.saturating_sub(sent.live);
         state.remote = state.remote.saturating_sub(sent.remote);
         state.reports = state.reports.saturating_sub(sent.reports);
+        for (name, n) in &sent.perf {
+            if let Some(left) = state.perf.get_mut(name) {
+                *left = left.saturating_sub(*n);
+            }
+        }
+        state.perf.retain(|_, n| *n > 0);
         save(&state);
     });
     if let Err(e) = spawned {
         log::debug!("couldn't start the stats ping: {e}");
+    }
+}
+
+/// The most of any one bucket a ping may claim, as the service takes it.
+const PERF_MOST: u64 = 10_000;
+/// How often the tab notes what it, the clips recorder and sync are using.
+const SAMPLE_EVERY: Duration = Duration::from_secs(15 * 60);
+
+/// Which of `edges` `v` falls between, named the way the stats service has
+/// it: `<25`, `25-50`, ..., `800+`.
+fn bucket(v: f64, edges: &[u32]) -> String {
+    match edges.iter().position(|&e| v < f64::from(e)) {
+        Some(0) => format!("<{}", edges[0]),
+        Some(i) => format!("{}-{}", edges[i - 1], edges[i]),
+        None => format!("{}+", edges[edges.len() - 1]),
+    }
+}
+
+fn mb(v: f64) -> String {
+    bucket(v, &[25, 50, 100, 200, 400, 800])
+}
+
+/// How long something had been running.
+fn up(secs: f64) -> &'static str {
+    match secs / 3600.0 {
+        h if h < 1.0 => "<1h",
+        h if h < 6.0 => "1-6h",
+        h if h < 24.0 => "6-24h",
+        _ => "1d+",
+    }
+}
+
+/// Percent of one core.
+fn cpu(pct: f64) -> String {
+    bucket(pct, &[1, 5, 15, 40])
+}
+
+/// Counts these `name=bucket`s once each for the next ping.
+fn add(keys: Vec<String>) {
+    if cfg!(test) || keys.is_empty() {
+        return;
+    }
+    let _held = FILE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = load();
+    for key in keys {
+        *state.perf.entry(key).or_default() += 1;
+    }
+    save(&state);
+}
+
+/// What /proc says about one process.
+mod proc {
+    use std::time::Duration;
+
+    fn ticks_per_sec() -> f64 {
+        // SAFETY: sysconf only reads a value
+        (unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).max(1) as f64
+    }
+
+    /// The fields after the process name, which can itself hold spaces.
+    fn stat(pid: &str) -> Option<Vec<String>> {
+        let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        Some(text.rsplit_once(')')?.1.split_whitespace().map(str::to_owned).collect())
+    }
+
+    /// CPU time it has had, user and system.
+    pub fn cpu(pid: &str) -> Option<Duration> {
+        let f = stat(pid)?;
+        let ticks: u64 = f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?;
+        Some(Duration::from_secs_f64(ticks as f64 / ticks_per_sec()))
+    }
+
+    /// How long it has been running.
+    pub fn age(pid: &str) -> Option<f64> {
+        let started = f64::from(stat(pid)?.get(19)?.parse::<u32>().ok()?) / ticks_per_sec();
+        let uptime: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
+        Some((uptime - started).max(0.0))
+    }
+
+    fn kb(file: &str, field: &str) -> Option<f64> {
+        let text = std::fs::read_to_string(file).ok()?;
+        let line = text.lines().find(|l| l.starts_with(field))?;
+        line[field.len()..].trim().trim_end_matches("kB").trim().parse().ok()
+    }
+
+    /// Resident memory, MB.
+    pub fn rss(pid: &str) -> Option<f64> {
+        kb(&format!("/proc/{pid}/status"), "VmRSS:").map(|k| k / 1024.0)
+    }
+
+    /// Memory the headset could still hand out, MB.
+    pub fn available() -> Option<f64> {
+        kb("/proc/meminfo", "MemAvailable:").map(|k| k / 1024.0)
+    }
+
+    /// One of our processes by the program it runs.
+    pub fn find(program: &str) -> Option<String> {
+        // SAFETY: getuid can't fail
+        let uid = unsafe { libc::getuid() };
+        std::fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
+            let pid = e.file_name().into_string().ok().filter(|p| p.bytes().all(|b| b.is_ascii_digit()))?;
+            use std::os::unix::fs::MetadataExt;
+            (e.metadata().ok()?.uid() == uid && std::fs::read_link(format!("/proc/{pid}/exe")).ok()?.file_name()? == program).then_some(pid)
+        })
+    }
+}
+
+/// One recording's cost, gathered from the recorder's reports while it runs.
+struct Take {
+    pid: String,
+    cpu_from: (Instant, Duration),
+    fps: Vec<f64>,
+    gpu_ms: Vec<f64>,
+    most_mb: f64,
+    least_free: f64,
+}
+
+/// Keeps an eye on what framecorder costs, for the ping. The tab feeds it
+/// the recorder's reports and calls `tick` as it goes round.
+pub struct Watch {
+    take: Option<Take>,
+    /// When the tab last noted what everything uses, and its own CPU time then.
+    sampled: (Instant, Duration),
+    /// Something recorded since: the tab's CPU over that stretch isn't idle.
+    recorded: bool,
+}
+
+impl Default for Watch {
+    fn default() -> Self {
+        Self { take: None, sampled: (Instant::now(), proc::cpu("self").unwrap_or_default()), recorded: false }
+    }
+}
+
+impl Watch {
+    /// The recorder's report: the frame rate it got of the one it's after
+    /// and its GPU time per frame. Counts toward the take while `recording`.
+    pub fn report(&mut self, recorder: u32, fps: f64, target: u32, gpu_ms: f64, recording: bool) {
+        if !recording {
+            self.take = None;
+            return;
+        }
+        let pid = recorder.to_string();
+        let take = self.take.get_or_insert_with(|| Take {
+            cpu_from: (Instant::now(), proc::cpu(&pid).unwrap_or_default()),
+            pid,
+            fps: Vec::new(),
+            gpu_ms: Vec::new(),
+            most_mb: 0.0,
+            least_free: f64::MAX,
+        });
+        take.fps.push(100.0 * fps / f64::from(target.max(1)));
+        take.gpu_ms.push(gpu_ms);
+        take.most_mb = take.most_mb.max(proc::rss(&take.pid).unwrap_or(0.0));
+        take.least_free = take.least_free.min(proc::available().unwrap_or(f64::MAX));
+    }
+
+    /// The recording was saved: its cost goes in the next ping.
+    pub fn saved(&mut self) {
+        let Some(t) = self.take.take() else { return };
+        if t.fps.is_empty() {
+            return;
+        }
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let secs = t.cpu_from.0.elapsed().as_secs_f64().max(1.0);
+        let used = proc::cpu(&t.pid).map_or(0.0, |c| c.saturating_sub(t.cpu_from.1).as_secs_f64());
+        let mut keys = vec![
+            format!("rec_fps={}", bucket(mean(&t.fps), &[50, 80, 95])),
+            format!("rec_gpu_ms={}", bucket(mean(&t.gpu_ms), &[3, 5, 8, 12])),
+            format!("rec_cpu={}", cpu(100.0 * used / secs)),
+            format!("rec_mb={}", mb(t.most_mb)),
+        ];
+        if t.least_free < f64::MAX {
+            keys.push(format!("rec_free_mb={}", bucket(t.least_free, &[500, 1000, 2000, 4000])));
+        }
+        add(keys);
+    }
+
+    /// The recording didn't make it: what it cost counts for nothing.
+    pub fn forget(&mut self) {
+        self.take = None;
+    }
+
+    /// Every so often while nothing's recording, notes what the tab, the
+    /// clips recorder (`clips`, while it runs) and sync are using.
+    pub fn tick(&mut self, clips: Option<u32>, recording: bool) {
+        if recording {
+            self.recorded = true;
+            return;
+        }
+        if self.recorded {
+            self.recorded = false;
+            self.sampled = (Instant::now(), proc::cpu("self").unwrap_or_default());
+            return;
+        }
+        if self.sampled.0.elapsed() < SAMPLE_EVERY {
+            return;
+        }
+        let own = proc::cpu("self").unwrap_or_default();
+        let secs = self.sampled.0.elapsed().as_secs_f64();
+        let mut keys = vec![format!("ui_cpu={}", cpu(100.0 * own.saturating_sub(self.sampled.1).as_secs_f64() / secs))];
+        self.sampled = (Instant::now(), own);
+        let mut memory = |name: &str, pid: &str| {
+            if let (Some(rss), Some(age)) = (proc::rss(pid), proc::age(pid)) {
+                keys.push(format!("{name}_mb@{}={}", up(age), mb(rss)));
+            }
+        };
+        memory("ui", "self");
+        if let Some(pid) = clips {
+            memory("clips", &pid.to_string());
+        }
+        if let Some(pid) = proc::find("framecorder-sync") {
+            memory("sync", &pid);
+        }
+        add(keys);
     }
 }
 
@@ -220,12 +459,13 @@ mod tests {
 
     #[test]
     fn a_ping_says_only_what_the_service_takes() {
-        let state = State { last: "2026-11-13".into(), ever: false, first: now() / 86400 - 12, recordings: 3, clips: 20_000, seconds: 185, live: 2, remote: 1, reports: 0 };
+        let perf = [("rec_fps=95+", 2), ("ui_mb@6-24h=25-50", 40_000)].map(|(k, n)| (k.to_string(), n)).into();
+        let state = State { last: "2026-11-13".into(), ever: false, first: now() / 86400 - 12, recordings: 3, clips: 20_000, seconds: 185, live: 2, remote: 1, reports: 0, perf };
         let settings = [("shape", "wide".to_string()), ("paired", "3+".to_string())];
         assert_eq!(
             body(&state, &settings).to_string(),
             format!(
-                r#"{{"age":"7-29","app":"headset","counts":{{"clips":10000,"live":2,"minutes":3,"recordings":3,"remote":1,"reports":0}},"new":true,"os":"steamos","settings":{{"paired":"3+","shape":"wide"}},"version":"{}"}}"#,
+                r#"{{"age":"7-29","app":"headset","counts":{{"clips":10000,"live":2,"minutes":3,"recordings":3,"remote":1,"reports":0}},"new":true,"os":"steamos","perf":{{"rec_fps=95+":2,"ui_mb@6-24h=25-50":10000}},"settings":{{"paired":"3+","shape":"wide"}},"version":"{}"}}"#,
                 env!("CARGO_PKG_VERSION")
             )
         );
@@ -233,5 +473,14 @@ mod tests {
         assert_eq!([age(0), age(6), age(7), age(29), age(30), age(89), age(90)], ["0", "1-6", "7-29", "7-29", "30-89", "30-89", "90+"]);
         assert_eq!(day(1_794_700_800 - 1), "2026-11-14");
         assert_eq!(day(951_782_400), "2000-02-29");
+    }
+
+    #[test]
+    fn readings_go_in_the_buckets_the_service_knows() {
+        assert_eq!([mb(3.0), mb(25.0), mb(99.9), mb(799.0), mb(800.0)], ["<25", "25-50", "50-100", "400-800", "800+"]);
+        assert_eq!([cpu(0.4), cpu(12.0), cpu(400.0)], ["<1", "5-15", "40+"]);
+        assert_eq!([up(60.0), up(3600.0), up(7.0 * 3600.0), up(30.0 * 3600.0)], ["<1h", "1-6h", "6-24h", "1d+"]);
+        // the tab's own process is there to be read
+        assert!(proc::rss("self").is_some_and(|m| m > 0.0) && proc::age("self").is_some() && proc::cpu("self").is_some());
     }
 }
