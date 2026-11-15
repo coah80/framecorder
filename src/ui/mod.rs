@@ -204,6 +204,8 @@ struct App {
     stats_checked: Option<Instant>,
     /// What framecorder costs the headset, for the anonymous stats.
     watch: crate::stats::Watch,
+    /// Whether a game's running, from SteamVR. None in previews and tests.
+    scene: Option<crate::apps::Scene>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
     pointer: Option<(f32, f32)>,
@@ -486,6 +488,7 @@ pub fn run() -> Result<()> {
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
     let mut app = App::new(settings, crate::setup::panels_unlocked(), crate::setup::relocked());
+    app.scene = crate::apps::Scene::new(&vr);
     log::info!("dashboard tab ready");
 
     while !QUIT.load(Ordering::Relaxed) {
@@ -649,6 +652,7 @@ impl App {
             extras: Vec::new(),
             stats_checked: None,
             watch: Default::default(),
+            scene: None,
             recording: None,
             note: None,
             pointer: None,
@@ -1099,7 +1103,8 @@ impl App {
             return;
         }
         let clips = self.recorder.as_ref().filter(|r| r.replay.is_some()).map(|r| r.pid());
-        self.watch.tick(clips, self.recording.is_some());
+        let scene = &self.scene;
+        self.watch.tick(clips, self.recording.is_some(), || scene.as_ref().is_some_and(|s| s.game()));
         if self.recording.is_some() {
             return;
         }

@@ -9,8 +9,8 @@
 //!
 //! It also says what framecorder costs the headset, so a leak or a slow
 //! version shows up across everyone: the tab, the clips recorder and the sync
-//! service's memory by how long each had been running, the tab's CPU while
-//! it sits there, and per recording how close it kept to its frame rate, its
+//! service's memory and CPU, by how long each had been running and apart for
+//! with no game running and with one, and per recording how close it kept to its frame rate, its
 //! CPU, memory and GPU time, and how little memory the headset had left. All
 //! of it in coarse buckets, counted, never a single reading.
 
@@ -243,6 +243,8 @@ pub fn ping(settings: Vec<(&'static str, String)>) {
 const PERF_MOST: u64 = 10_000;
 /// How often the tab notes what it, the clips recorder and sync are using.
 const SAMPLE_EVERY: Duration = Duration::from_secs(15 * 60);
+/// How often the tab asks SteamVR whether a game's running.
+const LOOK_EVERY: Duration = Duration::from_secs(10);
 
 /// Which of `edges` `v` falls between, named the way the stats service has
 /// it: `<25`, `25-50`, ..., `800+`.
@@ -355,18 +357,35 @@ struct Take {
 
 /// Keeps an eye on what framecorder costs, for the ping. The tab feeds it
 /// the recorder's reports and calls `tick` as it goes round.
+#[derive(Default)]
 pub struct Watch {
     take: Option<Take>,
-    /// When the tab last noted what everything uses, and its own CPU time then.
-    sampled: (Instant, Duration),
-    /// Something recorded since: the tab's CPU over that stretch isn't idle.
-    recorded: bool,
+    stretch: Option<Stretch>,
+    /// When the tab last asked SteamVR whether a game's running.
+    looked: Option<Instant>,
 }
 
-impl Default for Watch {
-    fn default() -> Self {
-        Self { take: None, sampled: (Instant::now(), proc::cpu("self").unwrap_or_default()), recorded: false }
+/// A stretch with nothing recording and a game either running the whole
+/// time or not at all, and the CPU time each process had used when it began.
+struct Stretch {
+    from: Instant,
+    game: bool,
+    cpu: Vec<(&'static str, String, Duration)>,
+}
+
+impl Stretch {
+    fn new(game: bool, clips: Option<u32>) -> Self {
+        let cpu = processes(clips).into_iter().filter_map(|(name, pid)| Some((name, pid.clone(), proc::cpu(&pid)?))).collect();
+        Self { from: Instant::now(), game, cpu }
     }
+}
+
+/// The tab, the clips recorder while it runs, and sync, by process id.
+fn processes(clips: Option<u32>) -> Vec<(&'static str, String)> {
+    let mut out = vec![("ui", "self".to_string())];
+    out.extend(clips.map(|pid| ("clips", pid.to_string())));
+    out.extend(proc::find("framecorder-sync").map(|pid| ("sync", pid)));
+    out
 }
 
 impl Watch {
@@ -418,39 +437,47 @@ impl Watch {
         self.take = None;
     }
 
-    /// Every so often while nothing's recording, notes what the tab, the
-    /// clips recorder (`clips`, while it runs) and sync are using.
-    pub fn tick(&mut self, clips: Option<u32>, recording: bool) {
+    /// While nothing's recording, notes every so often what the tab, the
+    /// clips recorder (`clips`, while it runs) and sync use, apart for with
+    /// no game running (`idle_*`) and with one (`game_*`). `game` asks
+    /// SteamVR, so it's only called every few seconds.
+    pub fn tick(&mut self, clips: Option<u32>, recording: bool, game: impl FnOnce() -> bool) {
         if recording {
-            self.recorded = true;
+            self.stretch = None;
             return;
         }
-        if self.recorded {
-            self.recorded = false;
-            self.sampled = (Instant::now(), proc::cpu("self").unwrap_or_default());
+        if self.looked.is_some_and(|t| t.elapsed() < LOOK_EVERY) {
             return;
         }
-        if self.sampled.0.elapsed() < SAMPLE_EVERY {
+        self.looked = Some(Instant::now());
+        let game = game();
+        let Some(stretch) = self.stretch.as_ref().filter(|s| s.game == game) else {
+            self.stretch = Some(Stretch::new(game, clips));
             return;
-        }
-        let own = proc::cpu("self").unwrap_or_default();
-        let secs = self.sampled.0.elapsed().as_secs_f64();
-        let mut keys = vec![format!("ui_cpu={}", cpu(100.0 * own.saturating_sub(self.sampled.1).as_secs_f64() / secs))];
-        self.sampled = (Instant::now(), own);
-        let mut memory = |name: &str, pid: &str| {
-            if let (Some(rss), Some(age)) = (proc::rss(pid), proc::age(pid)) {
-                keys.push(format!("{name}_mb@{}={}", up(age), mb(rss)));
-            }
         };
-        memory("ui", "self");
-        if let Some(pid) = clips {
-            memory("clips", &pid.to_string());
+        if stretch.from.elapsed() < SAMPLE_EVERY {
+            return;
         }
-        if let Some(pid) = proc::find("framecorder-sync") {
-            memory("sync", &pid);
-        }
-        add(keys);
+        add(readings(stretch, clips));
+        self.stretch = Some(Stretch::new(game, clips));
     }
+}
+
+/// What each process used over `stretch` and holds now.
+fn readings(stretch: &Stretch, clips: Option<u32>) -> Vec<String> {
+    let when = if stretch.game { "game" } else { "idle" };
+    let secs = stretch.from.elapsed().as_secs_f64().max(1.0);
+    let mut keys = Vec::new();
+    for (name, pid) in processes(clips) {
+        if let (Some(rss), Some(age)) = (proc::rss(&pid), proc::age(&pid)) {
+            keys.push(format!("{when}_{name}_mb@{}={}", up(age), mb(rss)));
+        }
+        let before = stretch.cpu.iter().find(|(n, p, _)| *n == name && *p == pid).map(|c| c.2);
+        if let (Some(before), Some(now)) = (before, proc::cpu(&pid)) {
+            keys.push(format!("{when}_{name}_cpu={}", cpu(100.0 * now.saturating_sub(before).as_secs_f64() / secs)));
+        }
+    }
+    keys
 }
 
 #[cfg(test)]
@@ -459,13 +486,13 @@ mod tests {
 
     #[test]
     fn a_ping_says_only_what_the_service_takes() {
-        let perf = [("rec_fps=95+", 2), ("ui_mb@6-24h=25-50", 40_000)].map(|(k, n)| (k.to_string(), n)).into();
+        let perf = [("rec_fps=95+", 2), ("idle_ui_mb@6-24h=25-50", 40_000)].map(|(k, n)| (k.to_string(), n)).into();
         let state = State { last: "2026-11-13".into(), ever: false, first: now() / 86400 - 12, recordings: 3, clips: 20_000, seconds: 185, live: 2, remote: 1, reports: 0, perf };
         let settings = [("shape", "wide".to_string()), ("paired", "3+".to_string())];
         assert_eq!(
             body(&state, &settings).to_string(),
             format!(
-                r#"{{"age":"7-29","app":"headset","counts":{{"clips":10000,"live":2,"minutes":3,"recordings":3,"remote":1,"reports":0}},"new":true,"os":"steamos","perf":{{"rec_fps=95+":2,"ui_mb@6-24h=25-50":10000}},"settings":{{"paired":"3+","shape":"wide"}},"version":"{}"}}"#,
+                r#"{{"age":"7-29","app":"headset","counts":{{"clips":10000,"live":2,"minutes":3,"recordings":3,"remote":1,"reports":0}},"new":true,"os":"steamos","perf":{{"idle_ui_mb@6-24h=25-50":10000,"rec_fps=95+":2}},"settings":{{"paired":"3+","shape":"wide"}},"version":"{}"}}"#,
                 env!("CARGO_PKG_VERSION")
             )
         );
