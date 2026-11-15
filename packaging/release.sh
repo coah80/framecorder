@@ -5,8 +5,9 @@
 #
 #   packaging/release.sh
 #
-# then put both files from dist/ on a github release. the site workflow
-# copies them to the site's /dl, where site/install gets the release and
+# then sign the tarball (packaging/sign.sh) and put it, its .sha256 and its
+# .sig on a github release. the site workflow copies them to the site's
+# /dl, where site/install gets the release and
 # installed headsets look for updates (see setup::update).
 set -eu
 
@@ -40,4 +41,4 @@ tar -czf "$TARBALL" --owner=0 --group=0 -C "$WORK/release" framecorder-setup pay
 # and its version under it, which the apps show (updaters only read the first word)
 echo "version $(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >>"$OUT/framecorder-arm64.tar.gz.sha256"
 ls -l "$OUT"
-echo "put both on a github release"
+echo "sign it (packaging/sign.sh), then put all three on a github release"

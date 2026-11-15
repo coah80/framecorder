@@ -10,6 +10,7 @@ pub mod overlay;
 pub mod setup;
 pub mod report;
 pub mod seal;
+pub mod signed;
 pub mod stats;
 pub mod toast;
 pub mod ui;

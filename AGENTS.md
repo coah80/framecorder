@@ -156,7 +156,7 @@ A regression test has to fail on the code before the fix, for the right reason. 
 
 ## Shipping
 
-**Dev build.** Puts `dev` up as the `dev-build` prerelease (needs `gh`, `bun`, and the headset over ssh as `FRAME`, `frame` by default):
+**Dev build.** Puts `dev` up as the `dev-build` prerelease, signed (needs `gh`, `bun`, the release key, and the headset over ssh as `FRAME`, `frame` by default):
 
 ```sh
 packaging/dev.sh
@@ -175,9 +175,12 @@ curl -fsSL https://framecorder.coah80.com/install | sh     # back to releases
 2. Bump the version in `Cargo.toml`, `sync/Cargo.toml`, `app/Cargo.toml` and `desktop/Cargo.toml`, and the `Cargo.lock` next to each, plus `android/rust/Cargo.lock`.
 3. `gh workflow run app.yml --ref main` builds the three desktop apps. Download the artifacts. Build the Android APK (`android/README.md`), signed with the release key (never the debug key, it wouldn't install over the last one), and name it `framecorder-android.apk`. Before uploading, run `apksigner verify --print-certs framecorder-android.apk` and require certificate SHA-256 `66f8d49dfb14d7b86852dddbac6204266da0c7167c7fd3a2ee9c118b270383f1`.
 4. On the headset, `packaging/release.sh` makes `dist/framecorder-arm64.tar.gz` and its `.sha256`.
-5. `gh release create vX.Y.Z --target main` with the headset tarball and checksum, the three desktop apps and the Android APK.
+5. Where the release key is, sign the headset tarball and each of the three desktop apps: `packaging/sign.sh <file> X.Y.Z`. It leaves a `.sha256` and a `.sig` next to each.
+6. `gh release create vX.Y.Z --target main` with all of it in one go: the headset tarball, the three desktop apps, every `.sha256` and `.sig`, and the Android APK.
 
-Publishing redeploys the site, which serves the release to the installer and every headset's updater. If the site job didn't run: `gh workflow run site.yml --ref main`. Check it's live with `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`.
+From 0.2.0 on, headsets and desktop apps only take an update whose `.sig` checks out against the keys in `src/signed.rs`. An unsigned release reaches nobody, so signing comes before publishing. The key signs on a maintainer's machine and stays out of CI, the repo and GitHub's secrets: it exists so that getting into GitHub isn't enough to ship an update.
+
+Publishing redeploys the site, which serves the release to the installer and every headset's updater. If the site job didn't run: `gh workflow run site.yml --ref main`. Check it's live with `curl -fsSL https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz.sha256`, and that `.sig` is next to it.
 
 **CI.** `site.yml` builds the installer, copies the latest release into `site/dl` and deploys Pages, on a push to `main` touching `site/` or `installer/`, a published non-pre release, or by hand (Pages only accepts `main` and `v*` tags). `app.yml` builds the desktop app on a `v*` tag or by hand.
 

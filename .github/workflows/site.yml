@@ -39,6 +39,10 @@ jobs:
             gh release download --repo "${{ github.repository }}" --pattern "$file" --dir site/dl
             test -s "site/dl/$file"
           done
+          # its signature (packaging/sign.sh). headsets from 0.2.0 on don't take an
+          # update without it, so a release that hasn't got one yet just isn't taken
+          gh release download --repo "${{ github.repository }}" --pattern framecorder-arm64.tar.gz.sig --dir site/dl \
+            || echo "::warning::the latest release isn't signed, headsets won't update to it"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: the installer site/install downloads
         run: installer/build.sh site/dl

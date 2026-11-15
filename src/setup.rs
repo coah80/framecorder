@@ -309,12 +309,28 @@ pub fn unlock() -> Result<()> {
 
 /// What the update timer runs: installs the latest release, unless it's the
 /// one that's installed already.
-/// The newest release where this one came from: its url, checksum, and
-/// version (releases list it under the checksum, older ones didn't).
+/// The newest release where this one came from: its url, checksum and version.
 struct Latest {
     url: String,
     sum: String,
-    version: Option<String>,
+    version: String,
+}
+
+/// The release's file, as its `.sha256` lists it.
+const RELEASE_FILE: &str = "framecorder-arm64.tar.gz";
+
+/// What a release's `.sha256` says, once it's known to be ours: signed with
+/// a release key, for the headset, and no older than `current`. Anything
+/// else could be put up by whoever got into GitHub or the site.
+fn ours(listed: &str, signature: &str, keys: &[[u8; 32]], current: &str) -> Result<crate::signed::Listing> {
+    let listing = crate::signed::verify(listed, signature, keys).context("the release isn't signed by framecorder, not installing it")?;
+    if listing.name != RELEASE_FILE {
+        bail!("the release is signed, but as {}, not installing it", listing.name);
+    }
+    if !crate::signed::at_least(&listing.version, current) {
+        bail!("the release on offer is {}, older than this one, not installing it", listing.version);
+    }
+    Ok(listing)
 }
 
 fn latest(home: &Path) -> Result<Latest> {
@@ -322,13 +338,8 @@ fn latest(home: &Path) -> Result<Latest> {
     let source = std::fs::read_to_string(home.join(SOURCE)).ok().map(|s| format!("{}/framecorder-arm64.tar.gz", s.trim()));
     let url = std::env::var("FRAMECORDER_URL").ok().or(source).unwrap_or_else(|| RELEASE_URL.to_string());
     let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
-    let sum = listed
-        .split_whitespace()
-        .next()
-        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .context("the release's checksum doesn't look like one")?
-        .to_ascii_lowercase();
-    let version = listed.lines().find_map(|l| l.strip_prefix("version ")).map(|v| v.trim().to_string());
+    let signature = output("curl", &["-fsSL", &format!("{url}.sig")]).context("the release has no signature, not installing it")?;
+    let crate::signed::Listing { sum, version, .. } = ours(&listed, &signature, &crate::signed::KEYS, env!("CARGO_PKG_VERSION"))?;
     Ok(Latest { url, sum, version })
 }
 
@@ -433,6 +444,28 @@ mod tests {
             }
         }
         std::fs::write(dir.join("bin/framecorder"), recorder).unwrap();
+    }
+
+    #[test]
+    fn an_update_has_to_be_ours_for_the_headset_and_not_older() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        let pair = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+        let keys = [pair.public_key().as_ref().try_into().unwrap()];
+        let signed = |name: &str, version: &str| {
+            let listed = format!("{}  {name}\nversion {version}\n", "ab".repeat(32));
+            let signature: String = pair.sign(&[b"framecorder release v1\n", listed.as_bytes()].concat()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+            (listed, signature)
+        };
+        let (listed, signature) = signed(RELEASE_FILE, "0.2.1");
+        assert_eq!(ours(&listed, &signature, &keys, "0.2.0").unwrap().sum, "ab".repeat(32));
+        // a checksum alone, the way releases used to come, is anyone's
+        assert!(ours(&listed, "", &keys, "0.2.0").is_err());
+        assert!(ours(&listed, &signature, &crate::signed::KEYS, "0.2.0").is_err());
+        // ours, but the desktop app's file, or last year's release
+        let (listed, signature) = signed("framecorder-setup.exe", "0.2.1");
+        assert!(ours(&listed, &signature, &keys, "0.2.0").is_err());
+        let (listed, signature) = signed(RELEASE_FILE, "0.1.4");
+        assert!(ours(&listed, &signature, &keys, "0.2.0").is_err());
     }
 
     #[test]

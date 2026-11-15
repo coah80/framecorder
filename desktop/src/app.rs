@@ -777,10 +777,7 @@ impl FrameApp {
     /// the desktop update pill: download, then restart into it
     pub fn desktop_update_clicked(&mut self, cx: &mut Context<Self>) {
         match std::mem::replace(&mut self.desktop, DesktopUpdate::None) {
-            DesktopUpdate::Available(rel) => {
-                let (url, size) = (rel.url.clone(), rel.size);
-                self.download_desktop(rel, url, size, cx)
-            }
+            DesktopUpdate::Available(rel) => self.download_desktop(rel, cx),
             DesktopUpdate::Ready(path) => {
                 if self.demo {
                     self.desktop = DesktopUpdate::None;
@@ -808,10 +805,11 @@ impl FrameApp {
         cx.notify();
     }
 
-    fn download_desktop(&mut self, rel: Release, url: String, size: u64, cx: &mut Context<Self>) {
+    fn download_desktop(&mut self, rel: Release, cx: &mut Context<Self>) {
         self.desktop = DesktopUpdate::Downloading { pct: 0.0 };
         let (tx, rx) = async_channel::unbounded::<f32>();
         let demo = self.demo;
+        let release = rel.clone();
         let job = cx.background_executor().spawn(async move {
             if demo {
                 for i in 1..=40 {
@@ -820,7 +818,7 @@ impl FrameApp {
                 }
                 return Ok(PathBuf::new());
             }
-            selfupdate::download(&url, size, |p| {
+            selfupdate::download(&release, |p| {
                 let _ = tx.try_send(p);
             })
         });

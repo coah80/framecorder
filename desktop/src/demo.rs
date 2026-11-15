@@ -241,6 +241,8 @@ pub fn seed(app: &mut FrameApp, screen: &str) {
             app.desktop = DesktopUpdate::Available(Release {
                 version: "0.2.0".into(),
                 url: "demo".into(),
+                listing: "demo".into(),
+                signature: "demo".into(),
                 size: 0,
             });
         }

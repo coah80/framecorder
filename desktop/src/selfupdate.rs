@@ -12,6 +12,11 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+// the headset's updater checks releases with the same file
+#[allow(dead_code)]
+#[path = "../../src/signed.rs"]
+mod signed;
+
 const LATEST: &str = "https://api.github.com/repos/coah80/framecorder/releases/latest";
 
 #[derive(Clone, Debug)]
@@ -19,6 +24,9 @@ pub struct Release {
     pub version: String,
     /// where this platform's build is, and its size
     pub url: String,
+    /// where its `.sha256` and `.sig` are: what it is, and our signature on that
+    pub listing: String,
+    pub signature: String,
     pub size: u64,
 }
 
@@ -86,12 +94,16 @@ pub fn check() -> Result<Option<Release>, String> {
         return Ok(None);
     }
     // a release without a build of this app for here has nothing to offer
-    let Some(asset) = asset_name().and_then(|want| rel.assets.into_iter().find(|a| a.name == want)) else {
-        return Ok(None);
-    };
+    // the app goes up first and gets signed after: until its signature's there, it isn't an update yet
+    let url = |name: String| rel.assets.iter().find(|a| a.name == name).map(|a| a.browser_download_url.clone());
+    let Some(name) = asset_name() else { return Ok(None) };
+    let (Some(listing), Some(signature)) = (url(format!("{name}.sha256")), url(format!("{name}.sig"))) else { return Ok(None) };
+    let Some(asset) = rel.assets.iter().find(|a| a.name == name) else { return Ok(None) };
     Ok(Some(Release {
         version: rel.tag_name.trim_start_matches('v').to_string(),
-        url: asset.browser_download_url,
+        url: asset.browser_download_url.clone(),
+        listing,
+        signature,
         size: asset.size,
     }))
 }
@@ -113,10 +125,30 @@ fn update_path() -> Result<PathBuf, String> {
 }
 
 /// downloads the new build, calling `progress` with 0 to 1. blocking
-pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf, String> {
+/// what `release` has to turn out to be before it's run: the file our
+/// signature names, for this system, at the version it was offered as
+fn ours(listing: &str, signature: &str, keys: &[[u8; 32]], name: &str, version: &str) -> Result<String, String> {
+    let unsigned = "this update isn't signed by framecorder, so it wasn't installed";
+    let listing = signed::verify(listing, signature, keys).ok_or(unsigned)?;
+    if listing.name != name || listing.version != version {
+        return Err(unsigned.into());
+    }
+    Ok(listing.sum)
+}
+
+fn text(url: &str) -> Result<String, String> {
+    let mut res = agent().get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
+    res.body_mut().with_config().limit(4096).read_to_string().map_err(|e| e.to_string())
+}
+
+pub fn download(release: &Release, progress: impl Fn(f32)) -> Result<PathBuf, String> {
+    let name = asset_name().ok_or("there's no framecorder for this system")?;
+    let sum = ours(&text(&release.listing)?, &text(&release.signature)?, &signed::KEYS, name, &release.version)?;
+    let (url, size) = (release.url.as_str(), release.size);
     let dst = update_path()?;
     let mut res = agent().get(url).header("User-Agent", "framecorder-desktop").call().map_err(|e| e.to_string())?;
     let total = res.body().content_length().unwrap_or(size).max(1);
+    let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
     let mut reader = res.body_mut().as_reader();
     let mut out = std::fs::File::create(&dst).map_err(|e| format!("can't write {}: {e}", dst.display()))?;
     let (mut buf, mut done) = (vec![0u8; 64 * 1024], 0u64);
@@ -126,10 +158,17 @@ pub fn download(url: &str, size: u64, progress: impl Fn(f32)) -> Result<PathBuf,
             break;
         }
         out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        hash.update(&buf[..n]);
         done += n as u64;
         progress((done as f32 / total as f32).min(1.0));
     }
     out.sync_all().map_err(|e| e.to_string())?;
+    let got: String = hash.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    if got != sum {
+        drop(out);
+        let _ = std::fs::remove_file(&dst);
+        return Err("the update that downloaded isn't the one framecorder signed, so it wasn't installed".into());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -228,7 +267,22 @@ pub fn apply_and_restart(dmg: &PathBuf) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::newer;
+    use super::{newer, ours};
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+
+    #[test]
+    fn an_update_is_only_the_file_we_signed_for_this_system_and_version() {
+        let pair = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+        let keys = [pair.public_key().as_ref().try_into().unwrap()];
+        let listing = format!("{}  framecorder-setup.exe\nversion 0.2.1\n", "ab".repeat(32));
+        let signature: String = pair.sign(&[b"framecorder release v1\n", listing.as_bytes()].concat()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(ours(&listing, &signature, &keys, "framecorder-setup.exe", "0.2.1"), Ok("ab".repeat(32)));
+        // unsigned, signed by someone else, the mac's file, or an older release offered as this one
+        assert!(ours(&listing, "", &keys, "framecorder-setup.exe", "0.2.1").is_err());
+        assert!(ours(&listing, &signature, &super::signed::KEYS, "framecorder-setup.exe", "0.2.1").is_err());
+        assert!(ours(&listing, &signature, &keys, "framecorder-desktop-macos.dmg", "0.2.1").is_err());
+        assert!(ours(&listing, &signature, &keys, "framecorder-setup.exe", "0.3.0").is_err());
+    }
 
     #[test]
     fn versions() {
