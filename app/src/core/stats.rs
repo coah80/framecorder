@@ -245,7 +245,6 @@ fn perf(state: &Value, extra: &[String]) -> Value {
 /// the service's words, `clips` everything it has synced. a ping that
 /// doesn't make it changes nothing, the next launch tries again
 pub async fn ping(dir: &Path, app: &str, version: &str, settings: &[(&str, String)], clips: &[Entry]) {
-    let url = std::env::var("FRAMECORDER_STATS_URL").unwrap_or_else(|_| URL.into());
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let today = day(secs);
     let path = dir.join(FILE);
@@ -263,8 +262,16 @@ pub async fn ping(dir: &Path, app: &str, version: &str, settings: &[(&str, Strin
         return;
     }
     let first = state["first"].as_u64().unwrap_or(secs / 86400);
-    let Ok(client) = reqwest::Client::builder().use_rustls_tls().timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build() else { return };
-    let sent = client.post(url).header(reqwest::header::USER_AGENT, format!("framecorder-{app}/{version}")).json(&body(app, version, settings, clips, &state, first, secs)).send().await;
+    let plain = body(app, version, settings, clips, &state, first, secs).to_string();
+    let Some(sealed) = super::seal::seal(&super::seal::SERVICE, plain.as_bytes()) else { return };
+    let Ok(client) = reqwest::Client::builder().use_rustls_tls().https_only(true).timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build() else { return };
+    let sent = client
+        .post(URL)
+        .header(reqwest::header::USER_AGENT, "framecorder")
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(sealed)
+        .send()
+        .await;
     if sent.is_ok_and(|r| r.status().is_success()) {
         let _ = std::fs::write(&path, json!({"last": today, "ever": true, "first": first, "at": secs}).to_string());
     }

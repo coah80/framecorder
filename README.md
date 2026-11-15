@@ -164,6 +164,8 @@ the service also counts which country a message came from and the hour it arrive
 
 that's all of it. there's no id in it, no names, nothing from your videos, and no address is kept: the service adds each message to a total for the day and throws the message away, so it can't tell one install from another. it never sends while you're recording.
 
+each message is sealed on your device to a key only the stats service holds (X25519 and ChaCha20-Poly1305), then sent over https, so nothing on the way can read it, not your network and not cloudflare, which carries it. the service turns away anything that isn't sealed or didn't come over https.
+
 to turn it off: settings, general, "anonymous stats" in the tab, and "anonymous stats" in each app's settings. the code that sends it is `src/stats.rs` and `app/src/core/stats.rs`, and the service that counts it is `stats/`.
 
 ## notes

@@ -197,21 +197,26 @@ pub fn due() -> bool {
 }
 
 /// Sends today's ping, off to the side on its own thread: a few hundred
-/// bytes through curl, the same way a report goes. Whatever it mentioned
+/// bytes, sealed to the stats service's key, through curl over https. Whatever it mentioned
 /// comes off the count once it's through; a ping that didn't make it changes
 /// nothing, and tomorrow's carries the lot.
 pub fn ping(settings: Vec<(&'static str, String)>) {
     let spawned = std::thread::Builder::new().name("stats".into()).spawn(move || {
         let sent = load();
         let day = today();
-        let url = std::env::var("FRAMECORDER_STATS_URL").unwrap_or_else(|_| URL.into());
+        let Some(sealed) = crate::seal::seal(&crate::seal::SERVICE, body(&sent, &settings).to_string().as_bytes()) else { return };
         let child = Command::new("curl")
-            .args(["--silent", "--fail", "--max-time", "15", "--connect-timeout", "5", "--proto", "=https", "-H", "Content-Type: application/json"])
-            .args(["-A", concat!("framecorder-headset/", env!("CARGO_PKG_VERSION")), "--data-binary", &body(&sent, &settings).to_string(), &url])
-            .stdin(Stdio::null())
+            .args(["--silent", "--fail", "--max-time", "15", "--connect-timeout", "5", "--proto", "=https", "--tlsv1.2"])
+            .args(["-A", "framecorder", "-H", "Content-Type: application/octet-stream", "--data-binary", "@-", URL])
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status();
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child.stdin.take().map(|mut s| s.write_all(&sealed)).transpose()?;
+                child.wait()
+            });
         if !child.is_ok_and(|s| s.success()) {
             return;
         }

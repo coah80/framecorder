@@ -7,6 +7,7 @@ pub mod engine;
 pub mod live;
 pub mod pairlink;
 pub mod report;
+pub mod seal;
 pub mod space;
 pub mod stats;
 pub mod store;
