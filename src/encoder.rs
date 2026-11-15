@@ -169,7 +169,7 @@ fn peak_bitrate(bitrate: u32) -> u32 {
 /// Lowest HEVC level (V4L2 menu index) and tier that fit the stream.
 /// Limits from H.265 Annex A: luma picture size, luma samples per second,
 /// and Main / High tier bitrate in kbit/s.
-fn hevc_level(width: u32, height: u32, fps: u32, peak_kbps: u32) -> (i32, bool) {
+fn hevc_level(width: u32, height: u32, fps: u32, peak_kbps: u32, high_tier: bool) -> (i32, bool) {
     const LEVELS: [(i32, u64, u64, u32, u32); 7] = [
         (4, 2_228_224, 66_846_720, 12_000, 30_000),        // 4
         (6, 2_228_224, 133_693_440, 20_000, 50_000),       // 4.1
@@ -186,12 +186,12 @@ fn hevc_level(width: u32, height: u32, fps: u32, peak_kbps: u32) -> (i32, bool) 
             if peak_kbps <= main {
                 return (level, false);
             }
-            if peak_kbps <= high {
+            if high_tier && peak_kbps <= high {
                 return (level, true);
             }
         }
     }
-    (11, true)
+    (11, high_tier)
 }
 
 /// Lowest H.264 level (V4L2 menu index) that fits the stream. Limits from
@@ -305,9 +305,13 @@ impl Encoder {
         }
     }
 
-    fn set_ctrl(&self, name: &str, id: u32, value: i32) {
+    fn try_ctrl(&self, id: u32, value: i32) -> io::Result<()> {
         let mut ctrl = v4l2::v4l2_control { id, value };
-        if let Err(e) = unsafe { xioctl(self.file.as_raw_fd(), VIDIOC_S_CTRL, &mut ctrl) } {
+        unsafe { xioctl(self.file.as_raw_fd(), VIDIOC_S_CTRL, &mut ctrl) }
+    }
+
+    fn set_ctrl(&self, name: &str, id: u32, value: i32) {
+        if let Err(e) = self.try_ctrl(id, value) {
             log::warn!("encoder ignored {name}={value}: {e}");
         }
     }
@@ -323,9 +327,16 @@ impl Encoder {
         let peak_kbps = if cfg.qp.is_some() { 160_000 } else { peak_bitrate(cfg.bitrate) / 1000 };
         match cfg.codec {
             Codec::Hevc => {
-                let (level, high_tier) = hevc_level(cfg.width, cfg.height, cfg.fps, peak_kbps);
                 self.set_ctrl("hevc_profile", CID_HEVC_PROFILE, 0); // Main
-                self.set_ctrl("hevc_tier", CID_HEVC_TIER, high_tier as i32);
+                let (mut level, high_tier) = hevc_level(cfg.width, cfg.height, cfg.fps, peak_kbps, true);
+                if !high_tier {
+                    self.set_ctrl("hevc_tier", CID_HEVC_TIER, 0);
+                } else if self.try_ctrl(CID_HEVC_TIER, 1).is_err() {
+                    // the iris driver since kernel 7.2 has no high tier, so
+                    // stay on main and take the level that fits there instead
+                    level = hevc_level(cfg.width, cfg.height, cfg.fps, peak_kbps, false).0;
+                    log::info!("encoder has no hevc high tier, using main tier");
+                }
                 self.set_ctrl("hevc_level", CID_HEVC_LEVEL, level);
             }
             Codec::H264 => {
@@ -553,13 +564,17 @@ mod tests {
     #[test]
     fn hevc_levels() {
         // A 60 Mbit/s peak is past 4.1 High's 50, so level 5 High. 30 fits 4.1 High.
-        assert_eq!(hevc_level(1920, 1080, 60, 60_000), (7, true));
-        assert_eq!(hevc_level(1920, 1080, 60, 30_000), (6, true));
-        assert_eq!(hevc_level(1920, 1080, 60, 15_000), (6, false));
+        assert_eq!(hevc_level(1920, 1080, 60, 60_000, true), (7, true));
+        assert_eq!(hevc_level(1920, 1080, 60, 30_000, true), (6, true));
+        assert_eq!(hevc_level(1920, 1080, 60, 15_000, true), (6, false));
         // 1080p72 needs level 5 for the sample rate alone.
-        assert_eq!(hevc_level(1920, 1080, 72, 20_000), (7, false));
+        assert_eq!(hevc_level(1920, 1080, 72, 20_000, true), (7, false));
         // Square 1440 at 30 fps is light enough for level 4.
-        assert_eq!(hevc_level(1440, 1440, 30, 10_000), (4, false));
+        assert_eq!(hevc_level(1440, 1440, 30, 10_000, true), (4, false));
+        // With no high tier, 60 Mbit/s needs main tier's 5.2 and 30 needs 5.1.
+        assert_eq!(hevc_level(1920, 1080, 60, 60_000, false), (9, false));
+        assert_eq!(hevc_level(1920, 1080, 60, 30_000, false), (8, false));
+        assert_eq!(hevc_level(1920, 1080, 60, 500_000, false), (11, false));
     }
 
     #[test]
