@@ -31,6 +31,8 @@ The headset tab, the installer, the sync service, the desktop app, the Android a
 
 Clips never leave the user's network: sync is local Wi-Fi only, pinned at pairing, paired devices only. One tiny helper holds the one permission framecorder needs. We never touch a user's videos unless they ask.
 
+This repo is public and holds what runs on a user's devices. The services the apps talk to (the stats counter, the report relay) and anything about the machine they run on live in a private repo. Examples, tests and mock data use made-up people and places: Sam, `GAMING-PC`, `192.168.1.42`. Commits carry the maintainer's GitHub noreply address.
+
 ## How we like to work
 
 Simple systems that feel obvious. Find the real constraint, then the smallest change that makes the right behavior unsurprising. Don't keep complexity because it's already there (Frame Drop and the flatpak went the day the one-line installer replaced them), and don't add machinery because it looks impressive. Measure twice, cut once, and YAGNI.

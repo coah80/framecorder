@@ -125,7 +125,7 @@ fn truncate_end(text: &mut String, limit: usize) {
     }
 }
 
-#[path = "../../../report/src/shared.rs"]
+#[path = "../../../src/report_shared.rs"]
 mod shared;
 
 pub fn redact(text: &str) -> String {

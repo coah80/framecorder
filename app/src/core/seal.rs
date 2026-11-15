@@ -1,6 +1,6 @@
 //! Seals a stats ping to the stats service's own key before it leaves, so
 //! only the service can read it: not the network, not Cloudflare's edge
-//! where TLS ends. The other half is `stats/src/seal.rs`; the same code is in
+//! where TLS ends. The service holds the other half; the same code is in
 //! `src/seal.rs` for the headset.
 
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};

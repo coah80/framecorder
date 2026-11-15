@@ -203,7 +203,7 @@ fn steamvr(manifest: &Value) -> Value {
     json!({"steamvr_version": app["buildid"], "steamvr_branch": app.is_object().then_some(branch.filter(|s| !s.is_empty()).unwrap_or("public"))})
 }
 
-#[path = "../report/src/shared.rs"]
+#[path = "report_shared.rs"]
 mod shared;
 
 static MAC: LazyLock<Regex> =

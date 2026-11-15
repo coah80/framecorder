@@ -1,6 +1,6 @@
 //! What every report leaves out, whoever builds it: IP addresses, email
-//! addresses, Steam IDs and the names devices paired with. The headset, the
-//! apps and the relay all `#[path]`-include this file, so they agree.
+//! addresses, Steam IDs and the names devices paired with. The headset and
+//! the apps both `#[path]`-include this file, so they agree.
 
 use regex::Regex;
 use std::net::IpAddr;
