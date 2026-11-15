@@ -351,11 +351,11 @@ private fun model(): String {
     return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
 }
 
-/** This app and phone, the way an issue report describes them. */
+/** This app and the Android it runs on, the way an issue report describes them. Which phone it is stays out. */
 private fun appInfo() = ReportAppInfo(
     name = "framecorder android",
     version = BuildConfig.VERSION_NAME,
     os = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
-    device = model(),
+    device = "android phone",
     arch = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
 )

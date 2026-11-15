@@ -66,7 +66,7 @@ running on it.** Anything saved meanwhile waits on the Frame and catches up.
   nobody. A headset too old for live view gets a note to update instead.
 - **Report an issue**, from the bug button on the library, the frame tab
   and settings: type what went wrong, see what goes with it (this app and
-  phone, the Frame's diagnostics or why they couldn't be read, how many
+  Android version, never which phone, the Frame's diagnostics or why they couldn't be read, how many
   recent errors, which logs) and the full JSON, then send. The core posts
   it to the report relay, which opens a public GitHub issue, and the app
   shows the issue number with a button to open it. What's shown is exactly

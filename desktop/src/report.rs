@@ -43,7 +43,8 @@ pub fn push_typed(description: &mut String, text: &str) {
     description.extend(text.chars().filter(|c| !c.is_control() || *c == '\n').take(room));
 }
 
-/// this app, for the report: the version, the os, and a hostname-free word for the machine
+/// this app, for the report: the version, the os, and a word for the kind of machine,
+/// never its name or model
 pub fn app_info() -> AppInfo {
     AppInfo { device: device(), ..AppInfo::current("framecorder desktop", env!("CARGO_PKG_VERSION")) }
 }
@@ -57,14 +58,7 @@ fn device() -> String {
     }
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("sysctl")
-            .args(["-n", "hw.model"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .filter(|m| !m.is_empty())
-            .unwrap_or_else(|| "mac".into())
+        "mac".into()
     }
     #[cfg(windows)]
     {
