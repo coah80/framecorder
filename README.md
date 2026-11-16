@@ -66,6 +66,10 @@ on the command line: `framecorder --replay 30 --control`, then type `clip` (or `
 
 on the old 0.1.x desktop app? it can't update itself, so download the new app once from [the site](https://framecorder.coah80.com/) and open or install it. your pairings and settings carry over, and the new app closes the old one for you.
 
+on android, the app doesn't update itself. to get new versions without grabbing the apk from the site each time, add framecorder to [obtainium](https://github.com/ImranR98/Obtainium), which pulls updates straight from the github releases:
+
+[<img alt="Get it on Obtainium" src="assets/get-it-on-obtainium.png" height="60">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/coah80/framecorder)
+
 ## watch it live
 
 a paired app can watch what the headset shows while it happens. it's the same video the recorder makes (same shape, eye and quality as your settings, game audio and mic mixed in), sent over wi-fi. while it's already recording or keeping clips, watching costs the headset no extra encoding. nothing runs until someone's watching, and it stops when you stop it or close the app.
