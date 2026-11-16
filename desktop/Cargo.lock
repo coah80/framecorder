@@ -2037,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "framecorder-app"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "dirs 6.0.0",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "framecorder-desktop"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "auto-launch",
