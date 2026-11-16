@@ -14,6 +14,13 @@ pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, pane: Rect, hits: &mut Vec
     let left = Rect::new(pane.x, pane.y, pane.w - DEVICES_W - 22.0, pane.h);
     card(c, left);
     let inner = Rect::new(left.x + INSET, left.y + 28.0, left.w - 2.0 * INSET, left.h - 56.0);
+    if !m.sync.on {
+        c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, "Sync is off", TEXT, 1.0);
+        let r = Rect::new(inner.x, inner.y + 56.0, 200.0, BUTTON_H);
+        button(c, f, m, hits, r, "Turn on sync", Action::Sync, true);
+        devices(c, f, m, Rect::new(pane.x + pane.w - DEVICES_W, pane.y, DEVICES_W, pane.h), hits);
+        return;
+    }
     if !m.sync.available {
         let (what, fix) = sync_problem(m);
         c.text(f, Face::BodyMedium, 20.0, inner.x, inner.y + 26.0, what, RED, 1.0);

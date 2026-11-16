@@ -76,10 +76,12 @@ pub fn relocked() -> bool {
     home().is_ok_and(|h| h.join(RELOCK).exists())
 }
 
-/// Starts the sync service, for when it isn't running. It's a user service,
-/// so this needs no password.
-pub fn start_sync() -> bool {
-    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])
+pub fn sync_on() -> bool {
+    quiet("systemctl", &["--user", "is-enabled", "--quiet", "framecorder-sync.service"])
+}
+
+pub fn set_sync(on: bool) -> bool {
+    quiet("systemctl", &["--user", if on { "enable" } else { "disable" }, "--now", "framecorder-sync.service"])
 }
 
 /// Whether the tab starts with SteamVR.
@@ -230,6 +232,7 @@ pub fn run(restart_ui: bool) -> Result<Report> {
     // own, as the user set them.
     let fresh = !home.join(".config/systemd/user/framecorder-ui.service").exists();
     let auto_update = fresh || self::auto_update();
+    let sync = fresh || sync_on();
     let updated = install(&release, &home)?;
     desktop_entry(&home)?;
     // Run by hand, right after the installer asked for the password (sudo
@@ -250,7 +253,9 @@ pub fn run(restart_ui: bool) -> Result<Report> {
 
     // These have to work, or nothing runs, so they're not quiet about it.
     output("systemctl", &["--user", "daemon-reload"])?;
-    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])?;
+    if sync {
+        output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])?;
+    }
     if auto_update {
         output("systemctl", &["--user", "enable", "--now", UPDATE_TIMER])?;
     }

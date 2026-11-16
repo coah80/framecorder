@@ -125,6 +125,7 @@ pub enum Action {
     Send,
     /// Whether the tab starts with SteamVR.
     Autostart,
+    Sync,
     AutoUpdate,
 }
 
@@ -137,6 +138,7 @@ pub enum Status {
 /// What's known about syncing: whether the service is there, what's paired,
 /// and the code on show while pairing.
 pub struct SyncView<'a> {
+    pub on: bool,
     pub available: bool,
     /// Why the sync service couldn't start, when it said.
     pub error: Option<&'a str>,

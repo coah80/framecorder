@@ -104,6 +104,7 @@ fn only_one() -> Result<Option<std::fs::File>> {
 /// What the tab knows about syncing, looked up again every so often while
 /// it's on screen.
 struct Sync {
+    on: bool,
     available: bool,
     /// Why the service couldn't start, when it said.
     error: Option<String>,
@@ -121,9 +122,11 @@ struct Sync {
 
 impl Sync {
     fn look() -> Self {
-        let paired = pairing::paired();
+        let on = crate::setup::sync_on();
+        let paired = pairing::paired(on);
         Self {
-            available: pairing::available(),
+            on,
+            available: on && pairing::available(),
             error: pairing::start_error(),
             started: false,
             devices: paired.devices,
@@ -275,7 +278,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
         "clips" => Screen::Settings(Section::Clips),
         "files" | "files-menu" | "files-sd" | "files-gone" => Screen::Settings(Section::Files),
         "general" | "general-off" => Screen::Settings(Section::General),
-        "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
+        "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" | "sync-off" => Screen::Settings(Section::Sync),
         "setup-shape" | "setup-locked-out" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
         "setup-quality" => Screen::Onboarding(Step::Quality),
         "setup-audio" => Screen::Onboarding(Step::Audio),
@@ -305,8 +308,10 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     };
     let page = usize::from(state == "many-2");
     let error = (state == "sync-error").then_some("making the videos folder: Permission denied (os error 13)");
-    let available = !matches!(state, "setup-no-sync" | "no-sync" | "sync-error");
-    let sync = SyncView { available, error, devices: &devices, page, pairing, update: &update };
+    let on = !matches!(state, "sync-off" | "sync-off-home" | "general-off");
+    let devices: Vec<Device> = devices.into_iter().map(|d| if on { d } else { Device { presence: Presence::Away, transfer: None, ..d } }).collect();
+    let available = on && !matches!(state, "setup-no-sync" | "no-sync" | "sync-error");
+    let sync = SyncView { on, available, error, devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
     let hover_on = match state {
         "idle" => Some(Action::Record),
@@ -454,7 +459,9 @@ pub fn run() -> Result<()> {
         std::thread::sleep(SERVER_POLL);
     }
     // Closing framecorder from the tab stops sync too, this is it coming back.
-    let _ = Command::new("systemctl").args(["--user", "--no-block", "start", "framecorder-sync.service"]).status();
+    if crate::setup::sync_on() {
+        let _ = Command::new("systemctl").args(["--user", "--no-block", "start", "framecorder-sync.service"]).status();
+    }
     let vr = OpenVr::connect_as(AppType::Overlay)?;
     let tab = DashboardTab::new(&vr, KEY, "framecorder", view::WIDTH, view::HEIGHT, WIDTH_METERS)?;
     let icon = view::icon(128);
@@ -746,6 +753,21 @@ impl App {
                 }
                 return;
             }
+            Action::Sync => {
+                let want = !self.sync.on;
+                if !want {
+                    self.sync.stop_pairing();
+                }
+                if crate::setup::set_sync(want) {
+                    self.sync.on = want;
+                    self.sync.started = true;
+                    self.sync.available = want && pairing::available();
+                    self.dirty = true;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
             Action::AutoUpdate => {
                 let want = !self.auto_update;
                 if crate::setup::set_auto_update(want) {
@@ -775,7 +797,7 @@ impl App {
                         Err(e) => self.note = Some((format!("Couldn't remove {}: {e:#}", d.name), false)),
                     }
                 }
-                self.sync.devices = pairing::paired().devices;
+                self.sync.devices = pairing::paired(self.sync.on).devices;
                 self.sync.clamp_page();
                 return;
             }
@@ -1297,6 +1319,9 @@ impl App {
             self.autostart = crate::setup::autostart();
             self.auto_update = crate::setup::auto_update();
         }
+        if matches!(screen, Screen::Settings(Section::General | Section::Sync)) {
+            self.sync.on = crate::setup::sync_on();
+        }
         if matches!(screen, Screen::Home | Screen::Settings(Section::Files)) {
             self.free = free_for(&self.settings);
         }
@@ -1351,20 +1376,20 @@ impl App {
             self.relocked = relocked;
             self.dirty = true;
         }
-        let available = pairing::available();
+        let available = self.sync.on && pairing::available();
         // It's set up by the installer and every update, so missing means it
         // got stopped or never came up: start it rather than send anyone off
         // to reinstall. Once a run, in the background, so the tab doesn't wait.
-        if !available && !self.sync.started {
+        if !available && self.sync.on && !self.sync.started {
             self.sync.started = true;
-            std::thread::spawn(crate::setup::start_sync);
+            std::thread::spawn(|| crate::setup::set_sync(true));
         }
         let error = if available { None } else { pairing::start_error() };
         if error != self.sync.error {
             self.sync.error = error;
             self.dirty = true;
         }
-        let pairing::Paired { devices, update } = pairing::paired();
+        let pairing::Paired { devices, update } = pairing::paired(self.sync.on);
         if let Some(new) = devices.iter().find(|d| !self.sync.devices.iter().any(|old| old.id == d.id)) {
             self.note = Some((format!("Paired {}", new.name), true));
             self.toast = Some((format!("Paired {}", new.name), true));
@@ -1458,6 +1483,7 @@ impl App {
             Some(rec) => Status::Recording { recorded: rec.recorded() },
         };
         let sync = SyncView {
+            on: self.sync.on,
             available: self.sync.available,
             error: self.sync.error.as_deref(),
             devices: &self.sync.devices,

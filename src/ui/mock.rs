@@ -40,6 +40,7 @@ struct Mock {
     devices: Vec<Device>,
     page: usize,
     sync_available: bool,
+    sync_on: bool,
     pairing: Option<Pairing>,
     update: Update,
     unlocked: bool,
@@ -88,6 +89,7 @@ impl Mock {
             devices,
             page: 0,
             sync_available: start != "no-sync",
+            sync_on: true,
             pairing: None,
             update: if start == "updating" { Update::Updating } else { Update::Idle },
             unlocked: start != "locked-out",
@@ -152,6 +154,10 @@ impl Mock {
             Action::Send => self.report = Report::Sending(Instant::now()),
             Action::Autostart => self.autostart = !self.autostart,
             Action::AutoUpdate => self.auto_update = !self.auto_update,
+            Action::Sync => {
+                self.sync_on = !self.sync_on;
+                self.pairing = None;
+            }
             Action::Record if s.onboarded => match self.recording.take() {
                 Some(at) => {
                     let secs = at.elapsed().as_secs();
@@ -265,7 +271,8 @@ impl Mock {
             mics: &self.mics,
             screen: self.screen,
             sync: SyncView {
-                available: self.sync_available,
+                on: self.sync_on,
+                available: self.sync_on && self.sync_available,
                 error: None,
                 devices: &self.devices,
                 page: self.page,

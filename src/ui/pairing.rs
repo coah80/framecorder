@@ -314,8 +314,8 @@ pub fn end() {
 
 /// The paired devices from the sync service's list, each with its live
 /// state when the service is writing one.
-pub fn paired() -> Paired {
-    let live = clients::read();
+pub fn paired(running: bool) -> Paired {
+    let live = if running { clients::read() } else { None };
     let Some(Value::Array(list)) = read_json("devices.json") else { return Paired { devices: Vec::new(), update: clients::Update::Idle } };
     let devices = list
         .iter()
@@ -323,6 +323,9 @@ pub fn paired() -> Paired {
             let id = d["id"].as_str()?;
             let name = d["name"].as_str().unwrap_or("a device");
             let mut device = Device::paired(id, name);
+            if !running {
+                device.presence = Presence::Away;
+            }
             if let Some(live) = &live {
                 device.presence = Presence::Away;
                 if let Some(seen) = live.devices.iter().find(|c| c.id == id) {
