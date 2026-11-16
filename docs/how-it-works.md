@@ -2,7 +2,7 @@
 
 this is the long version of "how it works" from the readme: how framecorder gets the picture off the frame's panels, turns it into a normal flat video, and writes it out with audio, without costing the game anything you'd notice.
 
-the short version: it reads the exact buffer the vr compositor is sending to the panels, un-warps one eye with a single compute shader, and hands the result straight to the hardware encoder. pixels never touch the cpu, and nothing gets copied.
+the short version: it reads the exact buffer the vr compositor is sending to the panels, un-warps one eye (or blends both) with a single compute shader, and hands the result straight to the hardware encoder. pixels never touch the cpu, and nothing gets copied.
 
 ```
  vr compositor ──► scanout buffer (what the panels show, both eyes, lens-warped)
@@ -16,7 +16,8 @@ the short version: it reads the exact buffer the vr compositor is sending to the
  pipewire: game audio + mic ──► mix ──► aac ───────────────┤
                                                            ▼
                                        session thread ──► recording (.mp4)
-                                                      └─► replay buffer ──► clips
+                                                      ├─► replay buffer ──► clips
+                                                      └─► live view ──► paired apps (mpeg-ts)
 ```
 
 ## 1. finding what the panels show
@@ -29,7 +30,11 @@ framecorder goes one level lower, to the display itself (`src/kms.rs`). on linux
 2. find the plane on that crtc with the biggest framebuffer. that's the compositor's output, not a cursor or anything small
 3. every frame, wait for vblank, then ask the plane which framebuffer it's scanning out right now
 
-getting from a framebuffer id to the actual memory behind it is the one privileged thing framecorder does. the kernel only hands out buffer handles for someone else's framebuffer to processes with `CAP_SYS_ADMIN`, which is why the recorder binary (and nothing else) gets that capability, given once with `sudo setcap`. without it, the tab records steamvr's headset view instead, which needs nothing. with it, the buffer gets exported as a dmabuf, a file descriptor for a chunk of gpu memory.
+getting from a framebuffer id to the actual memory behind it is the one privileged thing framecorder does. the kernel only hands out buffer handles for someone else's framebuffer to processes with `CAP_SYS_ADMIN`.
+
+the installer gives that capability to `framecorder-grab`, a tiny root-owned helper in `~/.local/lib/framecorder`. it exports the buffer as a dmabuf, a file descriptor for a chunk of gpu memory, and passes it to the recorder over a socket.
+
+updates leave the helper alone, so replacing the recorder doesn't lose the permission. without an unlocked helper, the tab records steamvr's headset view instead, which needs no permission.
 
 a couple of details that matter:
 
@@ -49,7 +54,7 @@ the dmabuf gets imported into vulkan as an image (`src/gpu.rs`), exactly as it i
 
 the command buffers for every (scanout buffer, encoder buffer) pair are recorded once at import. per frame, framecorder just submits one of them and waits on a fence.
 
-## 3. un-warping one eye
+## 3. un-warping the eyes
 
 the panels show the picture *after* the lens pre-distortion, so a straight crop looks like a fisheye with colored fringes. to get a normal flat video, framecorder undoes exactly what steamvr did, using steamvr's own lens data (`src/lut.rs`).
 
@@ -62,6 +67,8 @@ this all happens once, at startup:
 
 one gotcha: the frame's compositor scans each eye out turned 180° inside its own half, while steamvr describes the panels upright. that was only found by recording on a real headset and getting upside-down videos. the shader flips each half back per sample, which keeps the seam between the eyes clean.
 
+`--eye both` builds two grids for the same level view direction, centered between the eyes. the automatic crop fits the area visible in either eye at the chosen aspect ratio. hidden areas are checked in the level render target before applying the compositor's cant. the blend copies steamvr's own headset view in its "both eyes, left/right dominant" modes (vrmonitor calls `SetHeadsetViewBlendRange(0.9, 1.0)` or `(0.0, 0.1)` for them, and the compositor draws the right eye over the left with a linear alpha ramp across that part of the overlap). so the dominant eye (`--dominant`, right by default) fills everything it sees, and the other eye shows only past the dominant eye's inner edge, fading in linearly over the tenth of the overlap next to that edge. the middle of the picture comes from one eye, so nothing ghosts there; nearby objects can only ghost inside that narrow fade. like steamvr, the overlap is measured at the picture's top and bottom rows, where the round lens edge pulls it in most (the middle row if a corner is one eye only). if one eye cannot show a direction, the other supplies it.
+
 the result is a small lookup grid (a few thousand points) uploaded to the gpu once. per frame, the gpu does no lens math at all.
 
 ## 4. the one shader
@@ -69,13 +76,14 @@ the result is a small lookup grid (a few thousand points) uploaded to the gpu on
 every recorded frame is one compute dispatch of `shaders/convert.comp`, reading the scanout and writing the encoder's input:
 
 - **tiles.** each invocation writes a 4×2 block of pixels, and a workgroup covers 32×16 pixels, exactly 4×2 grid cells. the workgroup loads the grid points it needs into shared memory once, and each pixel's source position is a bilinear blend of its cell's corners
+- **blended eyes.** `--eye both` uses the same dispatch. workgroups load the second grid only when its blend weights need it, and pixels sample both eyes only within the crossfade. the default single-eye path keeps one grid and one eye sample.
 - **sharp reads.** each sample is catmull-rom in 5 bilinear taps instead of plain bilinear. the panel image has already been resampled once by the compositor, and a soft filter on top of that looked noticeably blurrier than steam's own recorder
 - **color fringing, only where it matters.** near the middle of the lens the three channels line up, so a pixel gets one read. only cells where red or blue drift more than 0.3 px from green do three separate reads
 - **straight to nv12.** colors go through bt.709 limited range. the scanout is already gamma-encoded, which is what video expects, so there's no transfer conversion. luma and interleaved chroma get packed into 32-bit words and written straight into the encoder's input buffer (a dmabuf the encoder owns), with no byte stores and no atomics
 
 that costs about 0.6 ms of gpu per recorded frame at 500 mhz, less at gameplay clocks.
 
-it runs on its own vulkan queue with a global priority you pick (`--gpu-priority`). `low` only runs when the game leaves the gpu idle, which is the nicest to the game. but the compositor reuses the scanout buffer a frame later, so in a really heavy game `low` can miss frames, and `medium` or `high` trade a little of the game's gpu time for a steady capture.
+it runs on its own vulkan queue with a global priority (`--gpu-priority`), `high` by default. `low` only runs when the game leaves the gpu idle, which is the nicest to the game, but on the frame the compositor draws every frame into the one scanout buffer, so in a heavy game `low` reads late: missed frames, and frames torn by the compositor drawing the next one in while we read. `high` costs the game the shader's ~1.4 ms on the frames it's gpu bound, for a steady, clean capture.
 
 ## 5. timing
 
@@ -101,9 +109,9 @@ encoded packets come out of mmapped buffers and go off to the session thread. th
 audio comes from pipewire (`src/audio.rs`):
 
 - **game audio** is a capture stream with `stream.capture.sink`, which listens to the monitor of whatever the default output is. it's marked passive, so listening in doesn't keep the speakers awake when nothing's playing
-- **the mic** is a normal capture stream. the frame mutes it whenever the headset's off your head, so desk tests come out silent
+- **the mic** is a normal capture stream. the frame mutes it whenever the headset's off your head, so desk tests come out silent. the frame's two mic capsules show up in pipewire as a chain (the raw capture, eq, echo cancelling, noise suppression) ending at "Built-in Audio Capture", a loopback steamos puts in front of every mic, usb and bluetooth ones too. apps may record only from those loopbacks (`/etc/wireplumber/wireplumber.conf.d/10-access.conf`), the rest refuse a link, so the mic picker lists just them (`src/mics.rs`). a picked mic goes on the stream as `target.object`, and while it isn't plugged in wireplumber links the default one. steamos's echo cancelling follows the default mic, so a picked one that isn't the default comes in without it
 
-every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. `--mic-track` adds a mic-only track too. each track is aac-encoded with ffmpeg (`src/aac.rs`). it's our own small ffmpeg, linked into the recorder (`packaging/ffmpeg.sh`), so a steamos update that swaps the system's ffmpeg can't stop it starting:
+every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. the mixer puts both sources on the video's timeline and mixes them into one track, so every player plays the mic. while the mic's talking, the game ducks to 6 db under it (never more than 26 db, and not at all when it's already quieter), dropping in 15 ms and coming back over about half a second once you've stopped for 0.4 s, so a loud game never drowns out the voice. the mic is digital silence when nobody's talking, so only speech sets it off. with split tracks on (`--mic-track`, the tab's default) the game and the mic also get a track each, raw, for editing. the mix stays first, since that's the one players, phones and the live view play. each track is aac-encoded with ffmpeg (`src/aac.rs`). it's our own small ffmpeg, linked into the recorder (`packaging/ffmpeg.sh`), so a steamos update that swaps the system's ffmpeg can't stop it starting:
 
 - small timing wobbles get bridged
 - anything more than 50 ms off gets resynced by padding silence or dropping samples, so it can't slowly drift out of sync
@@ -113,9 +121,11 @@ every chunk gets stamped with `CLOCK_MONOTONIC`, the same clock the video uses. 
 
 one session thread (`src/mux.rs`) takes the video and audio packets and sends them wherever they're wanted. one encoder feeds everything, so recording and clipping at once never means two encodes.
 
-- **recordings** go to a writer thread (`src/writer.rs`, ffmpeg's muxer) as `name.mp4.part`, which gets renamed to `name.mp4` once it's finished. a slow disk can't hold up capture, and the sync service never picks up half a file. mp4s get finished on any clean stop: ctrl+c, ssh dropping, the tab quitting. use `.mkv` if you want recordings that survive the headset dying
+- **recordings** go to a writer thread (`src/writer.rs`, ffmpeg's muxer) as `name.mp4.part`, which gets renamed to `name.mp4` once it's finished. a slow disk can't hold up capture, and the sync service never picks up half a file. mp4s are hybrid (ffmpeg's `hybrid_fragmented`, the same idea as obs's hybrid mp4): fragmented every keyframe while they're written, then turned into a regular mp4 on any clean stop (ctrl+c, ssh dropping, the tab quitting). if the headset dies partway, the `.part` still plays up to the last couple of seconds, and the tab gives it its real name back the next time it starts the recorder. mkvs survive the same way. with `--remux` ("remux recordings to mp4" in the tab) a finished mkv recording is copied packet for packet into an mp4 straight from its `.part`, with the video put back on its exact frame grid since mkv only keeps milliseconds, and the mkv goes. clips are never remuxed, that would hold up the next one
+- **the folder** is `~/Videos/framecorder` or `framecorder` on a drive under `/run/media` (`src/folder.rs`, from `/proc/self/mountinfo`; an `mmcblk` source is the microSD card). a picked drive counts only while what's mounted deepest above its folder isn't in memory, because a card that's pulled leaves its mount point behind on `/run`, which is tmpfs, and recording there would fill ram. until it's back, files go to `~/Videos/framecorder`. the tab names each file and passes the path to the recorder, so changing format or folder never restarts it. the sync service watches whichever folder is in use: it wakes on mountinfo changes and on `ui.conf` changes, and re-execs itself in the new folder when it moves
+- **live view** sends the same video and mixed AAC packets to paired apps as MPEG-TS through the sync service's authenticated `GET /live`. The tab starts capture for the first viewer and stops it after the last leaves, unless recording or clipping still needs it. Each viewer has at most 1 MiB queued; a slow viewer skips ahead to the next keyframe. Local socket writes never wait for a reader. Live holds the last frame while the tab is visible, just like recordings.
 - **pausing.** the tab pauses the recording whenever the framecorder tab itself is on screen, so the controls never end up in your video. paused time is cut out of the timeline, so the video just continues from where it paused
-- **clips** come from a replay buffer (`src/replay.rs`): the last N seconds of already-encoded packets, kept in ram. nothing gets re-encoded. saving a clip finds the last keyframe far enough back, rebases the timestamps to zero and writes those packets out, on its own thread. that's about 2% of a core plus bitrate × length of ram (~190 mb for 30 s at high). starting a recording turns the buffer off and frees that ram, since the recording has it all anyway
+- **clips** come from a replay buffer (`src/replay.rs`): the last N seconds of already-encoded packets, kept in temporary segments on disk. ram holds their locations and recent writes waiting to reach disk; if disk storage is unavailable or fails, the buffer falls back to ram. the segment files are unlinked as soon as they're opened, so they disappear when the buffer and any clips being saved let go of them, even after a crash. nothing gets re-encoded. saving a clip finds the last keyframe far enough back, rebases the timestamps to zero and writes those packets out, on its own thread. starting a recording turns the buffer off, since the recording has it all anyway
 
 ## 9. the other source: steamvr's headset view
 
@@ -132,8 +142,8 @@ measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920×1080 hevc:
 | | |
 |---|---|
 | gpu | ~0.6 ms per recorded frame at 500 mhz, less at gameplay clocks |
-| cpu | ~5-7% of one core (out of 8) with game audio + mic |
-| ram | ~10 mb of its own, plus the replay buffer if clips are on |
+| cpu | ~5-7% of one core (out of 8) with game audio + mic, ~2% more with split tracks |
+| ram | ~10 mb of its own, plus replay packet locations and pending disk writes when clips are on; packet bytes fall back to ram if disk storage fails |
 | encoding | the hardware encoder, no cpu or gpu time |
 | the dashboard tab | under 1% of a core, sleeps when the menu's closed |
 

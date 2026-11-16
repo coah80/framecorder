@@ -1,5 +1,5 @@
-//! `framecorder-app --headless-sync <dir>`: the same sync engine with no
-//! window, for servers, testing and scripts.
+//! `framecorder-app --headless-sync <dir>`: the sync engine the apps run,
+//! with no window, for servers, testing and scripts.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,8 @@ pub const IDENTIFIER: &str = "com.framecorder.app";
 
 const USAGE: &str = "\
 usage:
-  framecorder-app                              start the app
+  framecorder-app live [--state <dir>] [--fp <paired fingerprint>]
+  framecorder-app report \"what went wrong\"  preview and send a public issue
   framecorder-app --headless-sync <dir> [options]
       --state <dir>        where pairings and the index live (default: the app's)
       --pair <link>        pair using the framecorder://pair?... link from the QR code
@@ -34,10 +35,9 @@ impl Listener for LogListener {
         match s.state {
             State::Connected => println!("connected to {} at {}", s.name, s.addr),
             State::Connecting => {}
-            State::Unreachable => println!(
-                "can't reach {}: make sure it's on, on the same wi-fi, and framecorder is running ({msg})",
-                s.name
-            ),
+            State::Unreachable => {
+                println!("can't reach {}: make sure it's on, on the same wi-fi, and framecorder is running ({msg})", s.name)
+            }
             State::Full => println!("out of space for clips from {}: {msg}", s.name),
             State::Unpaired | State::WrongFingerprint => println!("{}: {msg}", s.name),
         }
@@ -45,7 +45,7 @@ impl Listener for LogListener {
 
     fn progress(&self, p: &Progress) {
         // a line per 10%, not per chunk
-        let pct = if p.total > 0 { p.done * 100 / p.total } else { 100 };
+        let pct = p.done.saturating_mul(100).checked_div(p.total).unwrap_or(100);
         let mut last = self.last.lock().unwrap();
         if last.0 != p.id || pct / 10 != last.1 / 10 || p.done == p.total {
             println!("  {} {pct}% ({} / {} bytes)", p.name, p.done, p.total);
@@ -67,12 +67,8 @@ pub fn default_state_dir() -> PathBuf {
 }
 
 pub fn main(args: Vec<String>) -> i32 {
-    #[cfg(windows)]
-    unsafe {
-        // we're a windowed app on Windows, borrow the console we were run from
-        windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS);
-    }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
+    let _ = crate::core::report::init_logger(Box::new(logger), log::LevelFilter::Trace);
     let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
@@ -90,12 +86,47 @@ pub fn main(args: Vec<String>) -> i32 {
 }
 
 async fn run(args: Vec<String>) -> Result<(), String> {
+    if args.get(1).is_some_and(|a| a == "report") {
+        let description = args.get(2).ok_or("report needs a description")?;
+        let dir = dirs::video_dir().unwrap_or_else(std::env::temp_dir).join("framecorder");
+        let engine = Engine::new(
+            tokio::runtime::Handle::current(),
+            &default_state_dir(),
+            Arc::new(DirSink { root: dir }),
+            Arc::new(LogListener {
+                last: Mutex::new((String::new(), 0)),
+            }),
+            &crate::core::device_name(),
+            format!("desktop/{}", env!("CARGO_PKG_VERSION")),
+        );
+        let report = engine
+            .report_preview(
+                description,
+                crate::core::report::AppInfo::current("framecorder desktop", env!("CARGO_PKG_VERSION")),
+            )
+            .await;
+        println!(
+            "This report will appear on a public GitHub issue:\n{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+        println!("Send this report? Type yes:");
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+        if answer.trim() != "yes" {
+            return Ok(());
+        }
+        let sent = crate::core::report::send(&report).await.map_err(|e| e.to_string())?;
+        println!("{}", sent.url);
+        return Ok(());
+    }
     let mut it = args.into_iter().skip(1);
     let (mut dir, mut state, mut link, mut host, mut code, mut fp) = (None, None, None, None, None, None);
     let (mut exit_after, mut discover_secs, mut discover) = (None, 5u64, false);
+    let mut live = false;
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or_else(|| format!("{arg} needs a value\n{USAGE}"));
         match arg.as_str() {
+            "live" => live = true,
             "--headless-sync" => dir = Some(PathBuf::from(value()?)),
             "--state" => state = Some(PathBuf::from(value()?)),
             "--pair" => link = Some(value()?),
@@ -112,15 +143,15 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 
     if discover {
         println!("looking for frames for {discover_secs}s...");
-        discover::browse(Duration::from_secs(discover_secs), |f| {
-            println!("{}  {}  fp={}", f.name, f.addr, f.fingerprint);
+        discover::look(Duration::from_secs(discover_secs), true, &format!("desktop/{}", env!("CARGO_PKG_VERSION")), |f| {
+            println!("{}  {}  fp={}", f.name, f.addrs.join(","), f.fingerprint);
             true
         })
-        .await?;
+        .await;
         return Ok(());
     }
 
-    let dir = dir.ok_or(USAGE)?;
+    let dir = if live { std::env::temp_dir() } else { dir.ok_or(USAGE)? };
     let state = state.unwrap_or_else(default_state_dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't use {}: {e}", dir.display()))?;
     let engine = Engine::new(
@@ -129,11 +160,13 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         Arc::new(DirSink { root: dir.clone() }),
         Arc::new(LogListener { last: Mutex::new((String::new(), 0)) }),
         &crate::core::device_name(),
+        format!("desktop/{}", env!("CARGO_PKG_VERSION")),
     );
 
+    let live_fingerprint = fp.clone();
     if let Some(link) = link {
         let l = pairlink::parse(&link)?;
-        let h = engine.pair(&l.addr, Some(&l.fingerprint), &l.code).await?;
+        let h = engine.pair(&l.addr, Some(&l.fingerprint), &l.code, None).await?;
         println!("paired with {} ({})", h.name, h.fingerprint);
     } else if let Some(addr) = host {
         let code = code.ok_or("--host needs --code too")?;
@@ -144,12 +177,28 @@ async fn run(args: Vec<String>) -> Result<(), String> {
             Some(f) => Some(crate::core::tls::normalize_fingerprint(&f).ok_or("that fingerprint doesn't look right")?),
             None => None,
         };
-        let h = engine.pair(&addr, fp.as_deref(), &code).await?;
+        let h = engine.pair(&addr, fp.as_deref(), &code, None).await?;
         println!("paired with {} ({})", h.name, h.fingerprint);
     }
 
     if engine.hosts().is_empty() {
         return Err("not paired with any frame yet, use --pair or --host/--code".into());
+    }
+    if live {
+        let hosts = engine.hosts();
+        let host = match live_fingerprint {
+            Some(fp) => engine.host(&fp).ok_or("that frame isn't paired")?,
+            None if hosts.len() == 1 => hosts[0].clone(),
+            None => return Err("choose a paired frame with --fp".into()),
+        };
+        let status = engine.start_live(&host.fingerprint).await?;
+        println!("OBS URL: {}", status.url);
+        println!("In OBS, add a Media Source, turn Local File off, and paste that URL.");
+        let result = tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| format!("can't wait for ctrl+c: {e}"));
+        engine.stop_live().await;
+        return result;
     }
     println!("syncing into {} (state in {})", dir.display(), state.display());
     println!("note: this only works while the frame is on, on the same wi-fi, and framecorder is running on it");

@@ -18,6 +18,153 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const EVENTS_IDLE: Duration = Duration::from_secs(60);
 const DOWNLOAD_IDLE: Duration = Duration::from_secs(30);
 
+/// How the headset itself is doing.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct About {
+    pub battery: Option<Battery>,
+    pub storage: Option<Storage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Battery {
+    pub percent: u8,
+    /// On the charger, charging or full.
+    pub charging: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Storage {
+    pub free: u64,
+    pub total: u64,
+    /// How much of it framecorder's videos take.
+    pub videos: u64,
+}
+
+/// What the Frame's dashboard tab is up to, for a remote.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Remote {
+    /// The tab's running; it starts with SteamVR.
+    pub available: bool,
+    /// Its setup's been done, so it can record.
+    pub ready: bool,
+    pub recording: bool,
+    /// Recording and not paused (it pauses while the tab's on screen).
+    pub running: bool,
+    pub elapsed_ms: u64,
+    /// The clip length while clipping's on.
+    pub clips: Option<u32>,
+    /// A clip can be saved right now.
+    pub clip_ready: bool,
+    /// How many apps are watching live. Older headsets don't send it, and
+    /// can't do live view or blended eyes either.
+    pub live_viewers: Option<u32>,
+}
+
+/// The Frame's recording settings. They apply from its next recording.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Recording {
+    /// wide, square, tall or both
+    pub shape: String,
+    /// standard, high or max
+    pub quality: String,
+    /// auto, 60 or 30
+    pub fps: String,
+    pub game_audio: bool,
+    pub mic: bool,
+    /// Whether it keeps a replay buffer to save clips from.
+    pub clips: bool,
+    /// How long a clip is, in seconds: 15, 30, 60 or 120.
+    pub clip: u32,
+    #[serde(default)]
+    pub eye: Option<String>,
+    /// With both eyes blended, the eye that fills the middle. Older headsets
+    /// don't have it.
+    #[serde(default)]
+    pub dominant: Option<String>,
+    /// The game and the mic on their own tracks too. Older headsets can't.
+    #[serde(default)]
+    pub split_audio: Option<bool>,
+    #[serde(default)]
+    pub panels: Option<bool>,
+    /// Which mic, by PipeWire node name, empty for the one SteamOS uses.
+    /// Older headsets can't pick.
+    #[serde(default)]
+    pub mic_source: Option<String>,
+    /// hevc or h264. Older headsets can't pick.
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// mp4 or mkv. Older headsets can't pick.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Recordings in mkv come out as mp4 once they're done.
+    #[serde(default)]
+    pub remux: Option<bool>,
+    /// Where recordings go, a path from `folders`, empty for ~/Videos/framecorder.
+    /// Older headsets can't pick.
+    #[serde(default)]
+    pub folder: Option<String>,
+    #[serde(default)]
+    pub folders: Option<Vec<Folder>>,
+    /// The mics the headset has right now, its own first.
+    #[serde(default)]
+    pub mics: Option<Vec<Mic>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mic {
+    pub name: String,
+    pub label: String,
+    /// What SteamOS records from when nothing's picked.
+    #[serde(default)]
+    pub default: bool,
+}
+
+/// Somewhere recordings can go on the headset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Folder {
+    pub path: String,
+    pub name: String,
+    /// False for a picked drive that's been taken out; it records to
+    /// ~/Videos/framecorder meanwhile.
+    pub plugged_in: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fps: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clips: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eye: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mic_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remux: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RemoteClip {
     pub id: String,
@@ -34,6 +181,20 @@ pub struct Hello {
     pub name: String,
     pub version: u32,
     pub fingerprint: String,
+}
+
+/// What the Frame says about framecorder updates.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct UpdateStatus {
+    /// The version on the Frame.
+    pub installed: String,
+    /// The newest one, when the release says (older ones didn't).
+    pub latest: Option<String>,
+    /// There's something newer than what's installed.
+    pub available: bool,
+    /// An update's being installed right now.
+    #[serde(default)]
+    pub updating: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -53,7 +214,10 @@ pub enum ApiError {
     /// The Frame said no, with its reason.
     Refused(u16, String),
     /// This device doesn't have the space for a file.
-    Full { need: u64, free: u64 },
+    Full {
+        need: u64,
+        free: u64,
+    },
     Other(String),
 }
 
@@ -83,18 +247,21 @@ pub struct Client {
 
 impl Client {
     /// A client that only talks to the Frame with this fingerprint.
-    pub fn pinned(addr: &str, fingerprint: &str) -> Result<Self, ApiError> {
-        Self::build(addr, PinnedVerifier::pinned(fingerprint))
+    pub fn pinned(addr: &str, fingerprint: &str, app: &str) -> Result<Self, ApiError> {
+        Self::build(addr, PinnedVerifier::pinned(fingerprint), app)
     }
 
     /// Accepts whatever certificate is there and tells you its fingerprint
     /// afterwards. Only for pairing with a Frame typed in by address.
-    pub fn capture(addr: &str) -> Result<Self, ApiError> {
-        Self::build(addr, PinnedVerifier::capture())
+    pub fn capture(addr: &str, app: &str) -> Result<Self, ApiError> {
+        Self::build(addr, PinnedVerifier::capture(), app)
     }
 
-    fn build(addr: &str, verifier: Arc<PinnedVerifier>) -> Result<Self, ApiError> {
+    fn build(addr: &str, verifier: Arc<PinnedVerifier>, app: &str) -> Result<Self, ApiError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("X-Framecorder-App", app.parse().map_err(|_| ApiError::Other("invalid app identity".into()))?);
         let http = reqwest::Client::builder()
+            .default_headers(headers)
             .use_preconfigured_tls(client_config(verifier.clone()))
             .connect_timeout(CONNECT_TIMEOUT)
             .no_proxy()
@@ -141,6 +308,12 @@ impl Client {
         Err(ApiError::Refused(code, msg))
     }
 
+    async fn send_stream(&self, rb: reqwest::RequestBuilder) -> Result<reqwest::Response, ApiError> {
+        tokio::time::timeout(REQUEST_TIMEOUT, self.send(rb))
+            .await
+            .map_err(|_| ApiError::Unreachable("timed out waiting for the frame".into()))?
+    }
+
     fn classify(&self, e: reqwest::Error) -> ApiError {
         let text = error_chain(&e);
         if text.contains("ApplicationVerificationFailure") || text.contains("application verification failure") {
@@ -155,6 +328,48 @@ impl Client {
         ApiError::Other(text)
     }
 
+    pub async fn live(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ApiError>> + Send>>, ApiError> {
+        let response = match self
+            .send_stream(self.request(reqwest::Method::GET, "/live"))
+            .await
+        {
+            Err(ApiError::Refused(404, _)) => {
+                return Err(ApiError::Refused(
+                    404,
+                    "the headset needs an update to show live view".into(),
+                ))
+            }
+            result => result?,
+        };
+        Ok(Box::pin(response.bytes_stream().map(|chunk| {
+            chunk.map_err(|_| ApiError::Unreachable("live view disconnected; reconnecting".into()))
+        })))
+    }
+
+    pub async fn frame(&self) -> Result<serde_json::Value, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/frame").timeout(Duration::from_secs(2));
+        self.send(rb)
+            .await?
+            .json()
+            .await
+            .map_err(|_| ApiError::Other("the headset sent unreadable status".into()))
+    }
+
+    pub async fn diagnostics(&self) -> Result<Option<serde_json::Value>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/diagnostics").timeout(Duration::from_secs(4));
+        match self.send(rb).await {
+            Ok(r) => r
+                .json()
+                .await
+                .map(Some)
+                .map_err(|_| ApiError::Other("the headset sent unreadable diagnostics".into())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn hello(&self) -> Result<Hello, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/hello").timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
@@ -164,6 +379,11 @@ impl Client {
         let body = serde_json::json!({ "code": code, "device_name": device_name });
         let rb = self.request(reqwest::Method::POST, "/pair").json(&body).timeout(REQUEST_TIMEOUT);
         self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    pub async fn unpair(&self) -> Result<(), ApiError> {
+        let rb = self.request(reqwest::Method::DELETE, "/pair").timeout(Duration::from_secs(3));
+        self.send(rb).await.map(|_| ())
     }
 
     pub async fn clips(&self) -> Result<Vec<RemoteClip>, ApiError> {
@@ -182,20 +402,63 @@ impl Client {
         }
     }
 
+    /// Whether there's a framecorder update for the Frame. None from Frames
+    /// older than this, which don't say.
+    pub async fn update_status(&self) -> Result<Option<UpdateStatus>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/update").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(resp) => resp.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Has the Frame install its update now, rather than within a few hours.
+    pub async fn start_update(&self) -> Result<(), ApiError> {
+        let rb = self.request(reqwest::Method::POST, "/update").timeout(REQUEST_TIMEOUT);
+        self.send(rb).await.map(|_| ())
+    }
+
+    /// `None` from a Frame whose framecorder is older than these.
+    pub async fn recording(&self) -> Result<Option<Recording>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/recording").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(r) => r.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn set_recording(&self, settings: &RecordingPatch) -> Result<Recording, ApiError> {
+        let rb = self.request(reqwest::Method::PATCH, "/recording").json(settings).timeout(REQUEST_TIMEOUT);
+        self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    /// `None` from a Frame whose framecorder can't take commands yet.
+    pub async fn remote(&self) -> Result<Option<Remote>, ApiError> {
+        let rb = self.request(reqwest::Method::GET, "/remote").timeout(REQUEST_TIMEOUT);
+        match self.send(rb).await {
+            Ok(r) => r.json().await.map(Some).map_err(|e| ApiError::Other(e.to_string())),
+            Err(ApiError::Refused(404, _)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Asks the Frame to `record`, `stop` or `clip`, and says how it went.
+    pub async fn command(&self, what: &str) -> Result<Remote, ApiError> {
+        let rb = self.request(reqwest::Method::POST, "/remote").json(&serde_json::json!({ "do": what })).timeout(REQUEST_TIMEOUT);
+        self.send(rb).await?.json().await.map_err(|e| ApiError::Other(e.to_string()))
+    }
+
     pub async fn events(&self) -> Result<Events, ApiError> {
         let rb = self.request(reqwest::Method::GET, "/events").header("Accept", "text/event-stream");
-        let resp = self.send(rb).await?;
+        let resp = self.send_stream(rb).await?;
         Ok(Events { body: Box::pin(resp.bytes_stream()), parser: SseParser::default(), pending: Vec::new() })
     }
 
     /// Downloads `clip` into `part`, picking up where an earlier try left off.
     /// `progress` gets (bytes so far, total).
-    pub async fn download(
-        &self,
-        clip: &RemoteClip,
-        part: &Path,
-        mut progress: impl FnMut(u64, u64),
-    ) -> Result<(), ApiError> {
+    pub async fn download(&self, clip: &RemoteClip, part: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), ApiError> {
         let size = clip.size;
         let io = move |e: std::io::Error| {
             if super::space::is_full(&e) {
@@ -217,7 +480,7 @@ impl Client {
         if have > 0 {
             rb = rb.header("Range", format!("bytes={have}-"));
         }
-        let resp = match self.send(rb).await {
+        let resp = match self.send_stream(rb).await {
             Err(ApiError::Refused(416, _)) => {
                 // what we have doesn't fit the file anymore, start over
                 tokio::fs::remove_file(part).await.ok();
@@ -239,14 +502,8 @@ impl Client {
         if let Some(dir) = part.parent() {
             tokio::fs::create_dir_all(dir).await.map_err(io)?;
         }
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(resumed)
-            .truncate(!resumed)
-            .open(part)
-            .await
-            .map_err(io)?;
+        let mut file =
+            tokio::fs::OpenOptions::new().create(true).write(true).append(resumed).truncate(!resumed).open(part).await.map_err(io)?;
         if resumed {
             log::info!("resuming {} at {have} of {}", clip.name, clip.size);
         }
@@ -386,6 +643,75 @@ impl Events {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn streaming_requests_time_out_before_headers() {
+        use tokio::io::AsyncReadExt;
+        for file in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let (tx, ready) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(stream.read_u8().await.unwrap());
+                }
+                tx.send(()).unwrap();
+                std::future::pending::<()>().await;
+                drop(stream);
+            });
+            let mut client = Client::capture(&addr, "desktop/test").unwrap();
+            client.base = format!("http://{addr}");
+            let dir = tempfile::tempdir().unwrap();
+            let part = dir.path().join("test.part");
+            let call = tokio::spawn(async move {
+                if file {
+                    let clip = RemoteClip {
+                        id: "r-test".into(),
+                        kind: "recording".into(),
+                        name: "test.mp4".into(),
+                        size: 5,
+                        duration_s: None,
+                        created: 0,
+                    };
+                    client.download(&clip, &part, |_, _| {}).await
+                } else {
+                    client.events().await.map(|_| ())
+                }
+            });
+            ready.await.unwrap();
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(16)).await;
+            let result = tokio::time::timeout(Duration::from_secs(1), call).await.expect("header wait must be bounded").unwrap();
+            assert!(matches!(result, Err(ApiError::Unreachable(_))));
+            tokio::time::resume();
+            server.abort();
+            assert!(server.await.unwrap_err().is_cancelled());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn event_body_keeps_its_separate_idle_timeout() {
+        let mut events = Events { body: Box::pin(futures_util::stream::pending()), parser: SseParser::default(), pending: Vec::new() };
+        let next = tokio::spawn(async move { events.next().await });
+        tokio::time::advance(Duration::from_secs(16)).await;
+        assert!(!next.is_finished());
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert_eq!(next.await.unwrap().unwrap_err(), ApiError::Unreachable("the frame went quiet".into()));
+    }
+
+    #[test]
+    fn recording_eye_accepts_blended_and_future_values() {
+        for eye in ["left", "right", "both", "future"] {
+            let value = serde_json::json!({"shape":"wide", "quality":"high", "fps":"auto",
+                "game_audio":true, "mic":true, "clips":true, "clip":30, "eye":eye});
+            let recording: Recording = serde_json::from_value(value).unwrap();
+            assert_eq!(recording.eye.as_deref(), Some(eye));
+            let patch = RecordingPatch { eye: recording.eye, ..RecordingPatch::default() };
+            assert_eq!(serde_json::to_value(patch).unwrap(), serde_json::json!({"eye":eye}));
+        }
+    }
 
     #[test]
     fn parses_sse_across_chunks() {

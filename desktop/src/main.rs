@@ -1,0 +1,377 @@
+//! framecorder's desktop app, native on gpui-ce. the sync engine is the same
+//! one the android app uses, from app/src/core.
+
+// a windowed program on windows, so no console window opens next to it (debug
+// builds keep the console, for the log)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod app;
+mod appimage;
+mod assets;
+mod autostart;
+mod check;
+mod clipboard;
+mod clips;
+mod demo;
+mod format;
+mod frame;
+mod live;
+mod oldapp;
+mod pair;
+mod prefs;
+mod preview;
+mod remote;
+mod report;
+mod search;
+mod selection;
+mod selfupdate;
+mod settings;
+mod sidebar;
+mod sound;
+mod sync;
+mod theme;
+mod thumbs;
+mod tray;
+mod widgets;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use gpui::{
+    prelude::*, px, size, AnyWindowHandle, App, AppContext, Bounds, Entity, Global, QuitMode, TitlebarOptions,
+    WindowBounds, WindowOptions,
+};
+
+use app::FrameApp;
+use tray::TrayMsg;
+
+const USAGE: &str = "\
+usage:
+  framecorder-desktop                  start the app
+  framecorder-desktop --minimized      start in the tray, if it's set to keep running
+  framecorder-desktop --demo <screen>  made up frames and clips, nothing syncs.
+                                       screens: clips, list, clips-selecting, list-selecting, syncing, unreachable, pair, settings, frame,
+                                       frame-recording, frame-paused, frame-old, frame-closed, frame-unreachable, frame-syncing,
+                                       frame-eye, frame-blended, frame-no-blend, frame-locked, frame-mics, frame-folders, check, live,
+                                       live-connecting, live-on, live-fullscreen, live-error, live-old, live-no-ffmpeg, report,
+                                       report-collecting, report-review, report-json, report-sending, report-sent, report-error";
+
+/// the one app, and its window when it has one. the window can close and
+/// come back from the tray, the app stays
+struct Main {
+    app: Entity<FrameApp>,
+    window: Option<AnyWindowHandle>,
+    icon: Option<Arc<image::RgbaImage>>,
+}
+
+impl Global for Main {}
+
+fn init_log() {
+    let mut log = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,naga=warn,wgpu=warn,tracing=warn"),
+    );
+    // a windowed program on windows has nowhere to print, so the log goes in a
+    // file next to the state. appended, since a second launch writes here too
+    // before it hands over to the first, and started over once it's big
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        let path = sync::state_dir().join("desktop.log");
+        let _ = std::fs::create_dir_all(sync::state_dir());
+        let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 2_000_000);
+        let file = std::fs::OpenOptions::new().create(true).append(!big).write(true).truncate(big).open(&path);
+        if let Ok(file) = file {
+            log.target(env_logger::Target::Pipe(Box::new(file)));
+        }
+    }
+    let _ = framecorder_app_lib::core::report::init_logger(Box::new(log.build()), log::LevelFilter::Trace);
+}
+
+fn main() {
+    init_log();
+
+    let mut demo: Option<String> = None;
+    let mut minimized = false;
+    let mut after_update = false;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--demo" => demo = Some(args.next().unwrap_or_else(|| "clips".into())),
+            "--minimized" => minimized = true,
+            "--after-update" => after_update = true,
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                return;
+            }
+            other => {
+                eprintln!("unknown argument {other}\n{USAGE}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(screen) = &demo {
+        if !demo::SCREENS.contains(&screen.as_str()) {
+            eprintln!("no demo screen called {screen}\n{USAGE}");
+            std::process::exit(2);
+        }
+    }
+
+    let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("couldn't start: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // only one of us, the second launch just brings the first one up. this
+    // comes before the engine starts, so the second copy never syncs anything
+    let state_dir = if demo.is_some() { std::env::temp_dir().join("framecorder-demo") } else { sync::state_dir() };
+    let _ = std::fs::create_dir_all(&state_dir);
+    let _lock = if demo.is_none() {
+        match sync::single_instance(&state_dir, if after_update { Duration::from_secs(10) } else { Duration::ZERO }) {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    // "start with the computer" goes by the same name as the tauri app's, so
+    // after switching it can still start the old app. pointing it here means
+    // only this one comes up after the next login
+    if demo.is_none() && autostart::is_enabled() == Some(true) {
+        if let Err(e) = autostart::set(true) {
+            log::warn!("couldn't point start with the computer at this app: {e}");
+        }
+    }
+    // the old app syncs from the same state, so it goes before we start
+    let closed_old = if demo.is_none() {
+        match oldapp::close() {
+            Ok(closed) => closed,
+            Err(_) => {
+                show_oldapp_error();
+                rt.shutdown_background();
+                return;
+            }
+        }
+    } else {
+        false
+    };
+    #[cfg(target_os = "linux")]
+    if demo.is_none() {
+        appimage::integrate(assets::APP_ICON_PNG);
+    }
+    let (core, rx) = match sync::start(rt.handle().clone(), demo.is_some()) {
+        Ok(started) => started,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let state_dir = core.state_dir.clone();
+    let is_demo = demo.is_some();
+    if !is_demo {
+        let dir = state_dir.clone();
+        let engine = core.engine.clone();
+        core.rt.spawn(async move {
+            loop {
+                let p = prefs::load(&dir);
+                if p.stats {
+                    let on = |b: bool| if b { "on" } else { "off" }.to_owned();
+                    let settings = [
+                        ("background", on(p.background)),
+                        ("notify", on(p.notify)),
+                        ("view", if p.grid { "grid" } else { "list" }.to_owned()),
+                        ("arch", if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }.to_owned()),
+                        ("paired", framecorder_app_lib::core::stats::paired(engine.hosts().len())),
+                    ];
+                    framecorder_app_lib::core::stats::ping(&dir, "desktop", env!("CARGO_PKG_VERSION"), &settings, &engine.clips()).await;
+                }
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+    }
+
+    let application = gpui_platform::application().with_assets(assets::Assets);
+    application.on_reopen(open_main);
+    application.run(move |cx: &mut App| {
+        // windows shows no notification at all from an app without an identity.
+        // the installer's shortcuts carry the same id
+        cx.set_app_identity("coah80.framecorder", "framecorder");
+        assets::load_fonts(cx);
+        let icon = assets::app_icon().map(Arc::new);
+
+        let app = cx.new(|cx| {
+            let mut app = FrameApp::new(core, rx, is_demo, cx);
+            if let Some(screen) = &demo {
+                demo::seed(&mut app, screen);
+            }
+            if closed_old {
+                app.toast("closed the old framecorder app", cx);
+            }
+            app
+        });
+        cx.set_global(Main { app: app.clone(), window: None, icon: icon.clone() });
+
+        // a clip's notification opens it, or shows it in its folder
+        let notified = app.clone();
+        cx.on_system_notification_response(move |resp, cx| {
+            notified.update(cx, |app, cx| app.notification_response(resp, cx));
+        });
+
+        // the tray, unless this is a demo. it needs the window system up, so after the app
+        let mut has_tray = false;
+        if !is_demo {
+            if let Some(icon) = &icon {
+                let (tx, trx) = async_channel::unbounded::<TrayMsg>();
+                match tray::create(icon, tx) {
+                    Ok(t) => {
+                        has_tray = true;
+                        app.update(cx, |app, _| app.attach_tray(t));
+                        cx.spawn(async move |cx| {
+                            while let Ok(msg) = trx.recv().await {
+                                cx.update(|cx| match msg {
+                                    TrayMsg::Open => open_main(cx),
+                                    TrayMsg::SyncNow => cx.global::<Main>().app.read(cx).core.engine.retry_now(),
+                                    TrayMsg::Record => {
+                                        cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_record(cx))
+                                    }
+                                    TrayMsg::Clip => {
+                                        cx.global::<Main>().app.clone().update(cx, |app, cx| app.tray_clip(cx))
+                                    }
+                                    TrayMsg::Quit => cx.global::<Main>().app.clone().update(cx, |app, cx| app.quit(cx)),
+                                });
+                            }
+                        })
+                        .detach();
+                    }
+                    Err(e) => log::warn!("no tray icon, closing the window will quit: {e}"),
+                }
+            }
+            // a second launch leaves a note, we answer by showing the window
+            let marker = sync::show_marker(&state_dir);
+            cx.spawn(async move |cx| loop {
+                cx.background_executor().timer(Duration::from_millis(500)).await;
+                if marker.exists() {
+                    let _ = std::fs::remove_file(&marker);
+                    cx.update(open_main);
+                }
+            })
+            .detach();
+        }
+
+        // gpui quits by itself when the last window goes, we decide that ourselves
+        cx.set_quit_mode(QuitMode::Explicit);
+        cx.on_window_closed(|cx, id| {
+            let main = cx.global_mut::<Main>();
+            if main.window.is_some_and(|w| w.window_id() == id) {
+                main.window = None;
+            }
+            if cx.windows().is_empty() {
+                let keep = cx.global::<Main>().app.clone();
+                let keep = keep.update(cx, |app, cx| app.keep_running_on_close(cx));
+                if !keep {
+                    cx.quit();
+                }
+            }
+        })
+        .detach();
+
+        let background = app.read(cx).background;
+        if !(minimized && has_tray && background) {
+            open_main(cx);
+        }
+    });
+    rt.shutdown_background();
+}
+
+/// shows the window: brings it up if there is one, else opens it
+fn open_main(cx: &mut App) {
+    let (existing, app, icon) = {
+        let main = cx.global::<Main>();
+        (main.window, main.app.clone(), main.icon.clone())
+    };
+    log::info!("showing the window");
+    if let Some(handle) = existing {
+        if handle
+            .update(cx, |_, window, _| {
+                window.activate_window();
+            })
+            .is_ok()
+        {
+            return;
+        }
+    }
+    let bounds = Bounds::centered(None, size(px(920.), px(680.)), cx);
+    let opened = cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions { title: Some("framecorder".into()), ..Default::default() }),
+            app_id: Some("com.framecorder.desktop".into()),
+            window_min_size: Some(size(px(720.), px(520.))),
+            icon,
+            ..Default::default()
+        },
+        |_, _| app,
+    );
+    match opened {
+        Ok(handle) => {
+            log::info!("opened a new window");
+            cx.global_mut::<Main>().window = Some(handle.into());
+            cx.activate(true);
+        }
+        Err(e) => {
+            log::error!("couldn't open a window: {e}");
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        }
+    }
+}
+
+struct OldAppError;
+
+impl Render for OldAppError {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(32.))
+            .bg(theme::c(theme::BASE))
+            .text_color(theme::c(theme::TEXT))
+            .font_family(theme::BODY)
+            .text_size(px(16.))
+            .child(
+                gpui::div().w_full().min_w_0().whitespace_normal().child(
+                    "the old framecorder app is still running and wouldn't close. quit it from its tray icon, then open this one again",
+                ),
+            )
+    }
+}
+
+fn show_oldapp_error() {
+    let application = gpui_platform::application().with_assets(assets::Assets);
+    application.on_reopen(|cx| cx.activate(true));
+    application.run(|cx| {
+        assets::load_fonts(cx);
+        let result = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(600.), px(240.)), cx))),
+                titlebar: Some(TitlebarOptions { title: Some("framecorder".into()), ..Default::default() }),
+                app_id: Some("com.framecorder.desktop".into()),
+                ..Default::default()
+            },
+            |_, cx| cx.new(|_| OldAppError),
+        );
+        if let Err(e) = result {
+            log::error!("couldn't open a window: {e}");
+            cx.quit();
+        } else {
+            cx.activate(true);
+        }
+    });
+}

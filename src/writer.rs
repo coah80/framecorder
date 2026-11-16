@@ -35,7 +35,48 @@ pub struct Packet {
     pub pts: i64,
     pub duration: i64,
     pub key: bool,
-    pub data: Arc<[u8]>,
+    pub data: Payload,
+}
+
+/// A packet's bytes: in memory, or on disk (the replay buffer keeps them
+/// there, see replay.rs).
+#[derive(Clone)]
+pub enum Payload {
+    Mem(Arc<[u8]>),
+    Disk { file: Arc<std::fs::File>, offset: u64, len: usize },
+}
+
+impl Payload {
+    pub fn len(&self) -> usize {
+        match self {
+            Payload::Mem(b) => b.len(),
+            Payload::Disk { len, .. } => *len,
+        }
+    }
+
+    /// Copies the bytes into `out`, which is `len()` long. Ones read from
+    /// disk get dropped from memory again right after.
+    pub fn read_into(&self, out: &mut [u8]) -> std::io::Result<()> {
+        match self {
+            Payload::Mem(b) => {
+                out.copy_from_slice(b);
+                Ok(())
+            }
+            Payload::Disk { file, offset, len } => {
+                use std::os::fd::AsRawFd;
+                use std::os::unix::fs::FileExt;
+                file.read_exact_at(out, *offset)?;
+                unsafe { libc::posix_fadvise(file.as_raw_fd(), *offset as i64, *len as i64, libc::POSIX_FADV_DONTNEED) };
+                Ok(())
+            }
+        }
+    }
+}
+
+impl From<Vec<u8>> for Payload {
+    fn from(v: Vec<u8>) -> Self {
+        Payload::Mem(Arc::from(v))
+    }
 }
 
 /// An audio encoder's stream parameters, copied so files can be set up from
@@ -74,7 +115,7 @@ pub struct Streams {
     pub fps: u32,
     /// VPS/SPS/PPS (or SPS/PPS), Annex B.
     pub video_params: Vec<u8>,
-    pub audio: Vec<(&'static str, Params)>,
+    pub audio: Vec<(String, Params)>,
 }
 
 pub struct Saved {
@@ -89,6 +130,13 @@ impl Saved {
     }
 }
 
+/// How much gets written before it's pushed to disk and dropped from memory.
+/// A clip is a few hundred MB written in about a second: left alone it all
+/// sits in memory waiting to be written, and the kernel making room for it
+/// (into compressed swap, on the Frame) once stalled PipeWire's realtime
+/// thread long enough to get it killed, taking the audio with it.
+const FLUSH_EVERY: i64 = 8 * 1024 * 1024;
+
 struct Writer {
     fmt: *mut ff::AVFormatContext,
     packet: *mut ff::AVPacket,
@@ -97,6 +145,12 @@ struct Writer {
     fps: u32,
     frames: u64,
     bytes: u64,
+    /// The file again, for pushing what's written out of memory.
+    file: Option<std::fs::File>,
+    /// How far into the file is on disk and out of memory.
+    flushed: i64,
+    /// Remux into an .mp4 next to it once it's finished.
+    remux: bool,
 }
 
 // Owned by exactly one thread at a time.
@@ -121,6 +175,9 @@ impl Writer {
             fps: streams.fps,
             frames: 0,
             bytes: 0,
+            file: None,
+            flushed: 0,
+            remux: false,
         };
         unsafe {
             // The container comes from the real name, the .part one means nothing to FFmpeg.
@@ -137,10 +194,19 @@ impl Writer {
                 w.add_audio(title, params, i == 0)?;
             }
             check(ff::avio_open(&mut (*w.fmt).pb, part_c.as_ptr(), ff::AVIO_FLAG_WRITE), "creating the output file")?;
+            w.file = std::fs::File::open(&w.part).ok();
             // No faststart: moving the index to the front means rewriting the
             // whole file when the recording stops, which is a lot of I/O on a
-            // long recording.
-            check(ff::avformat_write_header(w.fmt, ptr::null_mut()), "writing the file header")?;
+            // long recording. Hybrid: fragmented while it's written, so a
+            // file the headset died in the middle of still plays up to the
+            // last couple of seconds, and a regular MP4 once it's finished.
+            let mut opts = ptr::null_mut();
+            if w.is_mp4() {
+                ff::av_dict_set(&mut opts, c"movflags".as_ptr(), c"hybrid_fragmented".as_ptr(), 0);
+            }
+            let header = ff::avformat_write_header(w.fmt, &mut opts);
+            ff::av_dict_free(&mut opts);
+            check(header, "writing the file header")?;
         }
         Ok(w)
     }
@@ -191,16 +257,19 @@ impl Writer {
         (*st).time_base = ff::AVRational { num: 1, den: RATE as i32 };
         let title = CString::new(title)?;
         ff::av_dict_set(&mut (*st).metadata, c"title".as_ptr(), title.as_ptr(), 0);
+        // mp4 keeps no title, editors show a track's handler name instead
+        ff::av_dict_set(&mut (*st).metadata, c"handler_name".as_ptr(), title.as_ptr(), 0);
         // The first track plays by default, others are there for editing.
         (*st).disposition = if default { ff::AV_DISPOSITION_DEFAULT } else { 0 };
         Ok(())
     }
 
-    fn write(&mut self, p: &Packet) -> Result<()> {
+    fn write(&mut self, p: &Packet, live: bool) -> Result<()> {
         unsafe {
             let pkt = self.packet;
             check(ff::av_new_packet(pkt, p.data.len() as i32), "allocating a packet")?;
-            ptr::copy_nonoverlapping(p.data.as_ptr(), (*pkt).data, p.data.len());
+            let out = std::slice::from_raw_parts_mut((*pkt).data, p.data.len());
+            p.data.read_into(out).context("reading the replay buffer")?;
             (*pkt).pts = p.pts;
             (*pkt).dts = p.pts;
             (*pkt).duration = p.duration;
@@ -219,9 +288,43 @@ impl Writer {
                 self.frames += 1;
             }
             self.bytes += p.data.len() as u64;
-            check(ff::av_interleaved_write_frame(self.fmt, pkt), "writing")?;
+            let ret = if live {
+                ff::av_write_frame(self.fmt, pkt)
+            } else {
+                ff::av_interleaved_write_frame(self.fmt, pkt)
+            };
+            ff::av_packet_unref(pkt);
+            check(ret, "writing")?;
+            // A keyframe closes the last fragment (or cluster, in an MKV):
+            // out of our buffer with it, so a recording cut off here plays
+            // up to this point even when the picture's too still to fill it.
+            if p.stream == 0 && p.key && !live {
+                ff::avio_flush((*self.fmt).pb);
+            }
         }
+        self.flush_some();
         Ok(())
+    }
+
+    /// Every FLUSH_EVERY bytes: waits for them to be on disk, then lets the
+    /// kernel forget them. Paces the writing to the disk instead of to
+    /// memory.
+    fn flush_some(&mut self) {
+        let Some(file) = &self.file else { return };
+        use std::os::fd::AsRawFd;
+        unsafe {
+            let pb = (*self.fmt).pb;
+            let at = ff::avio_seek(pb, 0, libc::SEEK_CUR);
+            if at - self.flushed < FLUSH_EVERY {
+                return;
+            }
+            ff::avio_flush(pb);
+            let (fd, from, len) = (file.as_raw_fd(), self.flushed, at - self.flushed);
+            let how = libc::SYNC_FILE_RANGE_WAIT_BEFORE | libc::SYNC_FILE_RANGE_WRITE | libc::SYNC_FILE_RANGE_WAIT_AFTER;
+            libc::sync_file_range(fd, from, len, how);
+            libc::posix_fadvise(fd, from, len, libc::POSIX_FADV_DONTNEED);
+            self.flushed = at;
+        }
     }
 
     fn finish(mut self) -> Result<Saved> {
@@ -229,8 +332,95 @@ impl Writer {
             check(ff::av_write_trailer(self.fmt), "finalizing the file")?;
             ff::avio_closep(&mut (*self.fmt).pb);
         }
+        if self.remux {
+            // Straight from the .part, so nothing watching the folder sees
+            // the MKV come and go. If it fails the MKV is still a fine file.
+            match remux_to_mp4(&self.part, &self.path.with_extension("mp4"), self.fps) {
+                Ok(saved) => {
+                    let _ = std::fs::remove_file(&self.part);
+                    return Ok(saved);
+                }
+                Err(e) => log::warn!("couldn't remux {} to mp4, keeping the mkv: {e:#}", self.path.display()),
+            }
+        }
         std::fs::rename(&self.part, &self.path).with_context(|| format!("renaming {}", self.part.display()))?;
         Ok(Saved { path: std::mem::take(&mut self.path), frames: self.frames, bytes: self.bytes })
+    }
+}
+
+/// Copies an MKV we wrote into an MP4, packet for packet. MKV only keeps
+/// timestamps to the millisecond, so the video goes back onto its exact
+/// frame grid on the way.
+fn remux_to_mp4(mkv: &Path, mp4: &Path, fps: u32) -> Result<Saved> {
+    let name = CString::new(mkv.to_string_lossy().as_bytes())?;
+    let mut input = Input(ptr::null_mut());
+    unsafe {
+        let matroska = ff::av_find_input_format(c"matroska".as_ptr());
+        check(ff::avformat_open_input(&mut input.0, name.as_ptr(), matroska, ptr::null_mut()), "opening it")?;
+        let n = (*input.0).nb_streams as usize;
+        let stream = |i: usize| *(*input.0).streams.add(i);
+        let video = &*(*stream(0)).codecpar;
+        let codec = match video.codec_id {
+            ff::AVCodecID::AV_CODEC_ID_HEVC => Codec::Hevc,
+            ff::AVCodecID::AV_CODEC_ID_H264 => Codec::H264,
+            _ => bail!("its first track isn't our video"),
+        };
+        let mut audio = Vec::new();
+        for i in 1..n {
+            let st = stream(i);
+            let title = ff::av_dict_get((*st).metadata, c"title".as_ptr(), ptr::null(), 0);
+            let title = if title.is_null() { String::new() } else { CStr::from_ptr((*title).value).to_string_lossy().into_owned() };
+            let par = ff::avcodec_parameters_alloc();
+            if par.is_null() {
+                bail!("out of memory");
+            }
+            let params = Params(par);
+            check(ff::avcodec_parameters_copy(par, (*st).codecpar), "copying audio parameters")?;
+            audio.push((title, params));
+        }
+        let extradata = if video.extradata.is_null() { &[][..] } else { std::slice::from_raw_parts(video.extradata, video.extradata_size as usize) };
+        let streams = Streams { codec, width: video.width as u32, height: video.height as u32, fps, video_params: extradata.to_vec(), audio };
+        let mut out = Writer::create(mp4, &streams)?;
+
+        let packet = PacketGuard(ff::av_packet_alloc());
+        let pkt = packet.0;
+        loop {
+            let ret = ff::av_read_frame(input.0, pkt);
+            if ret == ff::AVERROR_EOF {
+                break;
+            }
+            check(ret, "reading it")?;
+            let i = (*pkt).stream_index as usize;
+            let tb = (*stream(i)).time_base;
+            let unit = ff::AVRational { num: 1, den: if i == 0 { fps as i32 } else { RATE as i32 } };
+            let rescale = |t: i64| ff::av_rescale_q_rnd(t, tb, unit, ff::AVRounding::AV_ROUND_NEAR_INF);
+            let p = Packet {
+                stream: i,
+                pts: rescale((*pkt).pts),
+                duration: rescale((*pkt).duration),
+                key: (*pkt).flags & ff::AV_PKT_FLAG_KEY != 0,
+                data: Payload::from(std::slice::from_raw_parts((*pkt).data, (*pkt).size as usize).to_vec()),
+            };
+            ff::av_packet_unref(pkt);
+            out.write(&p, false)?;
+        }
+        out.finish()
+    }
+}
+
+struct Input(*mut ff::AVFormatContext);
+
+impl Drop for Input {
+    fn drop(&mut self) {
+        unsafe { ff::avformat_close_input(&mut self.0) };
+    }
+}
+
+struct PacketGuard(*mut ff::AVPacket);
+
+impl Drop for PacketGuard {
+    fn drop(&mut self) {
+        unsafe { ff::av_packet_free(&mut self.0) };
     }
 }
 
@@ -256,8 +446,10 @@ pub struct Handle {
 
 impl Handle {
     /// Creates the file right away, so a bad path fails here and not later.
-    pub fn spawn(path: &Path, streams: &Streams) -> Result<Self> {
-        let writer = Writer::create(path, streams)?;
+    /// `remux` makes an .mkv an .mp4 once it's finished.
+    pub fn spawn(path: &Path, streams: &Streams, remux: bool) -> Result<Self> {
+        let mut writer = Writer::create(path, streams)?;
+        writer.remux = remux && !writer.is_mp4();
         let (tx, rx) = mpsc::channel();
         let thread = std::thread::Builder::new().name("writer".into()).spawn(move || run(writer, rx))?;
         Ok(Self { tx, thread })
@@ -276,9 +468,16 @@ impl Handle {
 }
 
 fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
+    // The game comes first, for the CPU and the disk.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 19);
+        const IOPRIO_WHO_PROCESS: libc::c_long = 1;
+        const BEST_EFFORT_LOWEST: libc::c_long = (2 << 13) | 7;
+        libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0 as libc::c_long, BEST_EFFORT_LOWEST);
+    }
     let mut failure = None;
     for p in rx {
-        if let Err(e) = writer.write(&p) {
+        if let Err(e) = writer.write(&p, false) {
             failure = Some(e);
             break;
         }
@@ -293,5 +492,120 @@ fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
             Err(e)
         }
         None => saved,
+    }
+}
+
+pub struct Live {
+    writer: Writer,
+    socket: std::os::unix::net::UnixDatagram,
+    waiting: bool,
+    sequence: u64,
+    start: Option<i64>,
+    silence: Option<crate::aac::Track>,
+    silence_base: i64,
+}
+
+impl Live {
+    pub fn new(path: &Path, streams: &Streams) -> Result<Self> {
+        let socket = std::os::unix::net::UnixDatagram::unbound()?;
+        socket.connect(path).context("connecting the live stream")?;
+        socket.set_nonblocking(true)?;
+        let silence = if streams.audio.is_empty() { Some(crate::aac::Track::new(1, 128_000)?) } else { None };
+        let mut writer = Writer {
+            fmt: ptr::null_mut(),
+            packet: unsafe { ff::av_packet_alloc() },
+            part: PathBuf::new(),
+            path: PathBuf::new(),
+            fps: streams.fps,
+            frames: 0,
+            bytes: 0,
+            file: None,
+            flushed: 0,
+            remux: false,
+        };
+        unsafe {
+            check(
+                ff::avformat_alloc_output_context2(&mut writer.fmt, ptr::null(), c"mpegts".as_ptr(), ptr::null()),
+                "setting up live video",
+            )?;
+            writer.add_video(streams)?;
+            if let Some((title, params)) = streams.audio.first() {
+                writer.add_audio(title, params, true)?;
+            } else if let Some(track) = &silence {
+                writer.add_audio("Audio", &track.params()?, true)?;
+            }
+            (*writer.fmt).flags |= ff::AVFMT_FLAG_CUSTOM_IO;
+            (*writer.fmt).max_delay = 0;
+            ff::av_opt_set((*writer.fmt).priv_data, c"mpegts_flags".as_ptr(), c"+resend_headers+initial_discontinuity".as_ptr(), 0);
+            ff::av_opt_set_int((*writer.fmt).priv_data, c"pes_payload_size".as_ptr(), 0, 0);
+            check(ff::avio_open_dyn_buf(&mut (*writer.fmt).pb), "opening live output")?;
+            let result = check(ff::avformat_write_header(writer.fmt, ptr::null_mut()), "writing live headers");
+            Self::take(&mut writer);
+            result?;
+        }
+        Ok(Self { writer, socket, waiting: true, sequence: 0, start: None, silence, silence_base: 0 })
+    }
+
+    unsafe fn take(writer: &mut Writer) -> Vec<u8> {
+        let mut data = ptr::null_mut();
+        let len = ff::avio_close_dyn_buf((*writer.fmt).pb, &mut data);
+        (*writer.fmt).pb = ptr::null_mut();
+        let out = if len > 0 { std::slice::from_raw_parts(data, len as usize).to_vec() } else { Vec::new() };
+        ff::av_free(data.cast());
+        out
+    }
+
+    pub fn send(&mut self, p: &Packet) -> Result<()> {
+        if p.stream > 1 { return Ok(()); }
+        if p.data.len() > 4 * 1024 * 1024 {
+            self.waiting = true;
+            return Ok(());
+        }
+        if p.stream == 1 && self.start.is_some_and(|start| p.pts < start * RATE as i64 / self.writer.fps as i64) {
+            return Ok(());
+        }
+        let key = p.stream == 0 && p.key;
+        if self.waiting && !key {
+            return Ok(());
+        }
+        self.waiting = false;
+        if key && self.start.is_none() {
+            self.start = Some(p.pts);
+            self.silence_base = p.pts * RATE as i64 / self.writer.fps as i64;
+        }
+        let data = unsafe {
+            check(ff::avio_open_dyn_buf(&mut (*self.writer.fmt).pb), "opening live packet")?;
+            let result = self.writer.write(p, true);
+            let data = Self::take(&mut self.writer);
+            result?;
+            data
+        };
+        for (i, chunk) in data.chunks(188 * 300).enumerate() {
+            let mut message = Vec::with_capacity(chunk.len() + 9);
+            message.extend_from_slice(&self.sequence.to_le_bytes());
+            self.sequence = self.sequence.wrapping_add(1);
+            message.push(u8::from(key && i == 0));
+            message.extend_from_slice(chunk);
+            if self.socket.send(&message).is_err() {
+                self.waiting = true;
+                break;
+            }
+        }
+        if p.stream == 0 {
+            let target = (p.pts + 1) * RATE as i64 / self.writer.fps as i64;
+            let mut out = Vec::new();
+            if let Some(track) = &mut self.silence {
+                if target - self.silence_base - track.end() > RATE as i64 {
+                    *track = crate::aac::Track::new(1, 128_000)?;
+                    self.silence_base = p.pts * RATE as i64 / self.writer.fps as i64;
+                }
+                track.fill_to(target - self.silence_base, &mut out)?;
+            }
+            for mut audio in out {
+                audio.pts += self.silence_base;
+                self.send(&audio)?;
+            }
+        }
+        Ok(())
     }
 }

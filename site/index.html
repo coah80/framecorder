@@ -52,17 +52,29 @@
       </div>
       <div>
         <h2>clip</h2>
-        <p>hold the left thumbstick and the last 30 seconds are saved. it's always ready.</p>
+        <p>hold the left thumbstick and the last 30 seconds are saved.</p>
       </div>
       <div>
         <h2>sync</h2>
-        <p>pair your phone or computer once. everything lands there over wi-fi, on its own.</p>
+        <p>pair your phone or computer once. clips arrive over your wi-fi.</p>
+      </div>
+      <div>
+        <h2>watch <small>new</small></h2>
+        <p>see what the headset shows, live, in the app. point obs at it and record from your computer.</p>
+      </div>
+      <div>
+        <h2>blend <small>new</small></h2>
+        <p>both eyes in one flat video, mixed across the middle the way steamvr's own view does it. or just the left or the right.</p>
+      </div>
+      <div>
+        <h2>report <small>new</small></h2>
+        <p>one button in any app opens a github issue with the logs attached.</p>
       </div>
     </section>
 
     <figure class="look">
       <img class="tab" src="img/tab-home.png" width="1280" height="760" alt="the framecorder tab in the steamvr dashboard, with a record button and a clips switch" loading="lazy">
-      <img class="phone" src="img/app-phone.png" width="400" alt="the framecorder app on a phone, listing clips by day" loading="lazy">
+      <img class="phone" src="img/app-phone.png" width="400" alt="the framecorder app on a phone, with your clips and recordings in a grid by day" loading="lazy">
     </figure>
 
     <section id="get" class="get">
@@ -75,7 +87,7 @@
         <pre>curl -fsSL https://framecorder.coah80.com/<wbr>install | sh</pre>
         <button class="copy">copy</button>
       </div>
-      <p>it walks you through the rest. run it again to update or remove framecorder. over ssh from a computer works too.</p>
+      <p>run it again to update or remove framecorder. it works over ssh too.</p>
       <details>
         <summary>rather build it yourself?</summary>
         <p>on the headset, with developer mode on:</p>
@@ -90,13 +102,27 @@ git clone <span data-text="repo">https://github.com/coah80/framecorder</span> &a
 
     <section id="sync" class="get">
       <h2>sync it<i>.</i></h2>
-      <p>the app that catches your clips. install it, pair it with your frame once, and everything you record shows up on its own.</p>
+      <p>pair it with your frame once and every clip and recording shows up there. it can also start a recording, show the headset live, and hand that to obs.</p>
       <div class="apps" id="apps">
-        <a class="btn plain" data-os="windows" data-file="framecorder-windows.exe" href="#sync">windows</a>
-        <a class="btn plain" data-os="linux" data-file="framecorder-linux" href="#sync">linux</a>
+        <a class="btn plain" data-os="windows" data-file="framecorder-setup.exe" href="#sync">windows</a>
+        <a class="btn plain" data-os="linux" data-file="framecorder-x86_64.AppImage" href="#sync">linux</a>
         <a class="btn plain" data-os="android" data-file="framecorder-android.apk" href="#sync">android</a>
-        <a class="btn plain" data-os="macos" data-file="framecorder-macos.dmg" href="#sync">macos</a>
+        <a class="btn plain" data-os="macos" data-file="framecorder-desktop-macos.dmg" href="#sync">macos</a>
       </div>
+      <p class="note">still on the 0.1 desktop app? it can't update itself, so grab the new one once. your pairings and settings come along.</p>
+      <details id="appimage-help">
+        <summary>on linux? how to open it</summary>
+        <p>it's an appimage, one file that runs on just about any distro. the first time it opens, it adds itself to your app menu and keeps itself up to date.</p>
+        <ol class="path small">
+          <li><span>right-click it, properties, and allow it to run as a program</span></li>
+          <li><span>open it</span></li>
+        </ol>
+        <p>or, in a terminal:</p>
+        <div class="code">
+          <pre>chmod +x framecorder-x86_64.AppImage && ./framecorder-x86_64.AppImage</pre>
+          <button class="copy">copy</button>
+        </div>
+      </details>
       <details id="mac">
         <summary>on a mac? how to open it the first time</summary>
         <p>it's signed, but not notarized (apple charges for that), so macos blocks it the first time. only once.</p>

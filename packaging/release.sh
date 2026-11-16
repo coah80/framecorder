@@ -4,10 +4,6 @@
 # SteamOS), from the repo's root:
 #
 #   packaging/release.sh
-#
-# then put both files from dist/ on a github release. the site workflow
-# copies them to the site's /dl, where site/install gets the release and
-# installed headsets look for updates (see setup::update).
 set -eu
 
 OUT=dist
@@ -37,5 +33,7 @@ TARBALL="$OUT/framecorder-arm64.tar.gz"
 tar -czf "$TARBALL" --owner=0 --group=0 -C "$WORK/release" framecorder-setup payload.tar
 # what installed headsets check every few hours for an update
 (cd "$OUT" && sha256sum framecorder-arm64.tar.gz >framecorder-arm64.tar.gz.sha256)
+# and its version under it, which the apps show (updaters only read the first word)
+echo "version $(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >>"$OUT/framecorder-arm64.tar.gz.sha256"
 ls -l "$OUT"
-echo "put both on a github release"
+echo "sign it (packaging/sign.sh), then put all three on a github release"

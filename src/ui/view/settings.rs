@@ -1,68 +1,79 @@
-//! The settings screen: sections down the left, one section's controls on
-//! the right. Every control says what the current choice means.
+//! The settings screen: the sections as pills along the top, and one
+//! section's controls underneath. Every control says what the current
+//! choice means.
 
 use super::super::settings::CLIP_LENGTHS;
-use super::widgets::{card, choice, label, toggle_row};
+use super::widgets::{button, card, choice, dropdown, dropdown_field, dropdown_list, label, toggle_row, toggle_row_noted};
 use super::*;
 
-const SIDE_W: f32 = 232.0;
-const PANE_X: f32 = PAD + SIDE_W + 28.0;
-const PANE_W: f32 = WIDTH as f32 - PANE_X - PAD;
+const PILLS_H: f32 = 50.0;
+const PANE_Y: f32 = CONTENT_Y + PILLS_H + 18.0;
+const PANE_H: f32 = CONTENT_Y + CONTENT_H - PANE_Y;
 const INSET: f32 = 32.0;
-const ROW_H: f32 = 112.0;
+const ROW_H: f32 = 114.0;
+/// Between two settings sharing a row.
+const GAP: f32 = 24.0;
+
+const PANE: Rect = Rect { x: PAD, y: PANE_Y, w: WIDTH as f32 - 2.0 * PAD, h: PANE_H };
+/// Where a section's controls go inside its card.
+const INNER: Rect = Rect { x: PANE.x + INSET, y: PANE.y + 6.0, w: PANE.w - 2.0 * INSET, h: PANE.h - 12.0 };
 
 pub fn draw(c: &mut Canvas, f: &mut Fonts, m: &Model, section: Section, hits: &mut Vec<Hit>) {
-    sidebar(c, f, m, section, hits);
-    let pane = Rect::new(PANE_X, CONTENT_Y, PANE_W, CONTENT_H);
-    card(c, pane);
-    let inner = Rect::new(pane.x + INSET, pane.y + 28.0, pane.w - 2.0 * INSET, pane.h - 56.0);
+    pills(c, f, m, section, hits);
+    if section == Section::Sync {
+        return sync::draw(c, f, m, PANE, hits);
+    }
+    card(c, PANE);
+    let inner = INNER;
     match section {
         Section::Video => video(c, f, m, inner, hits),
         Section::Audio => audio(c, f, m, inner, hits),
         Section::Clips => clips(c, f, m, inner, hits),
-        Section::Sync => sync::draw(c, f, m, inner, hits),
+        Section::Files => files(c, f, m, inner, hits),
+        Section::General => general(c, f, m, inner, hits),
+        Section::Sync => unreachable!(),
     }
 }
 
-fn sidebar(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
-    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Sync, "Sync")];
-    for (i, (section, name)) in sections.into_iter().enumerate() {
-        let r = Rect::new(PAD, CONTENT_Y + i as f32 * 76.0, SIDE_W, 64.0);
+fn pills(c: &mut Canvas, f: &mut Fonts, m: &Model, current: Section, hits: &mut Vec<Hit>) {
+    let sections = [(Section::Video, "Video"), (Section::Audio, "Audio"), (Section::Clips, "Clips"), (Section::Files, "Files"), (Section::Sync, "Sync"), (Section::General, "General")];
+    let mut x = PAD;
+    for (section, name) in sections {
+        let w = f.measure(Face::BodyMedium, 18.0, name) + 52.0;
+        let r = Rect::new(x, CONTENT_Y, w, PILLS_H);
         let action = Action::Open(section);
         let selected = section == current;
-        let hovered = m.hover == Some(action);
+        let hovered = m.over(r);
         if selected {
-            c.fill_rrect(r, 16.0, MAUVE, 0.12);
-            c.stroke_rrect(r, 16.0, 1.5, MAUVE, 0.5);
+            c.fill_rrect(r, 14.0, MAUVE, 0.12);
+            c.stroke_rrect(r, 14.0, 1.5, MAUVE, 0.5);
         } else if hovered {
-            c.fill_rrect(r, 16.0, MAUVE, 0.08);
+            c.fill_rrect(r, 14.0, MAUVE, 0.08);
         }
         let color = if selected || hovered { MAUVE } else { SUBTEXT0 };
-        c.text(f, Face::BodyMedium, 20.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, name, color, 1.0);
+        let (cx, cy) = r.center();
+        c.text_centered(f, Face::BodyMedium, 18.0, cx, cy + 6.5, name, color, 1.0);
         if !selected {
             hits.push(Hit { rect: r, action });
         }
+        x += w + 8.0;
     }
-
-    // Out of the way at the bottom.
-    let r = Rect::new(PAD, CONTENT_Y + CONTENT_H - 64.0, SIDE_W, 64.0);
-    let hovered = m.hover == Some(Action::TurnOff);
-    if hovered {
-        c.fill_rrect(r, 16.0, MAUVE, 0.08);
-    }
-    let color = if hovered { MAUVE } else { OVERLAY2 };
-    c.text(f, Face::Body, 18.0, r.x + 24.0, r.y + r.h / 2.0 + 7.0, "Close framecorder", color, 1.0);
-    hits.push(Hit { rect: r, action: Action::TurnOff });
 }
 
-fn row(inner: Rect, i: usize) -> Rect {
-    Rect::new(inner.x, inner.y + i as f32 * ROW_H, inner.w, ROW_H)
+/// The rows of a section, a hairline between each.
+fn rows<const N: usize>(c: &mut Canvas, inner: Rect) -> [Rect; N] {
+    let rows = std::array::from_fn(|i| Rect::new(inner.x, inner.y + i as f32 * ROW_H, inner.w, ROW_H));
+    for r in &rows[..N - 1] {
+        c.hline(r.x, r.y + r.h - 1.0, r.w, TEXT, 0.05);
+    }
+    rows
 }
 
 fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
 
+    let [shape_row, eye_row, quality_row, fps_row] = rows(c, inner);
     // Without the panels it's SteamVR's view, whatever was picked.
     let (shape, eye) = if m.unlocked { (s.shape, s.eye) } else { (Shape::Wide, Eye::Left) };
     let shapes = [
@@ -71,25 +82,24 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
         ("9:16", Action::Shape(Shape::Tall), shape == Shape::Tall),
         ("Both eyes", Action::Shape(Shape::BothEyes), shape == Shape::BothEyes),
     ];
-    let meaning = match s.shape {
-        _ if !m.unlocked => "SteamVR's view, 1920 × 1080 · the others need the recorder unlocked",
-        Shape::Wide => "Widescreen · 1920 × 1080",
-        Shape::Square => "Square · 1440 × 1440",
-        Shape::Tall => "Vertical · 1080 × 1920",
-        Shape::BothEyes => "Both panels, just as the headset shows them",
+    let meaning = match shape {
+        Shape::Wide => "1920 × 1080",
+        Shape::Square => "1440 × 1440",
+        Shape::Tall => "1080 × 1920",
+        Shape::BothEyes => "",
     };
-    choice(c, f, m, hits, row(inner, 0), "Shape", meaning, &shapes, locked || !m.unlocked);
+    choice(c, f, m, hits, shape_row, "Shape", meaning, &shapes, locked || !m.unlocked);
 
+    let blended = |d: Dominant| eye == Eye::Both && s.dominant == d;
     let eyes = [
         ("Left eye", Action::Eye(Eye::Left), eye == Eye::Left),
         ("Right eye", Action::Eye(Eye::Right), eye == Eye::Right),
+        ("Both, left dominant", Action::Blended(Dominant::Left), blended(Dominant::Left)),
+        ("Both, right dominant", Action::Blended(Dominant::Right), blended(Dominant::Right)),
     ];
-    let (meaning, fixed) = match shape {
-        _ if !m.unlocked => ("SteamVR's view is always the left eye", true),
-        Shape::BothEyes => ("Both eyes are in the video", true),
-        _ => ("The eye whose view gets recorded", false),
-    };
-    choice(c, f, m, hits, row(inner, 1), "Eye", meaning, &eyes, locked || fixed);
+    // SteamVR's view is always the left eye, and both-eyes shape already has both.
+    let fixed = !m.unlocked || shape == Shape::BothEyes;
+    choice(c, f, m, hits, eye_row, "Eye", "", &eyes, locked || fixed);
 
     let qualities = [
         ("Standard", Action::Quality(Quality::Standard), s.quality == Quality::Standard),
@@ -98,61 +108,163 @@ fn video(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<H
     ];
     // Megabits a second, times 60 s, over 8 bits a byte.
     let meaning = format!("{} Mbit/s · about {} MB a minute", s.quality.mbps(), s.quality.mbps() * 60 / 8);
-    choice(c, f, m, hits, row(inner, 2), "Quality", &meaning, &qualities, locked);
+    choice(c, f, m, hits, quality_row, "Quality", &meaning, &qualities, locked);
 
+    // the last two side by side, there's room for four rows
+    let half = (fps_row.w - GAP) / 2.0;
     let rates = [
         ("Match display", Action::Fps(FrameRate::Auto), s.fps == FrameRate::Auto),
         ("60 fps", Action::Fps(FrameRate::Sixty), s.fps == FrameRate::Sixty),
         ("30 fps", Action::Fps(FrameRate::Thirty), s.fps == FrameRate::Thirty),
     ];
-    let meaning = match s.fps {
-        FrameRate::Auto => "Every frame the headset shows · smoothest",
-        FrameRate::Sixty => "Can stutter a little when the headset runs at 72",
-        FrameRate::Thirty => "Smaller files, less smooth",
-    };
-    choice(c, f, m, hits, row(inner, 3), "Frame rate", meaning, &rates, locked);
+    choice(c, f, m, hits, Rect { w: half, ..fps_row }, "Frame rate", "", &rates, locked);
+
+    let codecs = [("HEVC", Action::Codec(Codec::Hevc), s.codec == Codec::Hevc), ("H.264", Action::Codec(Codec::H264), s.codec == Codec::H264)];
+    choice(c, f, m, hits, Rect { x: fps_row.x + half + GAP, w: half, ..fps_row }, "Codec", "", &codecs, locked);
 }
 
 fn audio(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
-    let at = |i: f32| Rect::new(inner.x, inner.y + i * 108.0, inner.w, 92.0);
-    toggle_row(c, f, m, hits, at(0.0), "Game audio", "Everything you hear from the game", Action::GameAudio, s.game_audio, locked);
-    let mic = if s.game_audio { "Your voice, mixed in with the game" } else { "Your voice" };
-    toggle_row(c, f, m, hits, at(1.0), "Microphone", mic, Action::Mic, s.mic, locked);
-
-    let y = inner.y + 2.0 * 108.0 + 36.0;
-    label(c, f, inner.x, y, "GOOD TO KNOW");
-    let notes = ["The headset mutes its microphone whenever it's off your head.", "Audio is saved as AAC, 192 kbit/s."];
-    for (i, note) in notes.iter().enumerate() {
-        c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);
+    let at = |i: f32| Rect::new(inner.x, inner.y + 22.0 + i * 108.0, inner.w, 92.0);
+    toggle_row(c, f, m, hits, at(0.0), "Game audio", Action::GameAudio, s.game_audio, locked);
+    toggle_row(c, f, m, hits, at(1.0), "Microphone", Action::Mic, s.mic, locked);
+    let mut row = 2.0;
+    if let Some((options, picked, can_pick)) = mic_options(m) {
+        let picker = mic_row(inner);
+        let value = picked.map_or("Not connected", |i| options[i].as_str());
+        let value = fit(f, value, picker.w - 90.0);
+        dropdown(c, f, m, hits, picker, "Mic", &value, can_pick.then_some(Action::MicMenu), m.mic_menu, locked || !s.mic);
+        row += 1.0;
     }
+    // splitting needs something to split
+    let both = s.game_audio && s.mic;
+    // a picker's 6 px taller than a switch's row, keep the gap even under it
+    let split = at(row);
+    let split = if row > 2.0 { Rect::new(split.x, split.y + 6.0, split.w, split.h) } else { split };
+    toggle_row(c, f, m, hits, split, "Split tracks", Action::SplitAudio, both && s.split_audio, locked || !both);
+}
+
+fn mic_row(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y + 22.0 + 2.0 * 108.0, inner.w, 98.0)
+}
+
+/// The list of mics, open over the audio settings.
+pub fn mic_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
+    let Some((options, picked, _)) = mic_options(m).filter(|&(_, _, can_pick)| can_pick && m.mic_menu && m.settings.mic && !m.locked()) else { return };
+    let field = dropdown_field(mic_row(INNER));
+    let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
+    let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::MicSource(i), picked == Some(i))).collect();
+    dropdown_list(c, f, m, hits, field, &rows, Action::MicMenu);
+}
+
+/// The mics and which one's in use, and whether there's a choice: another
+/// mic plugged in, or the picked one gone (then none is, and the default's
+/// recorded meanwhile).
+fn mic_options(m: &Model) -> Option<(Vec<String>, Option<usize>, bool)> {
+    let picked = &m.settings.mic_source;
+    let gone = !picked.is_empty() && !m.mics.iter().any(|mic| &mic.name == picked);
+    if m.mics.is_empty() && !gone {
+        return None;
+    }
+    let on = m.mics.iter().position(|mic| if picked.is_empty() { mic.default } else { &mic.name == picked });
+    Some((m.mics.iter().map(|mic| mic.label.clone()).collect(), on, m.mics.len() > 1 || gone))
+}
+
+/// `text` cut down with an ellipsis to fit `width` at the segment's size.
+fn fit(f: &mut Fonts, text: &str, width: f32) -> String {
+    if f.measure(Face::BodyMedium, 18.0, text) <= width {
+        return text.to_string();
+    }
+    let mut cut: String = text.to_string();
+    while !cut.is_empty() && f.measure(Face::BodyMedium, 18.0, &format!("{cut}…")) > width {
+        cut.pop();
+    }
+    format!("{}…", cut.trim_end())
+}
+
+fn files(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
+    let s = m.settings;
+    let locked = m.locked();
+    let picker = folder_row(inner);
+    let (options, picked, gone) = folder_options(m);
+    let value = if gone { format!("{} isn't in · saving to Videos", options[picked]) } else { options[picked].clone() };
+    let value = fit(f, &value, picker.w - 90.0);
+    let can_pick = options.len() > 1;
+    dropdown(c, f, m, hits, picker, "Folder", &value, can_pick.then_some(Action::FolderMenu), m.folder_menu, locked);
+    if let Some(free) = m.free {
+        let text = free_space(free, s.quality.mbps());
+        let w = f.measure(Face::Body, 16.0, &text);
+        c.text(f, Face::Body, 16.0, picker.x + picker.w - w, picker.y + 30.0, &text, OVERLAY2, if locked { 0.4 } else { 1.0 });
+    }
+    c.hline(inner.x, picker.y + ROW_H - 1.0, inner.w, TEXT, 0.05);
+
+    let formats = [("Hybrid MP4", Action::Format(Format::Mp4), s.format == Format::Mp4), ("MKV", Action::Format(Format::Mkv), s.format == Format::Mkv)];
+    let format = Rect::new(inner.x, picker.y + ROW_H, inner.w, ROW_H);
+    choice(c, f, m, hits, format, "Format", "", &formats, locked);
+    let mkv = s.format == Format::Mkv;
+    let r = Rect::new(inner.x, format.y + ROW_H + 16.0, inner.w, 92.0);
+    toggle_row(c, f, m, hits, r, "Remux recordings to MP4", Action::Remux, mkv && s.remux, locked || !mkv);
+    let r = Rect::new(inner.x, r.y + r.h + 12.0, inner.w, 104.0);
+    let note = "Also saves both panels in 4K, to make any eye view from later. For framecorder's own videos, heavier on the game.";
+    toggle_row_noted(c, f, m, hits, r, "Promo footage", note, Action::Promo, m.unlocked && s.promo, locked || !m.unlocked);
+}
+
+fn folder_row(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y, inner.w, 98.0)
+}
+
+/// The list of folders, open over the files settings.
+pub fn folder_menu(c: &mut Canvas, f: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) {
+    let (options, picked, _) = folder_options(m);
+    if !m.folder_menu || m.locked() || options.len() < 2 {
+        return;
+    }
+    let field = dropdown_field(folder_row(INNER));
+    let labels: Vec<String> = options.iter().map(|label| fit(f, label, field.w - 90.0)).collect();
+    let rows: Vec<(&str, Action, bool)> = labels.iter().enumerate().map(|(i, label)| (label.as_str(), Action::Folder(i), picked == i)).collect();
+    dropdown_list(c, f, m, hits, field, &rows, Action::FolderMenu);
+}
+
+/// Where recordings can go and which one's picked: Videos, then the drives
+/// plugged in, then a picked one that's been taken out (true when it's that).
+fn folder_options(m: &Model) -> (Vec<String>, usize, bool) {
+    let mut options: Vec<String> = std::iter::once("Videos".to_string()).chain(m.drives.iter().map(|d| d.name.clone())).collect();
+    let picked = &m.settings.folder;
+    if picked.is_empty() {
+        return (options, 0, false);
+    }
+    match m.drives.iter().position(|d| d.folder.as_os_str() == picked.as_str()) {
+        Some(i) => (options, i + 1, false),
+        None => {
+            options.push(crate::folder::name_of(picked));
+            let last = options.len() - 1;
+            (options, last, true)
+        }
+    }
+}
+
+fn general(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Start with SteamVR", Action::Autostart, m.autostart, false);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, 92.0), "Automatic updates", Action::AutoUpdate, m.auto_update, false);
+    let note = "Once a day: the version, how much was recorded and clipped, and how settings stand. Nothing about you or your videos.";
+    toggle_row_noted(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0 + 216.0, inner.w, 104.0), "Anonymous stats", note, Action::Stats, m.settings.stats, false);
 }
 
 fn clips(c: &mut Canvas, f: &mut Fonts, m: &Model, inner: Rect, hits: &mut Vec<Hit>) {
     let s = m.settings;
     let locked = m.locked();
-    let meaning = if s.clips {
-        format!("Keeps the last {} ready to save, the whole time you play", length(s.clip_secs))
-    } else {
-        "Nothing is kept, so there's nothing to clip".to_string()
-    };
-    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y, inner.w, 92.0), "Clips", &meaning, Action::Clips, s.clips, locked);
+    toggle_row(c, f, m, hits, Rect::new(inner.x, inner.y + 22.0, inner.w, 92.0), "Clips", Action::Clips, s.clips, locked);
 
     let lengths: Vec<(String, Action, bool)> = CLIP_LENGTHS.iter().map(|&n| (length(n), Action::ClipLength(n), s.clip_secs == n)).collect();
     let options: Vec<(&str, Action, bool)> = lengths.iter().map(|(t, a, on)| (t.as_str(), *a, *on)).collect();
-    let meaning = format!("A clip is the last {} you played", length(s.clip_secs));
-    let r = Rect::new(inner.x, inner.y + 120.0, inner.w, ROW_H);
-    choice(c, f, m, hits, r, "Length", &meaning, &options, locked || !s.clips);
+    let r = Rect::new(inner.x, inner.y + 22.0 + 108.0, inner.w, ROW_H);
+    choice(c, f, m, hits, r, "Length", "", &options, locked || !s.clips);
 
-    let y = inner.y + 120.0 + ROW_H + 32.0;
-    label(c, f, inner.x, y, "HOW TO CLIP");
-    let notes = [
-        "Hold the left thumbstick down, or press Clip now on the main screen.",
-        "Change the button in SteamVR's controller settings, under framecorder.",
-        "Recording turns clips off until you stop, the recording has it all.",
-    ];
-    for (i, note) in notes.iter().enumerate() {
-        c.text(f, Face::Body, 17.0, inner.x, y + 34.0 + i as f32 * 28.0, note, SUBTEXT0, 1.0);
-    }
+    let y = r.y + ROW_H + 32.0;
+    label(c, f, inner.x, y, "CLIP BUTTON");
+    c.text(f, Face::BodyMedium, 17.0, inner.x, y + 34.0, "Left thumbstick, held", TEXT, 1.0);
+    let change = "Change in SteamVR";
+    let w = f.measure(Face::BodyMedium, 18.0, change) + 52.0;
+    button(c, f, m, hits, Rect::new(inner.x + inner.w - w, y - 8.0, w, 52.0), change, Action::Bindings, false);
 }

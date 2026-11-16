@@ -2,7 +2,7 @@
 
     python tools/make_banner.py
 
-Writes assets/framecorder-banner.png (1500x500). Uses the app icon from app/icons and the
+Writes assets/framecorder-banner.png (1500x500). Uses the app icon from assets/icons and the
 site's Montserrat, so it stays in step with both.
 """
 
@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-ICON = ROOT / "app" / "icons" / "icon.png"
+ICON = ROOT / "assets" / "icons" / "icon.png"
 FONT = ROOT / "site" / "fonts" / "Montserrat-Bold.ttf"
 OUT = ROOT / "assets" / "framecorder-banner.png"
 INK = (30, 30, 46, 255)          # catppuccin mocha base, the icon's own background

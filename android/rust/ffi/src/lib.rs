@@ -1,0 +1,934 @@
+//! The sync core for the Android app, over UniFFI. It's the engine the
+//! desktop app runs; Kotlin says where finished files go, hears what
+//! happened, and finds Frames with NSD.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use framecorder_app_lib::core::api::{self, Client, RemoteClip};
+use framecorder_app_lib::core::engine::{self, Engine};
+use framecorder_app_lib::core::{discover, pairlink, store, tls};
+
+uniffi::setup_scaffolding!();
+
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum CoreError {
+    /// What went wrong, in words the app can show.
+    #[error("{reason}")]
+    Failed { reason: String },
+}
+
+impl From<String> for CoreError {
+    fn from(s: String) -> Self {
+        CoreError::Failed { reason: s }
+    }
+}
+
+impl From<&str> for CoreError {
+    fn from(s: &str) -> Self {
+        CoreError::Failed { reason: s.into() }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for CoreError {
+    fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        CoreError::Failed { reason: e.reason }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum FrameState {
+    Connecting,
+    Connected,
+    Unreachable,
+    /// The Frame doesn't accept our token anymore.
+    Unpaired,
+    WrongFingerprint,
+    /// This phone is out of space; the clips wait on the Frame.
+    Full,
+}
+
+impl From<engine::State> for FrameState {
+    fn from(s: engine::State) -> Self {
+        match s {
+            engine::State::Connecting => Self::Connecting,
+            engine::State::Connected => Self::Connected,
+            engine::State::Unreachable => Self::Unreachable,
+            engine::State::Unpaired => Self::Unpaired,
+            engine::State::WrongFingerprint => Self::WrongFingerprint,
+            engine::State::Full => Self::Full,
+        }
+    }
+}
+
+/// What the Frame says about its own framecorder updates.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FrameUpdate {
+    /// The version on the Frame.
+    pub installed: String,
+    /// The newest one, when the release says (older ones didn't).
+    pub latest: Option<String>,
+    /// There's something newer than what's installed.
+    pub available: bool,
+    /// An update's being installed right now.
+    pub updating: bool,
+}
+
+impl From<&api::UpdateStatus> for FrameUpdate {
+    fn from(u: &api::UpdateStatus) -> Self {
+        Self { installed: u.installed.clone(), latest: u.latest.clone(), available: u.available, updating: u.updating }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct FrameStatus {
+    pub fingerprint: String,
+    pub name: String,
+    /// Last address that worked, `ip:port`.
+    pub addr: String,
+    pub state: FrameState,
+    pub message: Option<String>,
+    /// Whether there's a framecorder update for it; null until it's said,
+    /// and from Frames too old to say.
+    pub update: Option<FrameUpdate>,
+}
+
+impl From<&engine::Status> for FrameStatus {
+    fn from(s: &engine::Status) -> Self {
+        Self {
+            fingerprint: s.fingerprint.clone(),
+            name: s.name.clone(),
+            addr: s.addr.clone(),
+            state: s.state.into(),
+            message: s.message.clone(),
+            update: s.update.as_ref().map(FrameUpdate::from),
+        }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct SyncProgress {
+    pub fingerprint: String,
+    pub id: String,
+    pub name: String,
+    pub done: i64,
+    pub total: i64,
+    /// Files waiting after this one.
+    pub queued: i32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Clip {
+    /// Stable across restarts: `<fingerprint, 16 chars>/<id>`.
+    pub key: String,
+    pub host: String,
+    pub id: String,
+    pub name: String,
+    /// "clip" or "recording".
+    pub kind: String,
+    pub size: i64,
+    /// Unix seconds, when the Frame saved it.
+    pub created: i64,
+    pub duration_s: Option<f64>,
+    /// The content:// uri MediaStore gave it.
+    pub location: String,
+    pub synced_at: i64,
+}
+
+impl From<&store::Entry> for Clip {
+    fn from(e: &store::Entry) -> Self {
+        Self {
+            key: e.key(),
+            host: e.host.clone(),
+            id: e.id.clone(),
+            name: e.name.clone(),
+            kind: e.kind.clone(),
+            size: e.size as i64,
+            created: e.created,
+            duration_s: e.duration_s,
+            location: e.location.clone(),
+            synced_at: e.synced_at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FoundFrame {
+    pub name: String,
+    pub fingerprint: String,
+    pub addr: String,
+    pub addrs: Vec<String>,
+}
+
+impl From<discover::Found> for FoundFrame {
+    fn from(f: discover::Found) -> Self {
+        Self { name: f.name, fingerprint: f.fingerprint, addr: f.addr, addrs: f.addrs }
+    }
+}
+
+/// How the headset itself is doing. Anything it can't tell is null.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FrameInfo {
+    pub battery_percent: Option<u8>,
+    /// On the charger, charging or full.
+    pub charging: bool,
+    pub free_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    /// How much of it framecorder's videos take.
+    pub videos_bytes: Option<u64>,
+}
+
+impl From<&api::About> for FrameInfo {
+    fn from(a: &api::About) -> Self {
+        Self {
+            battery_percent: a.battery.as_ref().map(|b| b.percent),
+            charging: a.battery.as_ref().is_some_and(|b| b.charging),
+            free_bytes: a.storage.as_ref().map(|s| s.free),
+            total_bytes: a.storage.as_ref().map(|s| s.total),
+            videos_bytes: a.storage.as_ref().map(|s| s.videos),
+        }
+    }
+}
+
+/// What the Frame's dashboard tab is up to, for the remote.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RemoteState {
+    /// The tab's running; it starts with SteamVR.
+    pub available: bool,
+    /// Its setup's been done, so it can record.
+    pub ready: bool,
+    pub recording: bool,
+    /// Recording and not paused (it pauses while the tab's on screen).
+    pub running: bool,
+    /// How long it's been recording, as of when this was sent.
+    pub elapsed_ms: u64,
+    /// The clip length while clipping's on.
+    pub clip_secs: Option<u32>,
+    /// A clip can be saved right now.
+    pub clip_ready: bool,
+    /// How many apps are watching live; null on headsets too old for live
+    /// view and blended eyes.
+    pub live_viewers: Option<u32>,
+}
+
+impl From<&api::Remote> for RemoteState {
+    fn from(r: &api::Remote) -> Self {
+        Self {
+            available: r.available,
+            ready: r.ready,
+            recording: r.recording,
+            running: r.running,
+            elapsed_ms: r.elapsed_ms,
+            clip_secs: r.clips,
+            clip_ready: r.clip_ready,
+            live_viewers: r.live_viewers,
+        }
+    }
+}
+
+/// The Frame's recording settings; they apply from its next recording.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecordingSettings {
+    /// wide, square, tall or both
+    pub shape: String,
+    /// standard, high or max
+    pub quality: String,
+    /// auto, 60 or 30
+    pub fps: String,
+    pub game_audio: bool,
+    pub mic: bool,
+    /// Whether it keeps a replay buffer to save clips from.
+    pub clips: bool,
+    /// 15, 30, 60 or 120
+    pub clip_secs: u32,
+    pub eye: Option<String>,
+    /// With both eyes blended, the eye that fills the middle. Older headsets
+    /// don't have it.
+    pub dominant: Option<String>,
+    pub panels: Option<bool>,
+    /// The game and the mic on their own tracks too. Older headsets can't.
+    pub split_audio: Option<bool>,
+    /// Which mic, by PipeWire node name, empty for the one SteamOS uses.
+    /// Older headsets can't pick.
+    pub mic_source: Option<String>,
+    /// The mics the headset has right now, its own first.
+    pub mics: Option<Vec<MicChoice>>,
+    /// hevc or h264. Older headsets can't pick.
+    pub codec: Option<String>,
+    /// mp4 or mkv. Older headsets can't pick.
+    pub format: Option<String>,
+    /// Recordings in mkv come out as mp4 once they're done.
+    pub remux: Option<bool>,
+    /// Where recordings go, a path from `folders`. Older headsets can't pick.
+    pub folder: Option<String>,
+    pub folders: Option<Vec<FolderChoice>>,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct FolderChoice {
+    pub path: String,
+    pub name: String,
+    /// False for a picked drive that's been taken out.
+    pub plugged_in: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MicChoice {
+    pub name: String,
+    pub label: String,
+    /// What SteamOS records from when nothing's picked.
+    pub default: bool,
+}
+
+impl From<api::Recording> for RecordingSettings {
+    fn from(r: api::Recording) -> Self {
+        Self {
+            shape: r.shape,
+            quality: r.quality,
+            fps: r.fps,
+            game_audio: r.game_audio,
+            mic: r.mic,
+            clips: r.clips,
+            clip_secs: r.clip,
+            eye: r.eye,
+            dominant: r.dominant,
+            panels: r.panels,
+            split_audio: r.split_audio,
+            mic_source: r.mic_source,
+            mics: r.mics.map(|mics| mics.into_iter().map(|m| MicChoice { name: m.name, label: m.label, default: m.default }).collect()),
+            codec: r.codec,
+            format: r.format,
+            remux: r.remux,
+            folder: r.folder,
+            folders: r.folders.map(|f| f.into_iter().map(|f| FolderChoice { path: f.path, name: f.name, plugged_in: f.plugged_in }).collect()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+pub struct RecordingPatch {
+    #[uniffi(default = None)]
+    pub shape: Option<String>,
+    #[uniffi(default = None)]
+    pub quality: Option<String>,
+    #[uniffi(default = None)]
+    pub fps: Option<String>,
+    #[uniffi(default = None)]
+    pub game_audio: Option<bool>,
+    #[uniffi(default = None)]
+    pub mic: Option<bool>,
+    #[uniffi(default = None)]
+    pub clips: Option<bool>,
+    #[uniffi(default = None)]
+    pub clip_secs: Option<u32>,
+    #[uniffi(default = None)]
+    pub eye: Option<String>,
+    #[uniffi(default = None)]
+    pub dominant: Option<String>,
+    #[uniffi(default = None)]
+    pub split_audio: Option<bool>,
+    #[uniffi(default = None)]
+    pub mic_source: Option<String>,
+    #[uniffi(default = None)]
+    pub codec: Option<String>,
+    #[uniffi(default = None)]
+    pub format: Option<String>,
+    #[uniffi(default = None)]
+    pub remux: Option<bool>,
+    #[uniffi(default = None)]
+    pub folder: Option<String>,
+}
+
+impl From<RecordingPatch> for api::RecordingPatch {
+    fn from(r: RecordingPatch) -> Self {
+        Self {
+            shape: r.shape,
+            quality: r.quality,
+            fps: r.fps,
+            game_audio: r.game_audio,
+            mic: r.mic,
+            clips: r.clips,
+            clip: r.clip_secs,
+            eye: r.eye,
+            dominant: r.dominant,
+            split_audio: r.split_audio,
+            mic_source: r.mic_source,
+            codec: r.codec,
+            format: r.format,
+            remux: r.remux,
+            folder: r.folder,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum Forgot {
+    Both,
+    LocalOnly,
+}
+
+impl From<engine::Forgot> for Forgot {
+    fn from(value: engine::Forgot) -> Self {
+        match value {
+            engine::Forgot::Both => Self::Both,
+            engine::Forgot::LocalOnly => Self::LocalOnly,
+        }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct PairLinkInfo {
+    pub addr: String,
+    pub fingerprint: String,
+    pub code: String,
+    pub name: String,
+}
+
+/// Where finished downloads go: MediaStore, so they show up in the gallery.
+#[uniffi::export(with_foreign)]
+pub trait Gallery: Send + Sync {
+    fn completed(&self, name: String, size: u64, subdir: String) -> Result<Option<String>, CoreError>;
+
+    /// Moves the finished download at `path` into Movies/framecorder/`subdir`
+    /// as `name` and returns its content:// uri. Called off the main thread.
+    fn save(&self, path: String, name: String, subdir: String) -> Result<String, CoreError>;
+}
+
+/// What the engine has to say. Called from the engine's own threads, so
+/// implementations hand things over and return quickly.
+#[uniffi::export(with_foreign)]
+pub trait Events: Send + Sync {
+    fn status(&self, status: FrameStatus);
+    fn progress(&self, progress: SyncProgress);
+    fn synced(&self, clip: Clip);
+    /// A download started, or everything's done (for the wake lock).
+    fn busy(&self, busy: bool);
+    /// A clip disappeared from the Frame.
+    fn removed(&self, host: String, id: String);
+    /// What the Frame's tab is up to; null once we've lost touch with it.
+    fn remote(&self, host: String, state: Option<RemoteState>);
+    /// The headset's battery and storage; null once we've lost touch with it.
+    fn about(&self, host: String, info: Option<FrameInfo>);
+    fn recording(&self, host: String, settings: RecordingSettings);
+}
+
+/// Finding a Frame the platform's way (Android's NSD), so mDNS works
+/// without a multicast lock.
+#[uniffi::export(with_foreign)]
+pub trait Finder: Send + Sync {
+    /// Addresses (`ip:port`) where the Frame with this fingerprint answers,
+    /// waiting up to `timeout_ms`. Empty if it isn't around.
+    fn find(&self, fingerprint: String, timeout_ms: u32) -> Vec<String>;
+}
+
+struct GallerySink {
+    gallery: Arc<dyn Gallery>,
+    staging: PathBuf,
+}
+
+impl GallerySink {
+    fn subdir(clip: &RemoteClip) -> String {
+        if clip.kind == "clip" { "clips" } else { "" }.into()
+    }
+}
+
+impl engine::Sink for GallerySink {
+    fn free_space(&self) -> Option<u64> { framecorder_app_lib::core::space::free(&self.staging) }
+    fn completed(&self, _host: &store::Host, clip: &RemoteClip) -> Result<Option<String>, String> {
+        tokio::task::block_in_place(|| self.gallery.completed(engine::safe_name(&clip.name), clip.size, Self::subdir(clip)))
+            .map_err(|e| e.to_string())
+    }
+
+    fn staging(&self, host: &store::Host, clip: &RemoteClip) -> PathBuf {
+        let host = engine::host_folder(&host.fingerprint);
+        let id: String = clip.id.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
+        self.staging.join(format!("{host}-{id}.part"))
+    }
+
+    /// The download in our cache, and the gallery's copy of it.
+    fn copies(&self) -> u64 {
+        2
+    }
+
+    fn finish(&self, staged: &Path, _host: &store::Host, clip: &RemoteClip) -> Result<String, String> {
+        let subdir = Self::subdir(clip);
+        let (path, name) = (staged.to_string_lossy().into_owned(), engine::safe_name(&clip.name));
+        // the copy can take a while for a long recording
+        tokio::task::block_in_place(|| self.gallery.save(path, name, subdir)).map_err(|e| e.to_string())
+    }
+}
+
+struct Relay(Arc<dyn Events>);
+
+impl engine::Listener for Relay {
+    fn status(&self, s: &engine::Status) {
+        self.0.status(s.into());
+    }
+
+    fn progress(&self, p: &engine::Progress) {
+        self.0.progress(SyncProgress {
+            fingerprint: p.fingerprint.clone(),
+            id: p.id.clone(),
+            name: p.name.clone(),
+            done: p.done as i64,
+            total: p.total as i64,
+            queued: p.queued as i32,
+        });
+    }
+
+    fn synced(&self, e: &store::Entry) {
+        self.0.synced(e.into());
+    }
+
+    fn busy(&self, busy: bool) {
+        self.0.busy(busy);
+    }
+
+    fn removed(&self, host: &str, id: &str) {
+        self.0.removed(host.into(), id.into());
+    }
+
+    fn remote(&self, host: &str, remote: Option<&api::Remote>) {
+        self.0.remote(host.into(), remote.map(RemoteState::from));
+    }
+
+    fn recording(&self, host: &str, settings: &api::Recording) {
+        self.0.recording(host.into(), settings.clone().into());
+    }
+
+    fn about(&self, host: &str, about: Option<&api::About>) {
+        self.0.about(host.into(), about.map(FrameInfo::from));
+    }
+}
+
+struct FinderRelay(Arc<dyn Finder>);
+
+impl engine::Finder for FinderRelay {
+    fn find(&self, fingerprint: &str, window: Duration) -> Vec<String> {
+        self.0.find(fingerprint.into(), window.as_millis().min(u32::MAX as u128) as u32)
+    }
+}
+
+fn init_logging() {
+    #[cfg(target_os = "android")]
+    {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let logger = android_logger::AndroidLogger::new(
+                android_logger::Config::default()
+                    .with_max_level(log::LevelFilter::Info)
+                    .with_tag("framecorder"),
+            );
+            let _ = framecorder_app_lib::core::report::init_logger(Box::new(logger), log::LevelFilter::Info);
+        });
+    }
+}
+
+/// `host` or `host:port`, with the Frame's default port when none is given.
+fn with_port(addr: &str) -> Result<String, CoreError> {
+    let addr = addr.trim();
+    if addr.is_empty() {
+        return Err("which frame? pick one or type its address".into());
+    }
+    let has_port = match addr.rsplit_once(':') {
+        Some((host, port)) => !host.is_empty() && port.parse::<u16>().is_ok() && (!host.contains(':') || host.ends_with(']')),
+        None => false,
+    };
+    Ok(if has_port { addr.to_string() } else { pairlink::join_addr(addr, discover::PORT) })
+}
+
+#[derive(Clone, uniffi::Enum)]
+pub enum LivePhase {
+    Connecting,
+    Live,
+    Stopped,
+    Error,
+}
+
+#[derive(Clone, uniffi::Record)]
+pub struct LiveStatus {
+    pub phase: LivePhase,
+    pub url: String,
+    pub bytes_per_second: u64,
+    pub viewers: u32,
+    pub error: Option<String>,
+}
+
+impl From<framecorder_app_lib::core::live::LiveStatus> for LiveStatus {
+    fn from(s: framecorder_app_lib::core::live::LiveStatus) -> Self {
+        use framecorder_app_lib::core::live::LivePhase as Phase;
+        Self {
+            phase: match s.phase {
+                Phase::Connecting => LivePhase::Connecting,
+                Phase::Live => LivePhase::Live,
+                Phase::Stopped => LivePhase::Stopped,
+                Phase::Error => LivePhase::Error,
+            },
+            url: s.url,
+            bytes_per_second: s.bytes_per_second,
+            viewers: s.viewers,
+            error: s.error,
+        }
+    }
+}
+
+/// One running sync engine: owns its runtime and every paired Frame's loop.
+#[derive(uniffi::Object)]
+pub struct Core {
+    rt: tokio::runtime::Runtime,
+    engine: Arc<Engine>,
+}
+
+impl Core {
+    fn status_of(&self, fingerprint: &str) -> Result<FrameStatus, CoreError> {
+        self.engine
+            .statuses()
+            .iter()
+            .find(|s| s.fingerprint == fingerprint)
+            .map(FrameStatus::from)
+            .ok_or_else(|| "paired, but it went missing right after".into())
+    }
+
+    async fn on_rt<T: Send + 'static>(&self, f: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, CoreError> {
+        self.rt.spawn(f).await.map_err(|e| CoreError::Failed { reason: format!("that fell over: {e}") })
+    }
+}
+
+#[uniffi::export]
+impl Core {
+    pub async fn report_preview(&self, description: String, app: ReportAppInfo) -> Result<String, CoreError> {
+        let engine = self.engine.clone();
+        let report = self
+            .on_rt(async move { engine.report_preview(&description, app.into()).await })
+            .await?;
+        framecorder_report_json(&report)
+    }
+
+    pub async fn report_send(&self, preview_json: String) -> Result<ReportSent, CoreError> {
+        let report = serde_json::from_str(&preview_json).map_err(|_| CoreError::from("the report preview could not be read"))?;
+        self.on_rt(async move {
+            framecorder_app_lib::core::report::send(&report)
+                .await
+                .map(|s| ReportSent {
+                    number: s.number,
+                    url: s.url,
+                })
+                .map_err(|e| CoreError::from(e.to_string()))
+        })
+        .await?
+    }
+
+    pub async fn stats_ping(&self, state_dir: String, version: String, settings: Vec<String>) -> Result<(), CoreError> {
+        let paired = framecorder_app_lib::core::stats::paired(self.engine.hosts().len());
+        let clips = self.engine.clips();
+        self.on_rt(async move {
+            let mut said: Vec<(&str, String)> = settings.iter().filter_map(|s| s.split_once('=')).map(|(k, v)| (k, v.to_owned())).collect();
+            said.push(("paired", paired));
+            framecorder_app_lib::core::stats::ping(std::path::Path::new(&state_dir), "android", &version, &said, &clips).await
+        })
+        .await
+    }
+
+    /// `state_dir` keeps pairings and the index, `staging_dir` holds
+    /// downloads until they're handed to the gallery. Without a `finder`
+    /// the core does its own mDNS (which needs a multicast lock).
+    #[uniffi::constructor]
+    pub fn new(
+        state_dir: String,
+        staging_dir: String,
+        device_name: String,
+        app: String,
+        gallery: Arc<dyn Gallery>,
+        events: Arc<dyn Events>,
+        finder: Option<Arc<dyn Finder>>,
+    ) -> Result<Arc<Self>, CoreError> {
+        init_logging();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("framecorder-sync")
+            .enable_all()
+            .build()
+            .map_err(|e| CoreError::Failed { reason: format!("couldn't start syncing: {e}") })?;
+        std::fs::create_dir_all(&state_dir).map_err(|e| CoreError::Failed { reason: format!("can't use {state_dir}: {e}") })?;
+        std::fs::create_dir_all(&staging_dir).map_err(|e| CoreError::Failed { reason: format!("can't use {staging_dir}: {e}") })?;
+        let sink = Arc::new(GallerySink { gallery, staging: PathBuf::from(staging_dir) });
+        let engine = Engine::new(rt.handle().clone(), Path::new(&state_dir), sink, Arc::new(Relay(events)), &device_name, app);
+        match finder {
+            Some(f) => engine.set_finder(Some(Arc::new(FinderRelay(f))), false),
+            None => engine.set_finder(None, true),
+        }
+        Ok(Arc::new(Self { rt, engine }))
+    }
+
+    /// Starts following every paired Frame. Safe to call again.
+    pub fn start(&self) {
+        self.engine.start_all();
+    }
+
+    pub async fn stop(&self) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.stop().await }).await?;
+        Ok(())
+    }
+
+    pub async fn start_live(&self, fingerprint: String) -> Result<LiveStatus, CoreError> {
+        let engine = self.engine.clone();
+        Ok(self
+            .on_rt(async move { engine.start_live(&fingerprint).await })
+            .await??
+            .into())
+    }
+
+    pub async fn stop_live(&self) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.stop_live().await }).await?;
+        Ok(())
+    }
+
+    pub fn live_status(&self) -> Option<LiveStatus> {
+        self.engine.live_status().map(Into::into)
+    }
+
+    pub fn statuses(&self) -> Vec<FrameStatus> {
+        self.engine.statuses().iter().map(FrameStatus::from).collect()
+    }
+
+    /// Everything synced so far, newest first.
+    pub fn clips(&self) -> Vec<Clip> {
+        self.engine.clips().iter().map(Clip::from).collect()
+    }
+
+    /// Skips the backoff (and the sweep's cooldown) and tries every Frame now.
+    pub fn retry_now(&self) {
+        self.engine.retry_now();
+    }
+
+    pub async fn unpair(&self, fingerprint: String) -> Result<Forgot, CoreError> {
+        let engine = self.engine.clone();
+        Ok(self.on_rt(async move { engine.unpair(&fingerprint).await }).await??.into())
+    }
+
+    /// Pairs with the Frame at `addr` (`ip` or `ip:port`) using the code it
+    /// shows. With a fingerprint only that exact Frame is accepted.
+    /// `replaces` is a paired Frame this one stands for: its clips carry
+    /// over and its old pairing goes.
+    pub async fn pair(
+        &self,
+        addr: String,
+        fingerprint: Option<String>,
+        code: String,
+        replaces: Option<String>,
+    ) -> Result<FrameStatus, CoreError> {
+        let code = code.trim().to_string();
+        if !pairlink::is_code(&code) {
+            return Err("the code is the 6 digits shown on your frame".into());
+        }
+        let addr = with_port(&addr)?;
+        let fp = match fingerprint.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+            Some(f) => Some(tls::normalize_fingerprint(f).ok_or("that fingerprint doesn't look right")?),
+            None => None,
+        };
+        let engine = self.engine.clone();
+        let host = self.on_rt(async move { engine.pair(&addr, fp.as_deref(), &code, replaces.as_deref()).await }).await??;
+        self.status_of(&host.fingerprint)
+    }
+
+    /// Pairs from the `framecorder://pair?...` link in the Frame's QR code.
+    pub async fn pair_link(&self, link: String, replaces: Option<String>) -> Result<FrameStatus, CoreError> {
+        let l = pairlink::parse(&link)?;
+        let engine = self.engine.clone();
+        let host = self.on_rt(async move { engine.pair(&l.addr, Some(&l.fingerprint), &l.code, replaces.as_deref()).await }).await??;
+        self.status_of(&host.fingerprint)
+    }
+
+    /// Asks every address nearby on the Frame's port, for networks where
+    /// mDNS doesn't get through.
+    pub async fn sweep(&self, seconds: u32) -> Vec<FoundFrame> {
+        let window = Duration::from_secs(seconds.clamp(1, 30) as u64);
+        let app = self.engine.app().to_string();
+        self.on_rt(async move {
+            let mut found = Vec::new();
+            discover::sweep(window, &app, |f| {
+                found.push(FoundFrame::from(f));
+                true
+            })
+            .await;
+            found
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// Who answers at `addr`, if it's a framecorder-sync: its name and
+    /// fingerprint, for showing before pairing with a typed-in address.
+    pub async fn identify(&self, addr: String) -> Result<FoundFrame, CoreError> {
+        let addr = with_port(&addr)?;
+        let shown = addr.clone();
+        let app = self.engine.app().to_string();
+        self.on_rt(async move { discover::identify(&addr, &app).await })
+            .await?
+            .map(FoundFrame::from)
+            .ok_or_else(|| CoreError::Failed { reason: format!("nothing that looks like a frame answered at {shown}") })
+    }
+
+    /// Asks the Frame to `record`, `stop` or `clip`. Fails with why not,
+    /// like the tab not running.
+    pub async fn command(&self, fingerprint: String, what: String) -> Result<RemoteState, CoreError> {
+        let engine = self.engine.clone();
+        let remote = self.on_rt(async move { engine.command(&fingerprint, &what).await }).await??;
+        Ok(RemoteState::from(&remote))
+    }
+
+    /// The Frame's recording settings, or `None` when its framecorder is
+    /// older than them.
+    pub async fn recording(&self, fingerprint: String) -> Result<Option<RecordingSettings>, CoreError> {
+        let engine = self.engine.clone();
+        Ok(self.on_rt(async move { engine.recording(&fingerprint).await }).await??.map(RecordingSettings::from))
+    }
+
+    /// Saves them on the Frame, for its next recording. Returns what it kept.
+    pub async fn set_recording(&self, fingerprint: String, settings: RecordingPatch) -> Result<RecordingSettings, CoreError> {
+        let engine = self.engine.clone();
+        let settings = api::RecordingPatch::from(settings);
+        Ok(self.on_rt(async move { engine.set_recording(&fingerprint, &settings).await }).await??.into())
+    }
+
+    /// Has the Frame install its framecorder update now. It restarts its
+    /// sync service on the way, so it drops off and comes back on the new
+    /// version. Fails with why not.
+    pub async fn start_update(&self, fingerprint: String) -> Result<(), CoreError> {
+        let engine = self.engine.clone();
+        self.on_rt(async move { engine.start_update(&fingerprint).await }).await??;
+        Ok(())
+    }
+
+    /// For the connection check: does the paired Frame answer at its last
+    /// address with the certificate we paired with? Says why not.
+    pub async fn check(&self, fingerprint: String) -> Result<(), CoreError> {
+        let host = self.engine.host(&fingerprint).ok_or("that frame isn't paired")?;
+        let app = self.engine.app().to_string();
+        self.on_rt(async move {
+            let client = Client::pinned(&host.addr, &host.fingerprint, &app).map_err(|e| e.to_string())?.with_token(&host.token);
+            client.hello().await.map(|_| ()).map_err(|e| e.to_string())
+        })
+        .await??;
+        Ok(())
+    }
+}
+
+/// Reads the link in the Frame's pairing QR code.
+#[uniffi::export]
+pub fn parse_pair_link(link: String) -> Result<PairLinkInfo, CoreError> {
+    let l = pairlink::parse(&link)?;
+    Ok(PairLinkInfo { addr: l.addr, fingerprint: l.fingerprint, code: l.code, name: l.name })
+}
+
+/// The networks a sweep covers, like "192.168.1.x", for saying so on screen.
+#[uniffi::export]
+pub fn sweep_networks() -> Vec<String> {
+    let mut nets: Vec<String> = discover::sweep_targets()
+        .iter()
+        .map(|ip| {
+            let o = ip.octets();
+            format!("{}.{}.{}.x", o[0], o[1], o[2])
+        })
+        .collect();
+    nets.dedup();
+    nets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestGallery;
+
+    impl Gallery for TestGallery {
+        fn completed(&self, _: String, _: u64, _: String) -> Result<Option<String>, CoreError> {
+            Ok(None)
+        }
+        fn save(&self, _: String, _: String, _: String) -> Result<String, CoreError> {
+            Err("not saving in this test".into())
+        }
+    }
+
+    #[test]
+    fn partial_names_keep_the_full_remote_identity() {
+        use engine::Sink;
+        let sink = GallerySink { gallery: Arc::new(TestGallery), staging: PathBuf::from("cache") };
+        let host = store::Host {
+            fingerprint: "ab".repeat(32),
+            name: "frame".into(),
+            addr: "x".into(),
+            token: "t".into(),
+            device_id: "d".into(),
+            paired_at: 0,
+        };
+        let mut clip = RemoteClip {
+            id: "r-2026-10-15_12-27-10".into(),
+            kind: "recording".into(),
+            name: "2026-10-15_12-27-10.mp4".into(),
+            size: 5,
+            duration_s: None,
+            created: 0,
+        };
+        assert_eq!(GallerySink::subdir(&clip), "");
+        let recording = sink.staging(&host, &clip);
+        clip.id = "c-2026-10-15_12-27-10".into();
+        clip.kind = "clip".into();
+        assert_eq!(GallerySink::subdir(&clip), "clips");
+        let replay = sink.staging(&host, &clip);
+        assert_ne!(recording, replay);
+        clip.id = "../../a/b".into();
+        let slash = sink.staging(&host, &clip);
+        clip.id = "..\\..\\a\\b".into();
+        let backslash = sink.staging(&host, &clip);
+        assert_ne!(slash, backslash);
+        assert_eq!(slash.parent(), Some(Path::new("cache")));
+        assert_eq!(backslash.parent(), Some(Path::new("cache")));
+        let other = store::Host { fingerprint: format!("{}{}", "ab".repeat(4), "cd".repeat(28)), ..host.clone() };
+        assert_ne!(sink.staging(&host, &clip), sink.staging(&other, &clip));
+        assert_eq!(sink.staging(&host, &clip), sink.staging(&host, &clip));
+    }
+
+    #[test]
+    fn addresses_get_the_default_port() {
+        assert_eq!(with_port("192.168.1.42").unwrap(), "192.168.1.42:38619");
+        assert_eq!(with_port(" 192.168.1.42:4000 ").unwrap(), "192.168.1.42:4000");
+        assert_eq!(with_port("fe80::1").unwrap(), "[fe80::1]:38619");
+        assert_eq!(with_port("[fe80::1]:4000").unwrap(), "[fe80::1]:4000");
+        assert!(with_port("  ").is_err());
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ReportAppInfo {
+    pub name: String,
+    pub version: String,
+    pub os: String,
+    pub device: String,
+    pub arch: String,
+}
+
+impl From<ReportAppInfo> for framecorder_app_lib::core::report::AppInfo {
+    fn from(a: ReportAppInfo) -> Self {
+        Self {
+            name: a.name,
+            version: a.version,
+            os: a.os,
+            device: a.device,
+            arch: a.arch,
+        }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct ReportSent {
+    pub number: u64,
+    pub url: String,
+}
+
+fn framecorder_report_json(report: &framecorder_app_lib::core::report::Report) -> Result<String, CoreError> {
+    serde_json::to_string_pretty(report).map_err(|_| CoreError::from("the report preview could not be prepared"))
+}

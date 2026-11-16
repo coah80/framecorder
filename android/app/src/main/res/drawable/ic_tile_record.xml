@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Quick settings: record, a dot in a ring. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M12,3.5a8.5,8.5 0,1 1,0 17a8.5,8.5 0,1 1,0 -17z"
+        android:strokeWidth="2"
+        android:strokeColor="#FFFFFFFF" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,7a5,5 0,1 1,0 10a5,5 0,1 1,0 -10z" />
+</vector>

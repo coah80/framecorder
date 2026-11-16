@@ -21,6 +21,11 @@ pub struct Paths {
     pub videos: PathBuf,
     pub clips: PathBuf,
     pub state: PathBuf,
+    /// Where the kernel lists batteries.
+    pub power: PathBuf,
+    /// Follows the folder picked in the tab, and the drive it's on coming
+    /// and going, by starting over there.
+    pub follow: bool,
 }
 
 impl Paths {
@@ -31,15 +36,40 @@ impl Paths {
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
-        Ok(Self::new(&home.join("Videos/framecorder"), &config.join("framecorder/sync")))
+        let picked = crate::recording::folder(&config.join("framecorder/ui.conf"));
+        let videos = crate::folder::current(&picked).unwrap_or_else(|| home.join("Videos/framecorder"));
+        let mut paths = Self::new(&videos, &config.join("framecorder/sync"));
+        paths.follow = true;
+        // for trying it somewhere without the headset's battery
+        if let Some(power) = std::env::var_os("FRAMECORDER_POWER_SUPPLY") {
+            paths.power = PathBuf::from(power);
+        }
+        Ok(paths)
     }
 
     pub fn new(videos: &Path, state: &Path) -> Self {
-        Self { videos: videos.to_path_buf(), clips: videos.join("clips"), state: state.to_path_buf() }
+        Self {
+            videos: videos.to_path_buf(),
+            clips: videos.join("clips"),
+            state: state.to_path_buf(),
+            power: PathBuf::from("/sys/class/power_supply"),
+            follow: false,
+        }
+    }
+
+    /// Where recordings go now, when that's somewhere else than where this
+    /// started.
+    pub fn moved(&self) -> Option<PathBuf> {
+        let now = crate::folder::current(&crate::recording::folder(&self.recording()))?;
+        (self.follow && now != self.videos).then_some(now)
     }
 
     pub fn info(&self) -> PathBuf {
         self.state.join("info.json")
+    }
+    /// Why the last start failed, for the tab to show instead of guessing.
+    pub fn start_error(&self) -> PathBuf {
+        self.state.join("start-error.txt")
     }
     pub fn pairing(&self) -> PathBuf {
         self.state.join("pairing.json")
@@ -49,6 +79,18 @@ impl Paths {
     }
     pub fn settings(&self) -> PathBuf {
         self.state.join("settings.json")
+    }
+    /// What a phone asked the tab to do.
+    pub fn command(&self) -> PathBuf {
+        self.state.join("command.json")
+    }
+    /// What the tab says back: how that went, and whether it's recording.
+    pub fn status(&self) -> PathBuf {
+        self.state.join("status.json")
+    }
+    /// The dashboard tab's own settings, next to our folder.
+    pub fn recording(&self) -> PathBuf {
+        self.state.parent().unwrap_or(&self.state).join("ui.conf")
     }
 }
 
@@ -87,18 +129,35 @@ pub struct Info<'a> {
 /// Writes to a temp file next to `path` and renames it over, so readers
 /// never see half a file.
 pub fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let (tmp, mut file) = loop {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_extension(format!("{}.{}.tmp", std::process::id(), id));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = file.write_all(data);
+    drop(file);
+    let result = result.and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub fn write_private(path: &Path, data: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let tmp = path.with_extension("tmp");
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
-    f.write_all(data)?;
-    std::fs::rename(&tmp, path)
+    write_atomic(path, data)
 }
 
 pub fn device_name(settings: &Settings) -> String {
@@ -174,4 +233,33 @@ pub fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn concurrent_atomic_writes_never_share_or_leave_a_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let barrier = Barrier::new(16);
+        std::thread::scope(|scope| {
+            for n in 0..16 {
+                let (path, barrier) = (&path, &barrier);
+                scope.spawn(move || {
+                    let data = vec![n; 128 * 1024];
+                    barrier.wait();
+                    write_atomic(path, &data).unwrap();
+                    let read = std::fs::read(path).unwrap();
+                    assert_eq!(read.len(), data.len());
+                    assert!(read.iter().all(|b| *b == read[0]));
+                });
+            }
+        });
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(write_atomic(&dir.path().join("missing/state.json"), b"x").is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }

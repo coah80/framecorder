@@ -20,12 +20,156 @@ pub struct Pairing {
     pub size: usize,
 }
 
+/// Whether a device is talking to the sync service right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    /// No live state: the sync service is older, or not running.
+    Unknown,
+    Connected,
+    Away,
+}
+
+/// A paired device, with what the sync service sees of it right now.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Device {
     pub id: String,
     pub name: String,
+    pub presence: Presence,
+    /// The first app, which can't update itself.
+    pub old_app: bool,
+    pub transfer: Option<clients::Transfer>,
 }
 
-fn dir() -> Option<PathBuf> {
+impl Device {
+    /// A device with nothing known about it beyond the pairing.
+    pub fn paired(id: &str, name: &str) -> Self {
+        Self { id: id.into(), name: name.into(), presence: Presence::Unknown, old_app: false, transfer: None }
+    }
+}
+
+/// Everything paired, and whether an update is going on.
+pub struct Paired {
+    pub devices: Vec<Device>,
+    pub update: clients::Update,
+}
+
+pub mod clients {
+    use std::path::Path;
+
+    use serde_json::Value;
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Device {
+        pub id: String,
+        pub name: String,
+        pub app: Option<String>,
+        pub connected: bool,
+        pub transfer: Option<Transfer>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Transfer {
+        pub name: String,
+        pub done: u64,
+        pub total: u64,
+    }
+
+    impl Transfer {
+        pub fn percent(&self) -> u64 {
+            if self.total == 0 {
+                return 0;
+            }
+            (self.done * 100 / self.total).min(100)
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum Update {
+        Idle,
+        Updating,
+        Failed(Option<String>),
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct State {
+        pub devices: Vec<Device>,
+        pub update: Update,
+    }
+
+    pub fn read() -> Option<State> {
+        read_at(&super::dir()?.join("clients.json"))
+    }
+
+    fn read_transfer(transfer: &Value) -> Option<Transfer> {
+        Some(Transfer { name: transfer["name"].as_str()?.into(), done: transfer["done"].as_u64()?, total: transfer["total"].as_u64()? })
+    }
+
+    fn read_at(path: &Path) -> Option<State> {
+        let body: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+        let devices = body["devices"]
+            .as_array()?
+            .iter()
+            .filter_map(|device| {
+                Some(Device {
+                    id: device["id"].as_str()?.into(),
+                    name: device["name"].as_str().unwrap_or("a device").into(),
+                    app: device["app"].as_str().map(String::from),
+                    connected: device["connected"].as_bool().unwrap_or(false),
+                    transfer: read_transfer(&device["transfer"]),
+                })
+            })
+            .collect();
+        let update = match body["update"]["state"].as_str() {
+            Some("updating") => Update::Updating,
+            Some("failed") => Update::Failed(body["update"]["error"].as_str().map(String::from)),
+            _ => Update::Idle,
+        };
+        Some(State { devices, update })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn reads_live_clients_and_tolerates_older_files() {
+            let dir = std::env::temp_dir().join(format!("framecorder-clients-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("clients.json");
+            assert_eq!(read_at(&path), None);
+            std::fs::write(&path, r#"{
+                "devices": [
+                    {"id":"phone", "name":"sam's phone", "app":"android/0.2.0", "connected":true,
+                     "transfer":{"name":"clip.mp4", "done":31000000, "total":48000000}},
+                    {"id":"pc", "name":"desktop", "app":null, "connected":false, "transfer":null}
+                ],
+                "update":{"state":"failed", "error":"couldn't download the update"}
+            }"#).unwrap();
+            assert_eq!(read_at(&path), Some(State {
+                devices: vec![
+                    Device {
+                        id: "phone".into(), name: "sam's phone".into(), app: Some("android/0.2.0".into()), connected: true,
+                        transfer: Some(Transfer { name: "clip.mp4".into(), done: 31_000_000, total: 48_000_000 }),
+                    },
+                    Device { id: "pc".into(), name: "desktop".into(), app: None, connected: false, transfer: None },
+                ],
+                update: Update::Failed(Some("couldn't download the update".into())),
+            }));
+            std::fs::write(&path, r#"{"devices":[{"id":"old"}]}"#).unwrap();
+            assert_eq!(read_at(&path), Some(State {
+                devices: vec![Device { id: "old".into(), name: "a device".into(), app: None, connected: false, transfer: None }],
+                update: Update::Idle,
+            }));
+            std::fs::write(&path, r#"{"devices":[],"update":{"state":"updating"}}"#).unwrap();
+            assert_eq!(read_at(&path).unwrap().update, Update::Updating);
+            std::fs::write(&path, "unfinished").unwrap();
+            assert_eq!(read_at(&path), None);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}
+
+pub(super) fn dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
@@ -155,18 +299,42 @@ pub fn available() -> bool {
     read_json("info.json").is_some()
 }
 
-/// Takes the code back so nobody can use it after the screen closes.
+/// Why the sync service's last start failed, as it wrote it down.
+pub fn start_error() -> Option<String> {
+    let text = std::fs::read_to_string(dir()?.join("start-error.txt")).ok()?;
+    Some(text.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// Takes the code back so nobody can use it after pairing's been closed.
 pub fn end() {
     if let Some(d) = dir() {
         let _ = std::fs::remove_file(d.join("pairing.json"));
     }
 }
 
-pub fn devices() -> Vec<Device> {
-    let Some(Value::Array(list)) = read_json("devices.json") else { return Vec::new() };
-    list.iter()
-        .filter_map(|d| Some(Device { id: d["id"].as_str()?.to_string(), name: d["name"].as_str().unwrap_or("a device").to_string() }))
-        .collect()
+/// The paired devices from the sync service's list, each with its live
+/// state when the service is writing one.
+pub fn paired() -> Paired {
+    let live = clients::read();
+    let Some(Value::Array(list)) = read_json("devices.json") else { return Paired { devices: Vec::new(), update: clients::Update::Idle } };
+    let devices = list
+        .iter()
+        .filter_map(|d| {
+            let id = d["id"].as_str()?;
+            let name = d["name"].as_str().unwrap_or("a device");
+            let mut device = Device::paired(id, name);
+            if let Some(live) = &live {
+                device.presence = Presence::Away;
+                if let Some(seen) = live.devices.iter().find(|c| c.id == id) {
+                    device.presence = if seen.connected { Presence::Connected } else { Presence::Away };
+                    device.old_app = seen.app.is_none();
+                    device.transfer = seen.transfer.as_ref().map(|t| clients::Transfer { name: t.name.clone(), done: t.done, total: t.total });
+                }
+            }
+            Some(device)
+        })
+        .collect();
+    Paired { devices, update: live.map_or(clients::Update::Idle, |l| l.update) }
 }
 
 /// Forgets a device; the sync service locks it out right away.

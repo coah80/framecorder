@@ -47,7 +47,7 @@ const SCANOUT_WAIT: Duration = Duration::from_millis(4);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum View {
-    /// One eye with the lens distortion removed, like a normal flat video.
+    /// A flat picture with lens distortion removed, from one eye or blended eyes.
     Eye,
     /// Both panels exactly as scanned out, distortion included.
     Raw,
@@ -92,13 +92,22 @@ impl Aspect {
 enum Eye {
     Left,
     Right,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Dominant {
+    Left,
+    Right,
 }
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Low overhead recorder for the Steam Frame's real headset view")]
 struct Args {
     /// Output file, .mp4 or .mkv. Defaults to ~/Videos/framecorder/<time>.mp4,
-    /// or no recording at all with --replay.
+    /// or no recording at all with --replay. MP4s are hybrid: fragmented while
+    /// they're written, so one cut off partway still plays, and a regular MP4
+    /// once they're done.
     output: Option<PathBuf>,
 
     /// Keep the last this many seconds in memory for clips.
@@ -117,9 +126,14 @@ struct Args {
     #[arg(long, value_enum, default_value_t = Source::Panel)]
     source: Source,
 
-    /// Which eye to record in `eye` view.
+    /// Which eye to record in `eye` view. Both blends a flat view from the panels.
     #[arg(long, value_enum, default_value_t = Eye::Left)]
     eye: Eye,
+
+    /// With `--eye both`, the eye that fills the middle. The other one only
+    /// shows past its inner edge, like SteamVR's own blended view.
+    #[arg(long, value_enum, default_value_t = Dominant::Right)]
+    dominant: Dominant,
 
     /// Shape of the video in `eye` view.
     #[arg(long, value_enum, default_value_t = Aspect::Landscape)]
@@ -154,9 +168,14 @@ struct Args {
     #[arg(long, conflicts_with = "bitrate")]
     qp: Option<u32>,
 
-    /// Also record the microphone, as its own audio track.
+    /// Also record the microphone, mixed in with the game ducking under it.
     #[arg(long)]
     mic: bool,
+
+    /// Which mic, by its PipeWire node name (`pw-dump` lists them). Without
+    /// it, or while it isn't plugged in, the one SteamOS uses.
+    #[arg(long, requires = "mic")]
+    mic_source: Option<String>,
 
     /// Don't record game audio.
     #[arg(long)]
@@ -178,13 +197,21 @@ struct Args {
     #[arg(long)]
     soft: bool,
 
-    /// How the recorder's GPU work ranks against the game's.
-    #[arg(long, value_enum, default_value_t = gpu::Priority::Low)]
+    /// How the recorder's GPU work ranks against the game's. High by
+    /// default: lower ones wait for the game to leave the GPU idle, which in
+    /// a heavy game means missed frames, and reading the panel late enough
+    /// that the compositor's already drawing the next frame into it.
+    #[arg(long, value_enum, default_value_t = gpu::Priority::High)]
     gpu_priority: gpu::Priority,
 
-    /// Also keep the mic on its own track, for editing.
+    /// Also keep the game and the mic on their own tracks, for editing.
     #[arg(long)]
     mic_track: bool,
+
+    /// Remux recordings saved as .mkv into .mp4 once they're done. Clips stay
+    /// as they are.
+    #[arg(long)]
+    remux: bool,
 
     /// Start paused; SIGUSR2 resumes, SIGUSR1 pauses again. Paused time is
     /// cut out of the video.
@@ -194,6 +221,9 @@ struct Args {
     /// Don't write the <video>.perf.csv with CPU, GPU and memory use.
     #[arg(long)]
     no_perf_log: bool,
+
+    #[arg(long, value_name = "FILE")]
+    dump_lut: Option<PathBuf>,
 
     #[arg(long, default_value = "/dev/dri/card0")]
     drm_device: PathBuf,
@@ -241,6 +271,7 @@ fn run(args: Args) -> Result<()> {
     let output = match (&args.output, args.replay) {
         (Some(p), _) => Some(p.clone()),
         (None, Some(_)) => None,
+        (None, None) if args.control => None,
         (None, None) => Some(default_output("")?),
     };
     if let Some(p) = &output {
@@ -289,9 +320,18 @@ fn run(args: Args) -> Result<()> {
         (false, View::Raw) => lut::raw(width, height, kms.mode_size.0, kms.mode_size.1),
         (false, View::Eye) => {
             let vr = openvr::OpenVr::connect().context("asking SteamVR for the lens distortion (try --view raw)")?;
-            lut::undistorted(&vr, args.eye as usize, args.fov, width, height)?
+            if args.eye == Eye::Both {
+                lut::blended(&vr, args.fov, width, height, args.dominant == Dominant::Left)?
+            } else {
+                lut::undistorted(&vr, args.eye as usize, args.fov, width, height)?
+            }
         }
     };
+    if let Some(path) = &args.dump_lut {
+        lut.save(path, width, height).with_context(|| format!("writing {}", path.display()))?;
+        log::info!("wrote the lookup grid for a {width}x{height} picture to {}", path.display());
+        return Ok(());
+    }
     let extensions = vr.as_ref().map(headset_view::vulkan_extensions).transpose()?;
 
     let enc_cfg = encoder::Config {
@@ -320,8 +360,8 @@ fn run(args: Args) -> Result<()> {
     };
 
     // Tracks the file gets. The mic goes into the main track so every
-    // player plays it; a separate mic track costs another encoder, so it's
-    // opt-in.
+    // player plays it; the separate game and mic tracks cost two more
+    // encoders, so they're asked for.
     let tracks = audio_tracks(!args.no_audio, args.mic, args.mic_track);
     let mut sources = Vec::new();
     if !args.no_audio {
@@ -350,6 +390,7 @@ fn run(args: Args) -> Result<()> {
         path: output,
         replay_secs: args.replay,
         announce: args.control,
+        remux: args.remux,
         codec: args.codec,
         width,
         height,
@@ -367,7 +408,7 @@ fn run(args: Args) -> Result<()> {
     let capture = if sources.is_empty() {
         None
     } else {
-        match audio::Capture::start(sources, tx.clone()) {
+        match audio::Capture::start(sources, args.mic_source.clone(), tx.clone()) {
             Ok(c) => Some(c),
             Err(e) => {
                 drop(tx);
@@ -461,7 +502,7 @@ fn capture_loop(
             break;
         }
         while let Ok(cmd) = commands.try_recv() {
-            if matches!(cmd, mux::Msg::Record(_)) {
+            if matches!(cmd, mux::Msg::Record(_) | mux::Msg::Live(Some(_)) | mux::Msg::Keyframe) {
                 enc.force_keyframe();
             }
             send(tx, cmd)?;
@@ -550,6 +591,9 @@ fn capture_loop(
                 dropped,
                 gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64
             );
+            if args.control {
+                println!("perf {:.1} {fps} {:.2}", frames as f64 / secs, gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64);
+            }
             gpu_time = Duration::ZERO;
             if dropped > window.1 {
                 log::warn!("the encoder fell behind, try a lower bitrate or resolution");
@@ -612,7 +656,11 @@ fn audio_tracks(game: bool, mic: bool, mic_track: bool) -> Vec<mux::TrackSpec> {
     use audio::Source::{Game, Mic};
     let track = |title, inputs| mux::TrackSpec { title, inputs };
     match (game, mic) {
-        (true, true) if mic_track => vec![track("Game + mic", vec![Game, Mic]), track("Microphone", vec![Mic])],
+        (true, true) if mic_track => vec![
+            track("Game + mic", vec![Game, Mic]),
+            track("Game", vec![Game]),
+            track("Microphone", vec![Mic]),
+        ],
         (true, true) => vec![track("Game + mic", vec![Game, Mic])],
         (true, false) => vec![track("Game", vec![Game])],
         (false, true) => vec![track("Microphone", vec![Mic])],
@@ -691,6 +739,8 @@ fn spawn_control(ctl: mpsc::Sender<mux::Msg>, default_secs: u32) -> Result<()> {
                 }
                 Ok(control::Command::Quit) => break,
                 Ok(control::Command::Record(path)) => create_parent(&path).map(|_| mux::Msg::Record(path)),
+                Ok(control::Command::Live(path)) => Ok(mux::Msg::Live(path)),
+                Ok(control::Command::Keyframe) => Ok(mux::Msg::Keyframe),
                 Ok(control::Command::StopRecord) => Ok(mux::Msg::StopRecord),
                 Ok(control::Command::Clip { secs, path }) => path
                     .map_or_else(|| default_output("clips"), Ok)

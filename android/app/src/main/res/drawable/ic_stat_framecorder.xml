@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status bar icon: the same viewfinder, white on transparent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <group android:translateX="-18" android:translateY="-18">
+        <path
+            android:pathData="M28,43v-11a4,4 0,0 1,4 -4h11M65,28h11a4,4 0,0 1,4 4v11M80,65v11a4,4 0,0 1,-4 4h-11M43,80h-11a4,4 0,0 1,-4 -4v-11"
+            android:strokeWidth="6"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,41a13,13 0,1 1,0 26a13,13 0,1 1,0 -26z" />
+    </group>
+</vector>

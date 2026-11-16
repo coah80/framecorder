@@ -188,7 +188,7 @@ impl Track {
                 pts: p.pts,
                 duration: p.duration,
                 key: true,
-                data: Arc::from(std::slice::from_raw_parts(p.data, p.size as usize)),
+                data: crate::writer::Payload::Mem(Arc::from(std::slice::from_raw_parts(p.data, p.size as usize))),
             });
             ff::av_packet_unref(self.packet);
         }

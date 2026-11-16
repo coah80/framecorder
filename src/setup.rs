@@ -14,6 +14,12 @@ const SERVICES: [&str; 4] =
     ["framecorder-ui.service", "framecorder-sync.service", "framecorder-update.service", "framecorder-update.timer"];
 /// The latest release, and its checksum next to it at `.sha256`.
 const RELEASE_URL: &str = "https://framecorder.coah80.com/dl/framecorder-arm64.tar.gz";
+/// Where it was installed from, when that's not the releases (the dev
+/// builds): the folder the installer downloaded from. Updates come from
+/// there too. Installing from the normal place takes it away again.
+const SOURCE: &str = ".local/share/framecorder/source";
+/// What runs `--update` every few hours.
+const UPDATE_TIMER: &str = "framecorder-update.timer";
 /// The checksum of the release that's installed, under the home folder.
 const INSTALLED: &str = ".local/share/framecorder/installed.sha256";
 /// Left by an update that replaced an unlocked recorder, which drops its
@@ -36,7 +42,7 @@ impl Report {
         }];
         lines.push("ready: open the steamvr dashboard, there's a framecorder tab".to_string());
         if !self.unlocked {
-            lines.push("it records steamvr's view for now. run the installer and unlock the panels for 1:1, 9:16 and both eyes".to_string());
+            lines.push("the panels aren't unlocked: run the installer, it asks for your password".to_string());
         }
         lines
     }
@@ -68,6 +74,40 @@ pub fn unlocked(program: &Path) -> bool {
 /// Whether an update took the recorder's permission away (see `RELOCK`).
 pub fn relocked() -> bool {
     home().is_ok_and(|h| h.join(RELOCK).exists())
+}
+
+/// Starts the sync service, for when it isn't running. It's a user service,
+/// so this needs no password.
+pub fn start_sync() -> bool {
+    quiet("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])
+}
+
+/// Whether the tab starts with SteamVR.
+pub fn autostart() -> bool {
+    quiet("systemctl", &["--user", "is-enabled", "--quiet", "framecorder-ui.service"])
+}
+
+/// Makes the tab start with SteamVR, or not. It doesn't start or stop the tab
+/// that's running.
+pub fn set_autostart(on: bool) -> bool {
+    quiet("systemctl", &["--user", if on { "enable" } else { "disable" }, "framecorder-ui.service"])
+}
+
+/// Whether framecorder updates itself every few hours.
+pub fn auto_update() -> bool {
+    quiet("systemctl", &["--user", "is-enabled", "--quiet", UPDATE_TIMER])
+}
+
+/// Turns updating on its own on or off. Updating from an app or the
+/// installer works either way.
+pub fn set_auto_update(on: bool) -> bool {
+    if !on {
+        return quiet("systemctl", &["--user", "disable", "--now", UPDATE_TIMER]);
+    }
+    // a restarted timer forgets when it last ran and never comes due again
+    // (it counts from that), so it checks now and counts from there
+    quiet("systemctl", &["--user", "enable", "--now", UPDATE_TIMER])
+        && quiet("systemctl", &["--user", "start", "--no-block", "framecorder-update.service"])
 }
 
 /// Where the recorder gets installed.
@@ -131,7 +171,7 @@ fn desktop_entry(home: &Path) -> Result<()> {
          Terminal=false\n",
         ui.display()
     );
-    let files: [(&str, &[u8]); 2] = [(DESKTOP_ENTRY, entry.as_bytes()), (ICON, include_bytes!("../app/icons/128x128.png"))];
+    let files: [(&str, &[u8]); 2] = [(DESKTOP_ENTRY, entry.as_bytes()), (ICON, include_bytes!("../assets/icons/128x128.png"))];
     for (path, bytes) in files {
         let path = home.join(path);
         if std::fs::read(&path).is_ok_and(|old| old == bytes) {
@@ -179,7 +219,17 @@ pub fn run(restart_ui: bool) -> Result<Report> {
         bail!("couldn't unpack {}", payload.display());
     }
 
+    // Installed from the normal place (the installer passes FRAMECORDER_DL
+    // through when it's not): back on releases, see SOURCE. Not for updates,
+    // they come from wherever it was installed from.
+    if restart_ui && std::env::var_os("FRAMECORDER_DL").is_none() {
+        let _ = std::fs::remove_file(home.join(SOURCE));
+    }
     let was_unlocked = panels_unlocked();
+    // An update leaves the tab's start with SteamVR, and updating on its
+    // own, as the user set them.
+    let fresh = !home.join(".config/systemd/user/framecorder-ui.service").exists();
+    let auto_update = fresh || self::auto_update();
     let updated = install(&release, &home)?;
     desktop_entry(&home)?;
     // Run by hand, right after the installer asked for the password (sudo
@@ -200,11 +250,16 @@ pub fn run(restart_ui: bool) -> Result<Report> {
 
     // These have to work, or nothing runs, so they're not quiet about it.
     output("systemctl", &["--user", "daemon-reload"])?;
-    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service", "framecorder-update.timer"])?;
+    output("systemctl", &["--user", "enable", "--now", "framecorder-sync.service"])?;
+    if auto_update {
+        output("systemctl", &["--user", "enable", "--now", UPDATE_TIMER])?;
+    }
     if updated.iter().any(|u| u == "framecorder-sync") {
         quiet("systemctl", &["--user", "try-restart", "framecorder-sync.service"]);
     }
-    output("systemctl", &["--user", "enable", "framecorder-ui.service"])?;
+    if fresh {
+        output("systemctl", &["--user", "enable", "framecorder-ui.service"])?;
+    }
     // It starts with SteamVR from now on. Starting it while SteamVR is off
     // would start SteamVR too (it's bound to it), so only when it's on.
     if restart_ui && quiet("systemctl", &["--user", "is-active", "--quiet", "steamvr.service"]) {
@@ -252,21 +307,57 @@ pub fn unlock() -> Result<()> {
     Ok(())
 }
 
+struct Latest {
+    url: String,
+    sum: String,
+    version: String,
+}
+
+const RELEASE_FILE: &str = "framecorder-arm64.tar.gz";
+
+fn ours(listed: &str, signature: &str, keys: &[[u8; 32]], current: &str) -> Result<crate::signed::Listing> {
+    let listing = crate::signed::verify(listed, signature, keys).context("the release isn't signed by framecorder, not installing it")?;
+    if listing.name != RELEASE_FILE {
+        bail!("the release is signed, but as {}, not installing it", listing.name);
+    }
+    if !crate::signed::at_least(&listing.version, current) {
+        bail!("the release on offer is {}, older than this one, not installing it", listing.version);
+    }
+    Ok(listing)
+}
+
+fn latest(home: &Path) -> Result<Latest> {
+    // FRAMECORDER_URL points it at another release, for testing one.
+    let source = std::fs::read_to_string(home.join(SOURCE)).ok().map(|s| format!("{}/framecorder-arm64.tar.gz", s.trim()));
+    let url = std::env::var("FRAMECORDER_URL").ok().or(source).unwrap_or_else(|| RELEASE_URL.to_string());
+    let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
+    let signature = output("curl", &["-fsSL", &format!("{url}.sig")]).context("the release has no signature, not installing it")?;
+    let crate::signed::Listing { sum, version, .. } = ours(&listed, &signature, &crate::signed::KEYS, env!("CARGO_PKG_VERSION"))?;
+    Ok(Latest { url, sum, version })
+}
+
+/// Whether there's an update, as JSON for framecorder-sync to hand the apps:
+/// the version that's installed, the newest one, and whether that's not
+/// what's installed.
+pub fn check() -> Result<String> {
+    let home = home()?;
+    let latest = latest(&home)?;
+    let installed = std::fs::read_to_string(home.join(INSTALLED)).ok().map(|s| s.trim().to_string());
+    Ok(serde_json::json!({
+        "installed": env!("CARGO_PKG_VERSION"),
+        "latest": latest.version,
+        "available": installed.as_deref() != Some(latest.sum.as_str()),
+    })
+    .to_string())
+}
+
 /// What the update timer runs: installs the latest release, unless it's the
 /// one that's installed already.
 pub fn update() -> Result<()> {
     use_user_manager();
     let home = home()?;
     let marker = home.join(INSTALLED);
-    // FRAMECORDER_URL points it at another release, for testing one.
-    let url = std::env::var("FRAMECORDER_URL").unwrap_or_else(|_| RELEASE_URL.to_string());
-    let listed = output("curl", &["-fsSL", &format!("{url}.sha256")]).context("checking for an update")?;
-    let latest = listed
-        .split_whitespace()
-        .next()
-        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .context("the release's checksum doesn't look like one")?
-        .to_ascii_lowercase();
+    let Latest { url, sum: latest, .. } = self::latest(&home)?;
     if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == latest) {
         log::info!("framecorder is up to date");
         return Ok(());
@@ -348,6 +439,26 @@ mod tests {
             }
         }
         std::fs::write(dir.join("bin/framecorder"), recorder).unwrap();
+    }
+
+    #[test]
+    fn an_update_has_to_be_ours_for_the_headset_and_not_older() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        let pair = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+        let keys = [pair.public_key().as_ref().try_into().unwrap()];
+        let signed = |name: &str, version: &str| {
+            let listed = format!("{}  {name}\nversion {version}\n", "ab".repeat(32));
+            let signature: String = pair.sign(&[b"framecorder release v1\n", listed.as_bytes()].concat()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+            (listed, signature)
+        };
+        let (listed, signature) = signed(RELEASE_FILE, "0.2.1");
+        assert_eq!(ours(&listed, &signature, &keys, "0.2.0").unwrap().sum, "ab".repeat(32));
+        assert!(ours(&listed, "", &keys, "0.2.0").is_err());
+        assert!(ours(&listed, &signature, &crate::signed::KEYS, "0.2.0").is_err());
+        let (listed, signature) = signed("framecorder-setup.exe", "0.2.1");
+        assert!(ours(&listed, &signature, &keys, "0.2.0").is_err());
+        let (listed, signature) = signed(RELEASE_FILE, "0.1.4");
+        assert!(ours(&listed, &signature, &keys, "0.2.0").is_err());
     }
 
     #[test]

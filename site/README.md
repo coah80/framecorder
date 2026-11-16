@@ -15,4 +15,4 @@ before publishing: set `REPO` at the top of `js/main.js` to where the project li
 - `js/main.js`: the hero scene and the things orbiting it (they're plain html, moved around by the 3d scene, so they stay sharp and go behind the headset)
 - `css/style.css`: catppuccin mocha, same look as the app and the dashboard tab
 - `vendor/three.module.min.js`: three.js r160, MIT
-- `img/`: screenshots of the tab and the app. regenerate them with `framecorder-ui --preview` and `app/tools/preview/shots.sh`
+- `img/`: screenshots of the tab and the app on a phone. regenerate the tab with `framecorder-ui --preview`; the phone one is a screenshot of the android app

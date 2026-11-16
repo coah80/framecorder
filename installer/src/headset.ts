@@ -7,7 +7,8 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 // FRAMECORDER_DL points it at another release, for testing one
-const DL = process.env.FRAMECORDER_DL ?? "https://framecorder.coah80.com/dl"
+const DEFAULT_DL = "https://framecorder.coah80.com/dl"
+const DL = process.env.FRAMECORDER_DL ?? DEFAULT_DL
 const HOME = homedir()
 const BIN = join(HOME, ".local/bin")
 const SHARE = join(HOME, ".local/share/framecorder")
@@ -67,6 +68,9 @@ export async function install(status: (text: string) => void): Promise<void> {
     await run(join(work, "framecorder-setup"), [])
     // so the updater knows this one's installed
     writeFileSync(join(SHARE, "installed.sha256"), `${want}\n`)
+    // updates come from the same place (the dev builds, say), see SOURCE in setup.rs
+    if (DL === DEFAULT_DL) rmSync(join(SHARE, "source"), { force: true })
+    else writeFileSync(join(SHARE, "source"), `${DL}\n`)
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

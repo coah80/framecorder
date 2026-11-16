@@ -49,6 +49,8 @@ pub enum Msg {
     /// Start writing a recording here, from the next keyframe.
     Record(PathBuf),
     StopRecord,
+    Live(Option<PathBuf>),
+    Keyframe,
     /// Save the last `secs` seconds from the replay buffer.
     Clip { secs: u32, path: PathBuf },
 }
@@ -66,6 +68,8 @@ pub struct Config {
     pub replay_secs: Option<u32>,
     /// Say on stdout when files are saved, for the dashboard tab.
     pub announce: bool,
+    /// Recordings saved as .mkv get remuxed into .mp4 once they're done.
+    pub remux: bool,
     pub codec: Codec,
     pub width: u32,
     pub height: u32,
@@ -130,6 +134,8 @@ struct Session {
     recordings: u32,
     /// Where the video was when the last clip was taken.
     last_clip: Option<i64>,
+    live_path: Option<PathBuf>,
+    live: Option<writer::Live>,
 }
 
 impl Session {
@@ -138,7 +144,8 @@ impl Session {
         let mut mixers = Vec::new();
         for (i, spec) in cfg.audio_tracks.iter().enumerate() {
             tracks.push(aac::Track::new(i + 1, cfg.audio_bitrate)?);
-            mixers.push((spec.inputs.len() > 1).then(|| Mixer::new(spec.inputs.len())));
+            let voice = spec.inputs.iter().position(|s| *s == Source::Mic);
+            mixers.push((spec.inputs.len() > 1).then(|| Mixer::new(spec.inputs.len(), voice)));
         }
         let ring = cfg.replay_secs.map(|s| Ring::new(s, cfg.fps));
         if let Some(secs) = cfg.replay_secs {
@@ -160,12 +167,19 @@ impl Session {
             stats: Stats::default(),
             recordings: 0,
             last_clip: None,
+            live_path: None,
+            live: None,
             cfg,
         })
     }
 
     fn handle(&mut self, msg: Msg) -> Result<()> {
         match msg {
+            Msg::Live(path) => {
+                self.live_path = path;
+                self.live = None;
+            }
+            Msg::Keyframe => {}
             Msg::Video(p) => self.video(p)?,
             Msg::Audio(chunk) => self.audio(chunk)?,
             Msg::Pause(at) => self.paused_at = Some(at as i64 - self.cfg.start_ns as i64),
@@ -210,7 +224,8 @@ impl Session {
     }
 
     fn video(&mut self, p: VideoPacket) -> Result<()> {
-        let (params, has_picture) = split_parameter_sets(&p.data, self.cfg.codec);
+        let (params, has_picture, keyframe) = split_parameter_sets(&p.data, self.cfg.codec);
+        let key = p.key || keyframe;
         if self.streams.is_none() {
             if params.is_empty() {
                 log::warn!("encoder output started without stream headers, dropping a packet");
@@ -220,7 +235,7 @@ impl Session {
                 .tracks
                 .iter()
                 .zip(&self.cfg.audio_tracks)
-                .map(|(t, spec)| Ok((spec.title, t.params()?)))
+                .map(|(t, spec)| Ok((spec.title.to_string(), t.params()?)))
                 .collect::<Result<Vec<_>>>()?;
             self.streams = Some(Arc::new(Streams {
                 codec: self.cfg.codec,
@@ -242,12 +257,12 @@ impl Session {
         }
         self.last_video_pts = pts;
 
-        if p.key {
+        if key {
             if let Some(path) = self.start_request.take() {
                 self.start(Kind::Recording, path, pts, Vec::new(), None);
             }
         }
-        self.route(Packet { stream: 0, pts, duration: 1, key: p.key, data: Arc::from(p.data) });
+        self.route(Packet { stream: 0, pts, duration: 1, key, data: p.data.into() });
 
         // Keep audio running through quiet stretches.
         let quiet = audio_pos(pts, self.fps) - QUIET_AFTER;
@@ -296,6 +311,20 @@ impl Session {
             let track = p.stream - 1;
             self.audio_out[track] = self.audio_out[track].max(p.pts + p.duration);
         }
+        if self.live.is_none() && p.stream == 0 && p.key {
+            if let (Some(path), Some(streams)) = (&self.live_path, &self.streams) {
+                match writer::Live::new(path, streams) {
+                    Ok(live) => self.live = Some(live),
+                    Err(e) => log::warn!("couldn't start live video: {e:#}"),
+                }
+            }
+        }
+        if let Some(live) = &mut self.live {
+            if let Err(e) = live.send(&p) {
+                log::warn!("live video stopped: {e:#}");
+                self.live = None;
+            }
+        }
         for o in &self.outputs {
             if let Some(rebased) = rebase(&p, o.start, o.end, self.fps) {
                 o.file.send(rebased);
@@ -312,7 +341,9 @@ impl Session {
             self.announce_failure(kind, "nothing recorded yet");
             return;
         };
-        match writer::Handle::spawn(&path, &streams) {
+        // clips are saved a lot, remuxing each would hold up the next
+        let remux = kind == Kind::Recording && self.cfg.remux;
+        match writer::Handle::spawn(&path, &streams, remux) {
             Ok(file) => {
                 for p in backlog {
                     if let Some(rebased) = rebase(&p, start, end, self.fps) {
@@ -509,9 +540,9 @@ fn recorded_time(pauses: &[(i64, i64)], paused_at: Option<i64>, t: i64) -> Optio
 
 /// Pulls the parameter sets (VPS/SPS/PPS) out of an Annex B packet. Also
 /// says whether the packet carries an actual picture.
-fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool) {
+fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool, bool) {
     let mut params = Vec::new();
-    let mut has_picture = false;
+    let (mut has_picture, mut keyframe) = (false, false);
     for nal in nal_units(data) {
         let Some(&first) = nal.first() else { continue };
         let is_param = match codec {
@@ -527,9 +558,13 @@ fn split_parameter_sets(data: &[u8], codec: Codec) -> (Vec<u8>, bool) {
                 Codec::H264 => matches!(first & 0x1f, 1..=5),
             };
             has_picture |= is_vcl;
+            keyframe |= match codec {
+                Codec::Hevc => matches!((first >> 1) & 0x3f, 16..=21),
+                Codec::H264 => first & 0x1f == 5,
+            };
         }
     }
-    (params, has_picture)
+    (params, has_picture, keyframe)
 }
 
 fn nal_units(data: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -571,8 +606,8 @@ mod tests {
             0, 0, 1, 0x44, 1, 0xcc, // PPS
             0, 0, 0, 1, 0x26, 1, 0xdd, 0, // IDR slice
         ];
-        let (params, pic) = split_parameter_sets(&data, Codec::Hevc);
-        assert!(pic);
+        let (params, pic, key) = split_parameter_sets(&data, Codec::Hevc);
+        assert!(pic && key);
         assert_eq!(params, [0, 0, 0, 1, 0x40, 1, 0xaa, 0, 0, 0, 1, 0x42, 1, 0xbb, 0, 0, 0, 1, 0x44, 1, 0xcc]);
     }
 
@@ -593,13 +628,23 @@ mod tests {
     #[test]
     fn header_only_packet_has_no_picture() {
         let data = [0, 0, 0, 1, 0x67, 1, 2, 0, 0, 0, 1, 0x68, 3];
-        let (params, pic) = split_parameter_sets(&data, Codec::H264);
-        assert!(!pic);
+        let (params, pic, key) = split_parameter_sets(&data, Codec::H264);
+        assert!(!pic && !key);
         assert_eq!(params.len(), data.len());
     }
 
+    #[test]
+    fn keyframes_are_told_from_the_stream_not_the_drivers_flag() {
+        for (codec, idr, trailing) in [(Codec::Hevc, 19 << 1, 1 << 1), (Codec::H264, 0x65, 0x41)] {
+            assert_eq!(split_parameter_sets(&[0, 0, 0, 1, idr, 1, 0xdd], codec), (Vec::new(), true, true), "{codec:?}");
+            assert_eq!(split_parameter_sets(&[0, 0, 0, 1, trailing, 1, 0xdd], codec), (Vec::new(), true, false), "{codec:?}");
+        }
+        assert!(split_parameter_sets(&[0, 0, 1, 21 << 1, 1, 0], Codec::Hevc).2);
+        assert!(!split_parameter_sets(&[0, 0, 1, 9 << 1, 1, 0], Codec::Hevc).2);
+    }
+
     fn packet(stream: usize, pts: i64) -> Packet {
-        Packet { stream, pts, duration: 1, key: false, data: Arc::from(vec![0u8; 1]) }
+        Packet { stream, pts, duration: 1, key: false, data: vec![0u8; 1].into() }
     }
 
     #[test]

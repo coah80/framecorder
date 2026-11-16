@@ -100,6 +100,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .does { display: grid; grid-template-columns: repeat(3, 1fr); gap: 56px; padding-top: 48px; border-top: 1px solid var(--line); }
 .does h2 { font-size: clamp(28px, 3.2vw, 40px); margin-bottom: 14px; }
 .does p { color: var(--subtext0); max-width: 30ch; text-wrap: pretty; }
+/* the ones that just landed */
+.does small { font: 500 12px var(--data); color: var(--mauve); text-transform: uppercase; letter-spacing: .08em; vertical-align: .4em; margin-left: 10px; }
 
 /* what it looks like: the tab in the headset, the app on a phone */
 .look { margin: var(--gap) 0 0; display: grid; grid-template-columns: 1fr 22%; gap: 32px; align-items: end; }
@@ -114,6 +116,8 @@ h1 { font-size: clamp(44px, 6.4vw, 88px); font-weight: 800; }
 .get a:not(.btn) { color: var(--mauve); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 .apps { display: flex; flex-wrap: wrap; gap: 12px; }
+/* a line for people coming from the old desktop app, quieter than the pitch above the buttons */
+.get p.note { font-size: 16px; color: var(--overlay2); margin-top: -8px; }
 
 /* three steps, in the order you do them */
 .path { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; counter-reset: step; font-size: 20px; color: var(--subtext1); }

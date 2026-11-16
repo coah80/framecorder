@@ -1,0 +1,325 @@
+//! pairing: what to do on the frame on the left, pick it and type its code on the right.
+
+use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight, SharedString, Window};
+
+use crate::app::{narrow, FrameApp, Page};
+use crate::theme::{self, a, c};
+use crate::widgets::{card, data, icon, primary, spinner, title, wordmark};
+
+pub fn render(app: &mut FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    // the code box is the only thing to type in, so it has the keyboard
+    if !app.pairing.busy && window.focused(cx).is_none() {
+        app.pairing.focus.focus(window, cx);
+    }
+    let can_cancel = !app.statuses.is_empty() || app.demo;
+    let again = app.pairing.replaces.is_some();
+    // both columns tighten in a narrow window, so the steps stay side by side
+    let narrow = narrow(window);
+    let pad = if narrow { 28. } else { 40. };
+    div().size_full().flex().child(left(again, narrow)).child(
+        div()
+            .w(px(if narrow { 380. } else { 460. }))
+            .flex_none()
+            .h_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .gap(px(28.))
+            .px(px(pad))
+            .when(can_cancel, |d| {
+                d.child(
+                    div()
+                        .id("cancel")
+                        .absolute()
+                        .top(px(30.))
+                        .right(px(pad))
+                        .text_size(px(13.))
+                        .text_color(c(theme::MAUVE))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(c(theme::MAUVE_LIGHT)))
+                        .on_click(cx.listener(|app, _, _, cx| app.go(Page::Clips, cx)))
+                        .child("cancel"),
+                )
+            })
+            .child(pick(app, window, cx))
+            .child(code(app, window, cx))
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(26.))
+                    .left(px(pad))
+                    .flex()
+                    .items_center()
+                    .gap(px(18.))
+                    .text_size(px(12.))
+                    .text_color(c(theme::OVERLAY2))
+                    .child(
+                        div()
+                            .id("pair-report")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(c(theme::MAUVE)))
+                            .on_click(cx.listener(|app, _, _, cx| app.open_report(cx)))
+                            .child(icon("bug", 13., c(theme::OVERLAY2)))
+                            .child("report an issue"),
+                    )
+                    .child(
+                        div()
+                            .id("pair-discord")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(c(theme::MAUVE)))
+                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(crate::sidebar::DISCORD)))
+                            .child(icon("discord", 13., c(theme::OVERLAY2)))
+                            .child("join the discord"),
+                    ),
+            ),
+    )
+}
+
+/// the way in when neither mdns nor the sweep finds it: its address typed,
+/// or the link from its pairing screen pasted
+fn address_box(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let p = &app.pairing;
+    let focused = p.addr_focus.is_focused(window);
+    let empty = p.addr.is_empty();
+    div()
+        .id("address")
+        .track_focus(&p.addr_focus)
+        .on_key_down(cx.listener(|app, ev, window, cx| app.addr_key(ev, window, cx)))
+        .on_click(cx.listener(|app, _, window, cx| app.pairing.addr_focus.focus(window, cx)))
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .h(px(44.))
+        .px(px(14.))
+        .rounded(px(12.))
+        .bg(theme::card())
+        .border_1()
+        .border_color(if focused { c(theme::MAUVE) } else { theme::card_line() })
+        .cursor_text()
+        .child(icon("keyboard", 16., c(if focused || !empty { theme::MAUVE } else { theme::OVERLAY2 })))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .text_size(px(13.))
+                .child(if empty {
+                    div().truncate().text_color(c(theme::OVERLAY2)).child("or type its address")
+                } else {
+                    data(p.addr.clone()).truncate()
+                })
+                .when(focused, |d| d.child(div().flex_none().w(px(1.5)).h(px(16.)).ml(px(1.)).bg(c(theme::MAUVE)))),
+        )
+        .child(if p.finding {
+            spinner("finding", 14., c(theme::MAUVE)).into_any_element()
+        } else if !empty {
+            div()
+                .id("find")
+                .px(px(10.))
+                .py(px(4.))
+                .rounded(px(8.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(c(theme::MAUVE))
+                .cursor_pointer()
+                .hover(|s| s.bg(a(theme::MAUVE, 0.12)))
+                .on_click(cx.listener(|app, _, window, cx| app.submit_addr(window, cx)))
+                .child("find it")
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        })
+}
+
+fn step(n: &str) -> Div {
+    div()
+        .size(px(28.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(9.))
+        .bg(a(theme::MAUVE, 0.12))
+        .text_color(c(theme::MAUVE))
+        .child(data(n.to_string()))
+}
+
+fn step_title(text: &str) -> Div {
+    div().font_family(theme::HEADING).font_weight(FontWeight::BOLD).text_size(px(15.)).child(text.to_string())
+}
+
+/// `again` is pairing a frame we already know, whose clips carry over
+fn left(again: bool, narrow: bool) -> impl IntoElement {
+    let bullet = |parts: Vec<(&'static str, bool)>| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(div().size(px(6.)).flex_none().rounded_full().bg(c(theme::MAUVE)))
+            .child(div().flex().gap(px(4.)).children(
+                parts.into_iter().map(|(t, strong)| div().when(strong, |d| d.font_weight(FontWeight::MEDIUM)).child(t)),
+            ))
+    };
+    div()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .justify_between()
+        .gap(px(32.))
+        .px(px(if narrow { 32. } else { 44. }))
+        .py(px(40.))
+        .bg(c(theme::MANTLE))
+        .border_r_1()
+        .border_color(theme::line())
+        .child(wordmark())
+        .child(
+            title(if again { "pair it again" } else { "pair your frame" }, if narrow { 30. } else { 38. }),
+        )
+        .child(
+            card()
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .p(px(22.))
+                .rounded(px(18.))
+                .child(div().flex().items_center().gap(px(12.)).child(step("1")).child(step_title("on your frame")))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(bullet(vec![("open the", false), ("framecorder", true), ("tab", false)]))
+                        .child(bullet(vec![("go to", false), ("settings,", true), ("then", false), ("sync", true)]))
+                        .child(bullet(vec![("hit", false), ("pair a device", true)])),
+                ),
+        )
+}
+
+fn pick(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let found: Vec<AnyElement> = app
+        .pairing
+        .found
+        .iter()
+        .map(|f| {
+            let on = app.pairing.selected.as_deref() == Some(f.fingerprint.as_str());
+            let fp = f.fingerprint.clone();
+            let ip = f.addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(&f.addr).to_string();
+            div()
+                .id(SharedString::from(format!("found-{fp}")))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .h(px(56.))
+                .px(px(14.))
+                .rounded(px(12.))
+                .border_1()
+                .cursor_pointer()
+                .border_color(if on { c(theme::MAUVE) } else { a(theme::SURFACE1, 0.6) })
+                .bg(if on { a(theme::MAUVE, 0.08) } else { theme::card() })
+                .when(!on, |d| d.hover(|s| s.border_color(c(theme::SURFACE2))))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    app.pairing.selected = Some(fp.clone());
+                    app.pairing.error = None;
+                    cx.notify();
+                }))
+                .child(icon("headset", 20., c(if on { theme::MAUVE } else { theme::OVERLAY2 })))
+                .child(div().flex_1().truncate().font_weight(FontWeight::MEDIUM).child(f.name.clone()))
+                .child(data(ip).text_size(px(12.)).text_color(c(if on { theme::MAUVE } else { theme::OVERLAY2 })))
+                .into_any_element()
+        })
+        .collect();
+    let empty = found.is_empty();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(step("2"))
+                .child(step_title("pick your frame").flex_1())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .text_size(px(13.))
+                        .text_color(c(theme::MAUVE))
+                        .child(spinner("looking", 14., c(theme::MAUVE)))
+                        .child("looking"),
+                ),
+        )
+        .child(div().flex().flex_col().gap(px(8.)).children(found))
+        .when(empty, |d| {
+            d.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(c(theme::SUBTEXT0))
+                    .child("make sure the frame's on and on this wi-fi."),
+            )
+        })
+        .child(address_box(app, window, cx))
+}
+
+fn code(app: &FrameApp, window: &mut Window, cx: &mut Context<FrameApp>) -> impl IntoElement {
+    let p = &app.pairing;
+    let focused = p.focus.is_focused(window);
+    let digits: Vec<char> = p.code.chars().collect();
+    let cells = (0..6).map(|i| {
+        let current = focused && i == digits.len();
+        div()
+            .flex_1()
+            .h(px(60.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(if current { c(theme::MAUVE) } else { a(theme::SURFACE1, 0.8) })
+            .bg(a(theme::CRUST, 0.4))
+            .font_family(theme::DATA)
+            .text_size(px(28.))
+            .child(match digits.get(i) {
+                Some(d) => div().child(d.to_string()),
+                None => div().text_color(c(theme::SURFACE2)).child("0"),
+            })
+    });
+    let ready = app.can_pair();
+    let busy = p.busy;
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(div().flex().items_center().gap(px(12.)).child(step("3")).child(step_title("type the code it shows")))
+        .child(
+            div()
+                .id("code")
+                .track_focus(&p.focus)
+                .on_key_down(cx.listener(|app, ev, window, cx| app.code_key(ev, window, cx)))
+                .on_click(cx.listener(|app, _, window, cx| app.pairing.focus.focus(window, cx)))
+                .flex()
+                .gap(px(8.))
+                .cursor_text()
+                .children(cells),
+        )
+        .child(
+            primary("pair", if busy { "pairing..." } else { "pair" })
+                .h(px(48.))
+                .text_size(px(15.))
+                .when(!ready, |d| d.opacity(0.35).cursor_default())
+                .when(ready, |d| d.on_click(cx.listener(|app, _, _, cx| app.submit_pair(cx)))),
+        )
+        .when_some(p.error.clone(), |d, e| d.child(div().text_size(px(13.)).text_color(c(theme::RED)).child(e)))
+}

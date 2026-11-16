@@ -5,10 +5,14 @@
 //! and something changed, and it mostly sleeps otherwise. Recording pauses
 //! while this tab is showing, so the controls never end up in the video.
 
+mod mock;
 mod pairing;
 mod paint;
 mod recorder;
+mod remote;
+mod report;
 mod settings;
+mod storage;
 mod text;
 mod texture;
 mod view;
@@ -16,7 +20,7 @@ mod view;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 
@@ -25,10 +29,13 @@ use crate::openvr::{AppType, OpenVr};
 use crate::overlay::{DashboardTab, Event};
 use crate::toast::Toast;
 use recorder::{Kind, Recorder};
+use remote::Remote;
+use report::{Outcome, Report, Summary};
 use settings::Settings;
 use text::Fonts;
-use pairing::{Device, Pairing};
-use view::{Action, Hit, Model, Screen, Section, Status, Step, SyncView};
+use pairing::clients::{Transfer, Update};
+use pairing::{Device, Pairing, Presence};
+use view::{Action, Hit, Model, Phase, ReportView, Screen, Section, Status, Step, SyncView};
 
 const KEY: &str = "framecorder.dashboard";
 const TOAST_KEY: &str = "framecorder.toast";
@@ -40,13 +47,20 @@ const TOAST_FOR: Duration = Duration::from_millis(2500);
 const RESUME_DELAY: Duration = Duration::from_millis(350);
 /// Before starting the clipping recorder again after it died.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
+const STATS_EVERY: Duration = Duration::from_secs(600);
 const TICK_ACTIVE: Duration = Duration::from_millis(30);
 const TICK_IDLE: Duration = Duration::from_millis(250);
+/// How often to look for settings a phone changed.
+const SETTINGS_EVERY: Duration = Duration::from_secs(1);
+/// How often to look for mics coming and going, while someone's picking.
+const MICS_EVERY: Duration = Duration::from_secs(2);
 const SERVER_POLL: Duration = Duration::from_secs(2);
 /// Shortest time between two clips, however they're asked for.
 const CLIP_COOLDOWN: Duration = Duration::from_secs(1);
 /// How often the paired devices get looked up while the tab's on screen.
 const SYNC_POLL: Duration = Duration::from_secs(3);
+/// And while something's moving: a download, an update, a code that's out.
+const SYNC_POLL_BUSY: Duration = Duration::from_secs(1);
 
 static QUIT: AtomicBool = AtomicBool::new(false);
 /// Set when an update replaced this program, to restart into it.
@@ -91,7 +105,15 @@ fn only_one() -> Result<Option<std::fs::File>> {
 /// it's on screen.
 struct Sync {
     available: bool,
+    /// Why the service couldn't start, when it said.
+    error: Option<String>,
+    /// Whether the tab has tried starting the service itself.
+    started: bool,
     devices: Vec<Device>,
+    /// An update of framecorder an app or the timer started.
+    update: Update,
+    /// Which page of the devices list the sync section is on.
+    page: usize,
     /// The code on show while pairing.
     pairing: Option<Result<Pairing, String>>,
     checked: Instant,
@@ -99,7 +121,28 @@ struct Sync {
 
 impl Sync {
     fn look() -> Self {
-        Self { available: pairing::available(), devices: pairing::devices(), pairing: None, checked: Instant::now() }
+        let paired = pairing::paired();
+        Self {
+            available: pairing::available(),
+            error: pairing::start_error(),
+            started: false,
+            devices: paired.devices,
+            update: paired.update,
+            page: 0,
+            pairing: None,
+            checked: Instant::now(),
+        }
+    }
+
+    /// Whether something's changing by the second: worth looking more often.
+    fn busy(&self) -> bool {
+        self.pairing.is_some() || self.update == Update::Updating || self.devices.iter().any(|d| d.transfer.is_some())
+    }
+
+    /// Keeps the page on the list after a device went.
+    fn clamp_page(&mut self) {
+        let pages = self.devices.len().div_ceil(view::DEVICES_PER_PAGE).max(1);
+        self.page = self.page.min(pages - 1);
     }
 
     fn stop_pairing(&mut self) {
@@ -107,6 +150,13 @@ impl Sync {
             pairing::end();
         }
     }
+}
+
+/// Something for SteamVR's keyboard, done on the next tick by whoever
+/// holds the tab.
+enum Keyboard {
+    Show,
+    Hide,
 }
 
 /// A recording in progress, as far as the tab is concerned.
@@ -118,17 +168,43 @@ struct Recording {
 }
 
 impl Recording {
+    fn new(paused: bool) -> Self {
+        Self { recorded: Duration::ZERO, running_since: (!paused).then(Instant::now), stopping: false }
+    }
+
     fn recorded(&self) -> Duration {
         self.recorded + self.running_since.map_or(Duration::ZERO, |s| s.elapsed())
     }
 }
 
+/// The mics there are, looked up off the tab's thread while the audio
+/// settings are on screen (pw-dump takes ~30 ms).
+#[derive(Default)]
+struct Mics {
+    list: Vec<crate::mics::Mic>,
+    checked: Option<Instant>,
+    looking: Option<std::sync::mpsc::Receiver<Vec<crate::mics::Mic>>>,
+}
+
 struct App {
     settings: Settings,
+    mics: Mics,
+    /// What phones ask for, through framecorder-sync.
+    remote: Remote,
+    live_viewers: usize,
+    /// When ui.conf last changed as far as we know, and when we last looked.
+    settings_at: Option<SystemTime>,
+    settings_checked: Instant,
     recorder: Option<Recorder>,
+    extras: Vec<(&'static str, Recorder)>,
+    stats_checked: Option<Instant>,
+    watch: crate::stats::Watch,
+    scene: Option<crate::apps::Scene>,
     recording: Option<Recording>,
     note: Option<(String, bool)>,
-    hover: Option<Action>,
+    pointer: Option<(f32, f32)>,
+    /// Which hit the pointer's over, to redraw only when that changes.
+    over: Option<usize>,
     hits: Vec<Hit>,
     dirty: bool,
     shown_second: u64,
@@ -138,6 +214,8 @@ struct App {
     toast: Option<(String, bool)>,
     toast_until: Option<Instant>,
     buzz: bool,
+    /// Wants SteamVR's binding screen up, for the clip button.
+    bindings: bool,
     screen: Screen,
     sync: Sync,
     /// When the last clip was asked for, while the button is still cooling down.
@@ -146,11 +224,38 @@ struct App {
     unlocked: bool,
     /// An update took the panels' permission away.
     relocked: bool,
+    /// Bytes free for recordings, measured while the home screen's up.
+    free: Option<u64>,
+    /// An issue being reported, or the last one sent.
+    report: Report,
+    keyboard: Option<Keyboard>,
+    /// Whether the tab starts with SteamVR, and whether framecorder updates
+    /// on its own, looked up when settings open.
+    autostart: bool,
+    auto_update: bool,
+    /// The list of mics is open.
+    mic_menu: bool,
+    /// Drives to record to, looked up while the files settings are open.
+    drives: Vec<crate::folder::Drive>,
+    drives_checked: Option<Instant>,
+    /// The list of folders is open.
+    folder_menu: bool,
 }
 
 /// Draws the tab into a raw RGBA file instead of showing it, for checking
 /// the look without a headset on. `state` is idle, recording, saved or toast,
-/// a settings section, or a step of the setup (setup-welcome and so on).
+/// a settings section, or a step of the setup (setup-shape and so on).
+/// For what sync shows: live and sync-live (a download, a device away, one
+/// on the old app), updating, update-failed, low-space, long-name, many and
+/// many-2 (the second page), each with -home for the home screen's card,
+/// and unpaired, no-sync and sync-error for the home screen with nothing
+/// paired.
+/// watching and watching-2 are the home screen with apps on the live view,
+/// video-both the video section with both eyes blended, and reporting an
+/// issue is report, report-gathering, report-typing, report-written,
+/// report-sending, report-sent and report-failed.
+pub use mock::serve as demo;
+
 pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut fonts = Fonts::load()?;
     if state == "toast" {
@@ -161,37 +266,166 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
     let status = match state {
-        "recording" | "locked" => Status::Recording { recorded: Duration::from_secs(754) },
+        "recording" | "locked" | "watching-2" => Status::Recording { recorded: Duration::from_secs(754) },
         _ => Status::Idle,
     };
     let screen = match state {
-        "video" | "locked" => Screen::Settings(Section::Video),
-        "audio" => Screen::Settings(Section::Audio),
+        "video" | "locked" | "video-both" => Screen::Settings(Section::Video),
+        "audio" | "audio-mics" | "audio-mic-gone" | "audio-mic-menu" => Screen::Settings(Section::Audio),
         "clips" => Screen::Settings(Section::Clips),
-        "sync" | "pair" => Screen::Settings(Section::Sync),
-        "setup-welcome" | "setup-locked-out" => Screen::Onboarding(Step::Welcome),
-        "setup-shape" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
+        "files" | "files-menu" | "files-sd" | "files-gone" => Screen::Settings(Section::Files),
+        "general" | "general-off" => Screen::Settings(Section::General),
+        "sync" | "pair" | "sync-live" | "long-name" | "many" | "many-2" => Screen::Settings(Section::Sync),
+        "setup-shape" | "setup-locked-out" | "setup-both-eyes" => Screen::Onboarding(Step::Shape),
         "setup-quality" => Screen::Onboarding(Step::Quality),
         "setup-audio" => Screen::Onboarding(Step::Audio),
         "setup-clips" | "setup-no-sync" => Screen::Onboarding(Step::Clips),
         "setup-sync" | "setup-pair" => Screen::Onboarding(Step::Sync),
-        "setup-done" => Screen::Onboarding(Step::Done),
+        s if s.starts_with("report") => Screen::Report,
         _ => Screen::Home,
     };
     let settings = match state {
         "setup-both-eyes" => Settings { shape: settings::Shape::BothEyes, ..settings },
+        "video-both" => Settings { eye: settings::Eye::Both, ..settings },
+        "audio-mic-gone" => Settings { mic_source: "alsa_input.usb-Blue_Yeti-00.analog-stereo".into(), ..settings },
+        "files-sd" => Settings { folder: "/run/media/steamos/SD CARD/framecorder".into(), format: settings::Format::Mkv, remux: true, ..settings },
+        "files-gone" => Settings { folder: "/run/media/steamos/OLD/framecorder".into(), ..settings },
         _ => settings,
     };
+    // most headsets have nothing plugged in
+    let drives = if state == "files" { Vec::new() } else { sample_drives() };
     let sample = Pairing::sample()?;
-    let devices = [Device { id: "a".into(), name: "Pixel 9".into() }, Device { id: "b".into(), name: "COLEPCWIN".into() }];
+    // "many-home" and the like: the same devices, on the home screen.
+    let devices = sample_devices(state.trim_end_matches("-home"));
     let pairing = matches!(state, "pair" | "setup-pair").then_some(Ok(&sample));
-    let sync = SyncView { available: state != "setup-no-sync", devices: &devices, pairing };
+    let update = match state {
+        "updating" => Update::Updating,
+        "update-failed" => Update::Failed(Some("couldn't download the update, the site isn't reachable".into())),
+        _ => Update::Idle,
+    };
+    let page = usize::from(state == "many-2");
+    let error = (state == "sync-error").then_some("making the videos folder: Permission denied (os error 13)");
+    let available = !matches!(state, "setup-no-sync" | "no-sync" | "sync-error");
+    let sync = SyncView { available, error, devices: &devices, page, pairing, update: &update };
     let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
-    let hover = (state == "idle").then_some(Action::Record);
+    let hover_on = match state {
+        "idle" => Some(Action::Record),
+        "report-written" => Some(Action::Send),
+        _ => None,
+    };
     let unlocked = !matches!(state, "locked-out" | "setup-locked-out" | "relocked");
-    view::draw(&mut canvas, &mut fonts, &Model { settings: &settings, screen, sync, clip_cooling: false, unlocked, status, hover, note, relocked: state == "relocked" });
+    let free = Some(if state == "low-space" { 1_400_000_000 } else { 128_400_000_000 });
+    let live_viewers = match state {
+        "watching" => 1,
+        "watching-2" => 2,
+        _ => 0,
+    };
+    let summary = sample_summary();
+    let report = sample_report(state, &summary);
+    let mics = sample_mics(state);
+    let model = Model {
+        settings: &settings,
+        mics: &mics,
+        screen,
+        sync,
+        live_viewers,
+        clip_cooling: false,
+        unlocked,
+        status,
+        pointer: None,
+        note,
+        relocked: state == "relocked",
+        free,
+        report,
+        autostart: state != "general-off",
+        auto_update: state != "general-off",
+        mic_menu: state == "audio-mic-menu",
+        drives: &drives,
+        folder_menu: state == "files-menu",
+    };
+    let hits = view::draw(&mut canvas, &mut fonts, &model);
+    // a hover state: the pointer in the middle of that control, drawn again
+    if let Some(h) = hover_on.and_then(|a| hits.iter().find(|h| h.action == a)) {
+        let model = Model { pointer: Some((h.rect.x + h.rect.w / 2.0, h.rect.y + h.rect.h / 2.0)), ..model };
+        view::draw(&mut canvas, &mut fonts, &model);
+    }
     std::fs::write(path, &canvas.pixels)?;
     Ok(())
+}
+
+/// A microSD card and a USB drive, plugged in.
+fn sample_drives() -> Vec<crate::folder::Drive> {
+    let drive = |folder: &str, name: &str| crate::folder::Drive { folder: folder.into(), name: name.into() };
+    vec![drive("/run/media/steamos/SD CARD/framecorder", "microSD card"), drive("/run/media/steamos/BACKUP/framecorder", "BACKUP")]
+}
+
+/// The Frame's mic, and a USB one for the previews that need two.
+pub(crate) fn sample_mics(state: &str) -> Vec<crate::mics::Mic> {
+    let mic = |name: &str, label: &str, default| crate::mics::Mic { name: name.into(), label: label.into(), default };
+    let frame = mic("alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source", "Frame", true);
+    match state {
+        "audio-mics" => vec![frame, mic("alsa_input.usb-Blue_Yeti-00.analog-stereo", "Yeti Stereo Microphone", false)],
+        "audio-mic-menu" => vec![
+            frame,
+            mic("bluez_input.00_1B_66_A1_B2_C3", "Moded Headset", false),
+            mic("vban_phone_mic", "Phone mic", false),
+            mic("alsa_input.usb-Blue_Yeti-00.analog-stereo", "Yeti Stereo Microphone", false),
+        ],
+        _ => vec![frame],
+    }
+}
+
+/// What a report's summary looks like on a healthy headset.
+fn sample_summary() -> Summary {
+    Summary {
+        framecorder: "0.2.0 · panels unlocked".into(),
+        os: "SteamOS 3.7.8 · build 20251001.1".into(),
+        steamvr: "2.12.5 · public".into(),
+        errors: 12,
+        logs: ["recorder", "framecorder-ui", "framecorder-sync", "framecorder-update", "vrserver", "vrcompositor"].map(String::from).to_vec(),
+    }
+}
+
+/// The report screen at each point along the way.
+fn sample_report<'a>(state: &str, summary: &'a Summary) -> ReportView<'a> {
+    const WRITTEN: &str = "Clips from the last hour came out tilted to the left, maybe 10 degrees, after the update this morning. Recordings I start by hand are fine.\n\nIt's the same in every game, I tried Beat Saber and the home space.";
+    let (text, typing, phase) = match state {
+        "report-typing" => ("Clips from the last hour came out tilted", true, Phase::Writing),
+        "report-written" | "report-sending" | "report-failed" => (WRITTEN, false, Phase::Writing),
+        _ => ("", false, Phase::Writing),
+    };
+    let phase = match state {
+        "report-sending" => Phase::Sending,
+        "report-sent" => Phase::Sent { number: 42, url: "https://github.com/coah80/framecorder/issues/42" },
+        "report-failed" => Phase::Failed("couldn't reach the issue service, check your connection and try again"),
+        _ => phase,
+    };
+    ReportView { text, typing, summary: (state != "report-gathering").then_some(summary), phase }
+}
+
+/// Made up paired devices for the previews: a couple that are just there,
+/// or for the live states, one downloading, one away and one on the old app.
+fn sample_devices(state: &str) -> Vec<Device> {
+    let live = |id: &str, name: &str, presence, old_app, transfer| Device { presence, old_app, transfer, ..Device::paired(id, name) };
+    let getting = Some(Transfer { name: "2026-10-15_12-27-10.mp4".into(), done: 19_200_000, total: 48_000_000 });
+    match state {
+        "live" | "sync-live" | "updating" | "update-failed" | "low-space" => vec![
+            live("a", "Pixel 9", Presence::Connected, false, getting),
+            live("b", "GAMING-PC", Presence::Away, false, None),
+            live("c", "Sam's MacBook Pro", Presence::Connected, true, None),
+        ],
+        "long-name" => vec![
+            live("a", &"W".repeat(64), Presence::Connected, false, None),
+            live("b", "Sam's work laptop with the long hostname nobody ever shortened", Presence::Away, false, getting),
+        ],
+        "many" | "many-2" => ["Pixel 9", "GAMING-PC", "Sam's MacBook Pro", "Living room PC", "Galaxy S25", "Work laptop"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| live(&i.to_string(), name, if i % 2 == 0 { Presence::Connected } else { Presence::Away }, false, None))
+            .collect(),
+        "unpaired" | "no-sync" | "sync-error" | "setup-no-sync" => Vec::new(),
+        _ => vec![Device::paired("a", "Pixel 9"), Device::paired("b", "GAMING-PC")],
+    }
 }
 
 pub fn run() -> Result<()> {
@@ -247,27 +481,8 @@ pub fn run() -> Result<()> {
     let mut fonts = Fonts::load()?;
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
-    let mut app = App {
-        settings,
-        recorder: None,
-        recording: None,
-        note: None,
-        hover: None,
-        hits: Vec::new(),
-        dirty: true,
-        shown_second: u64::MAX,
-        tab_hidden_at: None,
-        retry_at: None,
-        toast: None,
-        toast_until: None,
-        buzz: false,
-        // The first time round the setup comes before anything else.
-        screen: if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Welcome) },
-        sync: Sync::look(),
-        clipped_at: None,
-        unlocked: crate::setup::panels_unlocked(),
-        relocked: crate::setup::relocked(),
-    };
+    let mut app = App::new(settings, crate::setup::panels_unlocked(), crate::setup::relocked());
+    app.scene = crate::apps::Scene::new(&vr);
     log::info!("dashboard tab ready");
 
     while !QUIT.load(Ordering::Relaxed) {
@@ -275,8 +490,25 @@ pub fn run() -> Result<()> {
             tab.show(KEY);
         }
         while let Some(event) = tab.poll() {
-            if !app.handle(event) {
+            let handled = match event {
+                Event::KeyboardChar | Event::KeyboardDone | Event::KeyboardClosed => app.typed(event, tab.keyboard_text()),
+                event => app.handle(event),
+            };
+            if !handled {
                 QUIT.store(true, Ordering::SeqCst);
+            }
+        }
+        if let Some(wish) = app.keyboard.take() {
+            match wish {
+                Keyboard::Show => {
+                    if let Err(e) = tab.show_keyboard("What went wrong?", report::MAX_CHARS as u32, &app.report.text) {
+                        log::warn!("{e:#}");
+                        app.report.typing = false;
+                        app.note = Some((format!("Couldn't open SteamVR's keyboard: {e:#}"), false));
+                        app.dirty = true;
+                    }
+                }
+                Keyboard::Hide => tab.hide_keyboard(),
             }
         }
         if input.as_ref().is_some_and(|i| i.clip_pressed()) {
@@ -285,9 +517,13 @@ pub fn run() -> Result<()> {
         // On the Frame the dashboard counts as open the whole time you're in
         // the home space, so our own tab being on screen is what matters.
         let tab_visible = tab.is_visible();
+        app.check_settings();
         app.manage_recorder();
         app.auto_pause(tab_visible);
         app.check_recorder();
+        app.check_stats();
+        app.check_remote();
+        app.check_report();
         // An update swapped this program out. Restart into it once nothing's
         // being recorded and nobody's using the tab.
         if !tab_visible && app.recording.is_none() && replaced() {
@@ -296,13 +532,21 @@ pub fn run() -> Result<()> {
             break;
         }
         if tab_visible {
-            app.check_sync();
-        } else if matches!(app.screen, Screen::Settings(_)) {
-            // Next time the tab opens it's back on the record button.
-            app.go(Screen::Home);
+            app.check_sync(true);
+            app.check_mics();
+            app.check_drives();
+        } else if app.sync.pairing.as_ref().is_some_and(|p| p.is_ok()) {
+            // A code that's out keeps working with the tab closed, since the
+            // headset's usually off by the time someone types it on a phone.
+            // It ends when it's used or runs out, and stays on screen till then.
+            app.check_sync(false);
         } else {
-            // The setup stays where it was, just without a code on show.
             app.sync.stop_pairing();
+            if matches!(app.screen, Screen::Settings(_) | Screen::Report) {
+                // Next time the tab opens it's back on the record button. A
+                // report on its way keeps going, and lands as a note.
+                app.go(Screen::Home);
+            }
         }
 
         if let (Some((text, ok)), Some(t)) = (app.toast.take(), &toast) {
@@ -316,6 +560,14 @@ pub fn run() -> Result<()> {
             app.toast_until = None;
             if let Some(t) = &toast {
                 t.hide();
+            }
+        }
+        if std::mem::take(&mut app.bindings) {
+            let opened = input.as_ref().map_or_else(|| Err(anyhow::anyhow!("SteamVR input didn't start")), Input::open_bindings);
+            if let Err(e) = opened {
+                log::warn!("couldn't open the bindings: {e:#}");
+                app.note = Some((format!("Couldn't open SteamVR's controller settings: {e:#}"), false));
+                app.dirty = true;
             }
         }
         if std::mem::take(&mut app.buzz) {
@@ -349,6 +601,9 @@ pub fn run() -> Result<()> {
         log::info!("shutting down, finishing up the recorder");
         rec.finish();
     }
+    for (_, view) in app.extras.drain(..) {
+        view.finish();
+    }
     // SteamVR's client keeps objects on our Vulkan device for the shared
     // texture and cleans them up when we disconnect, so disconnect while the
     // device still exists.
@@ -376,13 +631,72 @@ fn replaced() -> bool {
 }
 
 impl App {
+    fn new(settings: Settings, unlocked: bool, relocked: bool) -> Self {
+        // The first time round the setup comes before anything else.
+        let screen = if settings.onboarded { Screen::Home } else { Screen::Onboarding(Step::Shape) };
+        let free = free_for(&settings);
+        Self {
+            settings,
+            mics: Mics::default(),
+            remote: Remote::new(),
+            live_viewers: 0,
+            settings_at: Settings::changed_at(),
+            settings_checked: Instant::now(),
+            recorder: None,
+            extras: Vec::new(),
+            stats_checked: None,
+            watch: Default::default(),
+            scene: None,
+            recording: None,
+            note: None,
+            pointer: None,
+            over: None,
+            hits: Vec::new(),
+            dirty: true,
+            shown_second: u64::MAX,
+            tab_hidden_at: None,
+            retry_at: None,
+            toast: None,
+            toast_until: None,
+            buzz: false,
+            bindings: false,
+            screen,
+            sync: Sync::look(),
+            clipped_at: None,
+            unlocked,
+            relocked,
+            free,
+            report: Report::new(),
+            keyboard: None,
+            autostart: true,
+            auto_update: true,
+            mic_menu: false,
+            drives: Vec::new(),
+            drives_checked: None,
+            folder_menu: false,
+        }
+    }
+
+    /// What SteamVR's keyboard did, with what it holds.
+    fn typed(&mut self, event: Event, text: String) -> bool {
+        match event {
+            Event::KeyboardChar => self.report.typed(text),
+            Event::KeyboardDone => self.report.finished(text),
+            Event::KeyboardClosed => self.report.closed(text),
+            _ => {}
+        }
+        self.dirty = true;
+        true
+    }
+
     /// Returns false when SteamVR wants us gone.
     fn handle(&mut self, event: Event) -> bool {
         match event {
             Event::MouseMove { x, y } => {
-                let hover = self.hit(x, y);
-                if hover != self.hover {
-                    self.hover = hover;
+                self.pointer = Some((x, y));
+                let over = self.hits.iter().position(|h| h.rect.contains(x, y));
+                if over != self.over {
+                    self.over = over;
                     self.dirty = true;
                 }
             }
@@ -404,9 +718,43 @@ impl App {
 
     fn act(&mut self, action: Action) {
         self.dirty = true;
+        // any tap closes the lists, picking from one included
+        let menu = std::mem::take(&mut self.mic_menu);
+        let folders = std::mem::take(&mut self.folder_menu);
         let s = &mut self.settings;
         match action {
+            Action::MicMenu => return self.mic_menu = !menu,
+            Action::FolderMenu => return self.folder_menu = !folders,
+            Action::Folder(i) => {
+                let Some(picked) = folder_choice(&self.drives, i) else { return };
+                s.folder = picked;
+                self.save_settings();
+                self.free = free_for(&self.settings);
+                return;
+            }
             Action::TurnOff => return self.turn_off(),
+            Action::Report => return self.go(Screen::Report),
+            Action::Bindings => return self.bindings = true,
+            Action::Type => return self.start_typing(),
+            Action::Send => return self.report.send(),
+            Action::Autostart => {
+                let want = !self.autostart;
+                if crate::setup::set_autostart(want) {
+                    self.autostart = want;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
+            Action::AutoUpdate => {
+                let want = !self.auto_update;
+                if crate::setup::set_auto_update(want) {
+                    self.auto_update = want;
+                } else {
+                    self.note = Some(("Couldn't change that, try again".into(), false));
+                }
+                return;
+            }
             Action::Record => return self.toggle_recording(),
             Action::ClipNow => return self.clip("tab button"),
             Action::Open(section) => return self.go(Screen::Settings(section)),
@@ -415,6 +763,11 @@ impl App {
             Action::FinishSetup => return self.finish_setup(),
             Action::Pair => return self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}"))),
             Action::ClosePair => return self.sync.stop_pairing(),
+            Action::DevicePage(page) => {
+                self.sync.page = page;
+                self.sync.clamp_page();
+                return;
+            }
             Action::RemoveDevice(i) => {
                 if let Some(d) = self.sync.devices.get(i) {
                     match pairing::remove(&d.id) {
@@ -422,15 +775,30 @@ impl App {
                         Err(e) => self.note = Some((format!("Couldn't remove {}: {e:#}", d.name), false)),
                     }
                 }
-                self.sync.devices = pairing::devices();
+                self.sync.devices = pairing::paired().devices;
+                self.sync.clamp_page();
                 return;
             }
             Action::Shape(shape) => s.shape = shape,
             Action::Eye(eye) => s.eye = eye,
+            Action::Blended(dominant) => {
+                s.eye = settings::Eye::Both;
+                s.dominant = dominant;
+            }
             Action::Quality(q) => s.quality = q,
             Action::Fps(fps) => s.fps = fps,
+            Action::Codec(codec) => s.codec = codec,
+            Action::Format(format) => s.format = format,
+            Action::Remux => s.remux = !s.remux,
             Action::GameAudio => s.game_audio = !s.game_audio,
             Action::Mic => s.mic = !s.mic,
+            Action::SplitAudio => s.split_audio = !s.split_audio,
+            Action::Promo => s.promo = !s.promo,
+            Action::Stats => s.stats = !s.stats,
+            Action::MicSource(i) => {
+                let Some(mic) = self.mics.list.get(i) else { return };
+                s.mic_source = mic.name.clone();
+            }
             Action::Clips => {
                 s.clips = !s.clips;
                 self.retry_at = None;
@@ -444,7 +812,68 @@ impl App {
                 self.retry_at = None;
             }
         }
-        s.save();
+        self.save_settings();
+    }
+
+    /// Brings up SteamVR's keyboard over the report, with the draft in it.
+    fn start_typing(&mut self) {
+        if matches!(self.report.phase(), report::Phase::Writing | report::Phase::Failed(_)) && !self.report.typing {
+            self.report.typing = true;
+            self.keyboard = Some(Keyboard::Show);
+        }
+    }
+
+    /// Picks up what the report's threads finished: the details to show,
+    /// or how the send went, which lands as a note (and a toast, in case
+    /// the tab's been closed meanwhile).
+    fn check_report(&mut self) {
+        match self.report.poll() {
+            None => {}
+            Some(Outcome::Gathered) => self.dirty = true,
+            Some(Outcome::Sent { number, url }) => {
+                self.note = Some((format!("Sent as issue #{number} · {url}"), true));
+                self.toast = Some((format!("Report sent, it's issue #{number}"), true));
+                crate::stats::made(crate::stats::Made::Report);
+                self.dirty = true;
+            }
+            Some(Outcome::Failed(why)) => {
+                self.note = Some((format!("Couldn't send the report: {why}"), false));
+                self.toast = Some(("Couldn't send the report".into(), false));
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn save_settings(&mut self) -> bool {
+        let saved = self.settings.save();
+        self.settings_at = Settings::changed_at();
+        saved
+    }
+
+    /// Picks up settings a phone changed. Like ones picked here, they take
+    /// effect from the next recording.
+    fn check_settings(&mut self) {
+        if self.settings_checked.elapsed() < SETTINGS_EVERY {
+            return;
+        }
+        self.settings_checked = Instant::now();
+        let at = Settings::changed_at();
+        if at == self.settings_at {
+            return;
+        }
+        self.reload_settings();
+    }
+
+    fn reload_settings(&mut self) {
+        self.settings_checked = Instant::now();
+        self.settings_at = Settings::changed_at();
+        let theirs = Settings { onboarded: self.settings.onboarded, ..Settings::load() };
+        if theirs != self.settings {
+            log::info!("the recording settings changed from a phone");
+            self.settings = theirs;
+            self.retry_at = None;
+            self.dirty = true;
+        }
     }
 
     /// Stops the tab (and with it the recorder and the clip buffer) and sync,
@@ -454,8 +883,20 @@ impl App {
         let stopped = Command::new("systemctl")
             .args(["--user", "--no-block", "stop", "framecorder-sync.service", "framecorder-ui.service"])
             .status();
+        // A tab opened from the app bar runs outside the service, where
+        // stopping the service ends nothing, so it quits itself too.
+        if stopped.as_ref().is_ok_and(|s| s.success()) {
+            QUIT.store(true, Ordering::SeqCst);
+        }
         match stopped {
-            Ok(s) if s.success() => self.note = Some(("Closing. framecorder starts again with SteamVR.".into(), true)),
+            Ok(s) if s.success() => {
+                let back = if crate::setup::autostart() {
+                    "Closing. framecorder starts again with SteamVR."
+                } else {
+                    "Closing. Open framecorder from the dashboard when you want it."
+                };
+                self.note = Some((back.into(), true));
+            }
             Ok(s) => self.note = Some((format!("Couldn't close framecorder: systemctl {s}"), false)),
             Err(e) => self.note = Some((format!("Couldn't close framecorder: {e}"), false)),
         }
@@ -464,8 +905,8 @@ impl App {
     /// The setup's over, finished or skipped: on to the record button, and
     /// from here on the recorder may run.
     fn finish_setup(&mut self) {
-        self.settings = Settings { onboarded: true, ..self.settings };
-        if !self.settings.save() {
+        self.settings.onboarded = true;
+        if !self.save_settings() {
             self.note = Some(("Couldn't save your settings, so the setup will show again next time".into(), false));
         }
         self.go(Screen::Home);
@@ -480,6 +921,9 @@ impl App {
                 rec.stopping = true;
                 if let Some(r) = &mut self.recorder {
                     r.stop_record();
+                }
+                for (_, view) in &mut self.extras {
+                    view.quit();
                 }
             }
             return;
@@ -497,12 +941,65 @@ impl App {
             }
         }
         let Some(r) = &mut self.recorder else { return };
-        match r.record() {
-            Ok(()) => {
-                self.recording = Some(Recording { recorded: Duration::ZERO, running_since: None, stopping: false });
+        match self.settings.new_file("") {
+            Ok(path) => {
+                r.record(&path);
+                let paused = r.paused();
+                self.recording = Some(Recording::new(paused));
                 self.note = None;
+                self.start_extras(&path, paused);
             }
             Err(e) => self.note = Some((format!("Couldn't start: {e:#}"), false)),
+        }
+    }
+
+    fn start_extras(&mut self, path: &Path, paused: bool) {
+        for (view, args) in self.settings.promo_extras(self.unlocked) {
+            match Recorder::start_view(view, args) {
+                Ok(mut r) => {
+                    r.set_paused(paused);
+                    r.record(&settings::promo_file(path, view));
+                    self.extras.push((view, r));
+                }
+                Err(e) => self.note = Some((format!("Promo footage: couldn't start the {view}: {e:#}"), false)),
+            }
+        }
+        if !self.extras.is_empty() {
+            self.toast = Some(("Promo footage: recording the panels too".into(), true));
+        }
+    }
+
+    fn check_extras(&mut self) {
+        let over = self.recording.as_ref().is_none_or(|r| r.stopping);
+        let mut i = 0;
+        while i < self.extras.len() {
+            let (view, r) = &mut self.extras[i];
+            let view = *view;
+            let mut failed = None;
+            for event in r.events() {
+                match event {
+                    recorder::Event::Saved { path, .. } => log::info!("promo footage: saved {}", path.display()),
+                    recorder::Event::Failed { message, .. } => failed = Some(format!("didn't record: {message}")),
+                    _ => {}
+                }
+            }
+            if over {
+                r.quit();
+            }
+            let exit = r.exited();
+            if let Some(Err(msg)) = &exit {
+                failed = Some(format!("stopped: {msg}"));
+            }
+            if exit.is_some() {
+                self.extras.remove(i);
+            } else {
+                i += 1;
+            }
+            if let Some(why) = failed {
+                log::warn!("promo footage: the {view} {why}");
+                self.note = Some((format!("Promo footage: the {view} {why}"), false));
+                self.dirty = true;
+            }
         }
     }
 
@@ -516,10 +1013,13 @@ impl App {
         }
         log::info!("clip asked for by the {from}");
         match &mut self.recorder {
-            Some(r) if r.replay.is_some() && !r.quitting() => {
-                r.clip();
-                self.clipped_at = Some(Instant::now());
-            }
+            Some(r) if r.replay.is_some() && !r.quitting() => match self.settings.new_file("clips") {
+                Ok(path) => {
+                    r.clip(&path);
+                    self.clipped_at = Some(Instant::now());
+                }
+                Err(e) => self.toast = Some((format!("Couldn't save that clip: {e:#}"), false)),
+            },
             _ => {
                 let why = if self.settings.clipping().is_some() { "Clipping is starting up" } else { "Clipping is off" };
                 self.toast = Some((why.into(), false));
@@ -536,10 +1036,10 @@ impl App {
         if !self.settings.onboarded {
             return;
         }
-        let wanted = self.settings.clipping().is_some();
+        let wanted = self.settings.clipping().is_some() || self.live_viewers > 0;
         if let Some(r) = &mut self.recorder {
             let stale = r.replay != self.settings.clipping() || r.args != self.settings.recorder_args(self.unlocked);
-            if self.recording.is_none() && !r.quitting() && (stale || (!wanted && r.replay.is_some())) {
+            if self.recording.is_none() && !r.quitting() && (stale || !wanted) {
                 r.quit();
             }
             return;
@@ -568,6 +1068,9 @@ impl App {
         let want_paused = tab_visible || self.tab_hidden_at.is_some_and(|t| t.elapsed() < RESUME_DELAY);
         if r.paused() != want_paused {
             r.set_paused(want_paused);
+            for (_, view) in &mut self.extras {
+                view.set_paused(want_paused);
+            }
             if let Some(rec) = &mut self.recording {
                 if want_paused {
                     if let Some(since) = rec.running_since.take() {
@@ -581,17 +1084,55 @@ impl App {
         }
     }
 
+    fn check_stats(&mut self) {
+        if !self.settings.stats || !self.settings.onboarded {
+            return;
+        }
+        let clips = self.recorder.as_ref().filter(|r| r.replay.is_some()).map(|r| r.pid());
+        let scene = &self.scene;
+        self.watch.tick(clips, self.recording.is_some(), || scene.as_ref().is_some_and(|s| s.game()));
+        if self.recording.is_some() {
+            return;
+        }
+        if self.stats_checked.is_some_and(|t| t.elapsed() < STATS_EVERY) {
+            return;
+        }
+        self.stats_checked = Some(Instant::now());
+        if crate::stats::due() {
+            let on = |b: bool| if b { "on" } else { "off" }.to_owned();
+            let mut settings = self.settings.for_stats(self.unlocked);
+            settings.push(("autostart", on(self.autostart)));
+            settings.push(("updates", on(self.auto_update)));
+            settings.push(("paired", match self.sync.devices.len() {
+                n @ 0..=2 => n.to_string(),
+                _ => "3+".into(),
+            }));
+            crate::stats::ping(settings);
+        }
+    }
+
     fn check_recorder(&mut self) {
+        self.check_extras();
         let Some(r) = &mut self.recorder else { return };
+        let pid = r.pid();
         for event in r.events() {
+            if let recorder::Event::Perf { fps, target, gpu_ms } = event {
+                self.watch.report(pid, fps, target, gpu_ms, self.recording.is_some());
+                continue;
+            }
             self.dirty = true;
             match event {
+                recorder::Event::Perf { .. } => {}
                 recorder::Event::Started(path) => log::info!("recording to {}", path.display()),
                 recorder::Event::Saved { kind: Kind::Recording, path, bytes, secs } => {
-                    let length = self.recording.take().map_or(Duration::from_secs_f64(secs), |rec| rec.recorded());
+                    crate::stats::made(crate::stats::Made::Recording(secs));
+                    self.watch.saved();
+                    self.recording = None;
+                    let length = Duration::from_secs_f64(secs);
                     self.note = Some((format!("Saved {} · {} · {:.1} MB", file_name(&path), view::clock(length), bytes as f64 / 1e6), true));
                 }
                 recorder::Event::Saved { kind: Kind::Clip, path, bytes, secs } => {
+                    crate::stats::made(crate::stats::Made::Clip);
                     self.note = Some((format!("Clipped {} · {secs:.0} s · {:.1} MB", file_name(&path), bytes as f64 / 1e6), true));
                     self.toast = Some((format!("Clipped the last {secs:.0} s"), true));
                     self.buzz = true;
@@ -607,6 +1148,7 @@ impl App {
                     };
                     if kind == Some(Kind::Recording) {
                         self.recording = None;
+                        self.watch.forget();
                     }
                     if kind == Some(Kind::Clip) {
                         let why = if message.contains("nothing to clip yet") {
@@ -620,8 +1162,9 @@ impl App {
                 }
             }
         }
+        r.set_live(self.live_viewers > 0);
         // Without clipping the recorder only lives for one recording.
-        if self.recording.is_none() && r.replay.is_none() && !r.quitting() {
+        if self.recording.is_none() && self.live_viewers == 0 && r.replay.is_none() && !r.quitting() {
             r.quit();
         }
         let Some(exit) = r.exited() else { return };
@@ -644,26 +1187,163 @@ impl App {
         }
     }
 
+    /// Does what a phone asked for, and keeps phones posted on how things stand.
+    fn check_remote(&mut self) {
+        let viewers = remote::live_viewers();
+        if viewers != self.live_viewers {
+            if self.live_viewers == 0 {
+                crate::stats::made(crate::stats::Made::Live);
+            }
+            self.live_viewers = viewers;
+            self.dirty = true;
+        }
+        if let Some((command, from)) = self.remote.poll() {
+            log::info!("{from} asked to {command:?}");
+            let result = self.handle_remote(command, &from);
+            self.remote.answer(result);
+            self.dirty = true;
+        }
+        let rec = self.recording.as_ref().filter(|r| !r.stopping);
+        let status = remote::Status {
+            ready: self.settings.onboarded,
+            live_viewers: self.live_viewers,
+            live_capture: self.live_viewers > 0 && self.recorder.as_ref().is_some_and(|r| !r.quitting()),
+            panels: self.unlocked,
+            recording: rec.is_some(),
+            running: rec.is_some_and(|r| r.running_since.is_some()),
+            recorded_ms: rec.map_or(0, |r| r.recorded().as_millis() as u64),
+            clips: self.settings.clipping(),
+            clip_ready: self.recording.is_none() && self.recorder.as_ref().is_some_and(|r| r.replay.is_some() && !r.quitting()),
+        };
+        self.remote.publish(&status);
+    }
+
+    fn prepare_recording(&mut self) -> std::result::Result<(), &'static str> {
+        self.reload_settings();
+        if let Some(r) = &mut self.recorder {
+            if r.replay != self.settings.clipping() || r.args != self.settings.recorder_args(self.unlocked) {
+                r.quit();
+            }
+            if r.quitting() {
+                return Err("applying your settings, try Record again in a moment");
+            }
+        }
+        Ok(())
+    }
+
+    /// "ok", or why not, in words for the phone.
+    fn handle_remote(&mut self, command: remote::Command, from: &str) -> String {
+        if !self.settings.onboarded {
+            return "finish setting up framecorder on the headset first".into();
+        }
+        match command {
+            remote::Command::Live => {
+                self.manage_recorder();
+                let Some(r) = &mut self.recorder else {
+                    return "couldn't start the recorder, try again in a moment".into();
+                };
+                if r.quitting() {
+                    return "the recorder is restarting, try again in a moment".into();
+                }
+                r.set_live(false);
+                r.set_live(self.live_viewers > 0);
+                r.keyframe();
+                "ok".into()
+            }
+            remote::Command::Record => {
+                if self.recording.is_none() {
+                    if let Err(why) = self.prepare_recording() {
+                        return why.into();
+                    }
+                    self.toggle_recording();
+                    if self.recording.is_none() {
+                        return self.note.as_ref().map_or("couldn't start recording".into(), |(n, _)| n.to_lowercase());
+                    }
+                    self.toast = Some((format!("Recording, started from {from}"), true));
+                    crate::stats::made(crate::stats::Made::Remote);
+                }
+                "ok".into()
+            }
+            remote::Command::Stop => {
+                if self.recording.as_ref().is_some_and(|r| !r.stopping) {
+                    self.toggle_recording();
+                }
+                "ok".into()
+            }
+            remote::Command::Clip => {
+                if self.recording.is_some() {
+                    return "it's recording, so that's all in there already".into();
+                }
+                if self.clipped_at.is_some_and(|t| t.elapsed() < CLIP_COOLDOWN) {
+                    return "just saved one".into();
+                }
+                if !self.recorder.as_ref().is_some_and(|r| r.replay.is_some() && !r.quitting()) {
+                    let why = if self.settings.clipping().is_some() { "clips are still starting up" } else { "clips are off on the headset" };
+                    return why.into();
+                }
+                self.clip(from);
+                "ok".into()
+            }
+        }
+    }
+
     fn go(&mut self, screen: Screen) {
-        // A pairing code is only good while it's on screen.
+        self.mic_menu = false;
+        // Leaving the pairing screen takes the code back.
         if !matches!(screen, Screen::Settings(Section::Sync) | Screen::Onboarding(Step::Sync)) {
             self.sync.stop_pairing();
         }
+        if screen == Screen::Settings(Section::General) {
+            self.autostart = crate::setup::autostart();
+            self.auto_update = crate::setup::auto_update();
+        }
+        if matches!(screen, Screen::Home | Screen::Settings(Section::Files)) {
+            self.free = free_for(&self.settings);
+        }
+        self.folder_menu = false;
+        if screen == Screen::Settings(Section::Files) {
+            self.drives = crate::folder::drives();
+            self.drives_checked = Some(Instant::now());
+        }
+        // Leaving the report takes the keyboard down, and once one's been
+        // sent, the next starts fresh. Opening it starts gathering details.
+        if self.screen == Screen::Report && screen != Screen::Report {
+            if self.report.typing {
+                self.report.typing = false;
+                self.keyboard = Some(Keyboard::Hide);
+            }
+            if matches!(self.report.phase(), report::Phase::Sent { .. }) {
+                self.report = Report::new();
+            }
+        }
+        if screen == Screen::Report {
+            self.note = None;
+            self.report.open();
+        }
         self.screen = screen;
-        self.hover = None;
+        self.over = None;
         self.dirty = true;
     }
 
-    /// While the tab's on screen: keeps the paired devices up to date, once
-    /// a second while pairing (so the countdown ticks and a new device shows
-    /// up right away), every few seconds otherwise.
-    fn check_sync(&mut self) {
+    /// Keeps the paired devices up to date, once a second while pairing (so
+    /// the countdown ticks and a new device shows up right away) or while a
+    /// download or an update is moving, every few seconds otherwise. Runs
+    /// while the tab's on screen, or with a code out.
+    fn check_sync(&mut self, visible: bool) {
         let pairing = self.sync.pairing.is_some();
-        let every = if pairing { Duration::from_secs(1) } else { SYNC_POLL };
+        let every = if self.sync.busy() { SYNC_POLL_BUSY } else { SYNC_POLL };
         if self.sync.checked.elapsed() < every {
             return;
         }
         self.sync.checked = Instant::now();
+        if visible && matches!(self.screen, Screen::Home | Screen::Settings(Section::Files)) {
+            let free = free_for(&self.settings);
+            let shown = |f: Option<u64>| f.map(|b| view::free_space(b, self.settings.quality.mbps()));
+            if shown(free) != shown(self.free) {
+                self.dirty = true;
+            }
+            self.free = free;
+        }
         let unlocked = crate::setup::panels_unlocked();
         let relocked = crate::setup::relocked();
         if unlocked != self.unlocked || relocked != self.relocked {
@@ -672,22 +1352,86 @@ impl App {
             self.dirty = true;
         }
         let available = pairing::available();
-        let devices = pairing::devices();
+        // It's set up by the installer and every update, so missing means it
+        // got stopped or never came up: start it rather than send anyone off
+        // to reinstall. Once a run, in the background, so the tab doesn't wait.
+        if !available && !self.sync.started {
+            self.sync.started = true;
+            std::thread::spawn(crate::setup::start_sync);
+        }
+        let error = if available { None } else { pairing::start_error() };
+        if error != self.sync.error {
+            self.sync.error = error;
+            self.dirty = true;
+        }
+        let pairing::Paired { devices, update } = pairing::paired();
         if let Some(new) = devices.iter().find(|d| !self.sync.devices.iter().any(|old| old.id == d.id)) {
             self.note = Some((format!("Paired {}", new.name), true));
             self.toast = Some((format!("Paired {}", new.name), true));
             // That's what the code was for, back to the list.
             self.sync.stop_pairing();
         }
-        if pairing || available != self.sync.available || devices.len() != self.sync.devices.len() {
+        // A download's progress or a device coming and going repaints too,
+        // at most once a second, and only while someone's looking.
+        if pairing || available != self.sync.available || devices != self.sync.devices || update != self.sync.update {
             self.dirty = true;
         }
         self.sync.available = available;
         self.sync.devices = devices;
-        // Used up by something that didn't get paired, or run out: a fresh one.
+        self.sync.update = update;
+        self.sync.clamp_page();
+        // Used up by something that didn't get paired, or run out: a fresh
+        // one if someone's looking, otherwise that's the end of it.
         if self.sync.pairing.as_ref().is_some_and(|p| p.as_ref().is_ok_and(|p| !p.waiting())) {
-            self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}")));
+            if visible {
+                self.sync.pairing = Some(Pairing::begin().map_err(|e| format!("{e:#}")));
+            } else {
+                self.sync.stop_pairing();
+            }
         }
+    }
+
+    /// Notices a card going in or coming out while the files settings are up.
+    fn check_drives(&mut self) {
+        if self.screen != Screen::Settings(Section::Files) || self.drives_checked.is_some_and(|t| t.elapsed() < MICS_EVERY) {
+            return;
+        }
+        self.drives_checked = Some(Instant::now());
+        let drives = crate::folder::drives();
+        if drives != self.drives {
+            self.drives = drives;
+            self.free = free_for(&self.settings);
+            self.dirty = true;
+        }
+    }
+
+    fn check_mics(&mut self) {
+        if self.screen != Screen::Settings(Section::Audio) {
+            self.mics.looking = None;
+            return;
+        }
+        if let Some(looking) = &self.mics.looking {
+            match looking.try_recv() {
+                Ok(list) => {
+                    if list != self.mics.list {
+                        self.mics.list = list;
+                        self.dirty = true;
+                    }
+                    self.mics.looking = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.mics.looking = None,
+            }
+        }
+        if self.mics.checked.is_some_and(|t| t.elapsed() < MICS_EVERY) {
+            return;
+        }
+        self.mics.checked = Some(Instant::now());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::mics::list());
+        });
+        self.mics.looking = Some(rx);
     }
 
     fn needs_redraw(&mut self) -> bool {
@@ -715,20 +1459,52 @@ impl App {
         };
         let sync = SyncView {
             available: self.sync.available,
+            error: self.sync.error.as_deref(),
             devices: &self.sync.devices,
+            page: self.sync.page,
             pairing: self.sync.pairing.as_ref().map(|p| p.as_ref().map_err(|e| e.as_str())),
+            update: &self.sync.update,
         };
+        let phase = match self.report.phase() {
+            report::Phase::Writing => Phase::Writing,
+            report::Phase::Sending => Phase::Sending,
+            report::Phase::Sent { number, url } => Phase::Sent { number: *number, url },
+            report::Phase::Failed(why) => Phase::Failed(why),
+        };
+        let report = ReportView { text: &self.report.text, typing: self.report.typing, summary: self.report.summary.as_ref(), phase };
         Model {
+            live_viewers: self.live_viewers,
             settings: &self.settings,
+            mics: &self.mics.list,
             screen: self.screen,
             sync,
             clip_cooling: self.clipped_at.is_some(),
             unlocked: self.unlocked,
             status,
-            hover: self.hover,
+            pointer: self.pointer,
             note: self.note.as_ref().map(|(t, ok)| (t.as_str(), *ok)),
             relocked: self.relocked,
+            free: self.free,
+            report,
+            autostart: self.autostart,
+            auto_update: self.auto_update,
+            mic_menu: self.mic_menu,
+            drives: &self.drives,
+            folder_menu: self.folder_menu,
         }
+    }
+}
+
+/// Bytes free where these settings record to.
+fn free_for(settings: &Settings) -> Option<u64> {
+    settings.folder().ok().and_then(|f| storage::free_for_recordings(&f))
+}
+
+/// What `Action::Folder(i)` picks: 0 is ~/Videos/framecorder, then the drives.
+fn folder_choice(drives: &[crate::folder::Drive], i: usize) -> Option<String> {
+    match i {
+        0 => Some(String::new()),
+        i => drives.get(i - 1).map(|d| d.folder.to_string_lossy().into_owned()),
     }
 }
 

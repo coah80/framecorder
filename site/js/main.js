@@ -21,12 +21,14 @@ const agent = navigator.userAgent.toLowerCase();
 const here = agent.includes("android") ? "android" : agent.includes("windows") ? "windows" : agent.includes("mac") ? "macos" : "linux";
 for (const app of $("apps").children) {
   if (app.dataset.file) app.href = `${REPO}/releases/latest/download/${app.dataset.file}`;
-  if (app.dataset.os === here && app.dataset.file) app.classList.remove("plain");
+  if (app.dataset.os === here) app.classList.remove("plain");
 }
 for (const s of document.querySelectorAll('[data-text="repo"]')) s.textContent = REPO;
 
-// macs block the app the first time, so if you're on one the how-to starts open
+// macs block the app the first time and linux needs it made runnable, so
+// the how-to for the system you're on starts open
 if (here === "macos") $("mac").open = true;
+if (here === "linux") $("appimage-help").open = true;
 
 // every copy button copies the commands right before it
 for (const copy of document.querySelectorAll(".copy")) copy.onclick = async () => {

@@ -6,7 +6,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -33,6 +33,7 @@ pub enum Event {
     /// A clip was asked for mid recording; the recording has it anyway.
     ClipWhileRecording,
     Failed { kind: Option<Kind>, message: String },
+    Perf { fps: f64, target: u32, gpu_ms: f64 },
 }
 
 pub fn parse_event(line: &str) -> Option<Event> {
@@ -52,6 +53,11 @@ pub fn parse_event(line: &str) -> Option<Event> {
             Some(Event::Saved { kind, path: PathBuf::from(parts.next()?), bytes, secs })
         }
         "busy" if rest == "recording" => Some(Event::ClipWhileRecording),
+        "perf" => {
+            let mut parts = rest.split(' ');
+            let (fps, target, gpu_ms) = (parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?);
+            Some(Event::Perf { fps, target, gpu_ms })
+        }
         "failed" => {
             let (k, message) = rest.split_once(' ').unwrap_or((rest, ""));
             Some(Event::Failed { kind: kind(k), message: message.to_string() })
@@ -69,6 +75,7 @@ pub struct Recorder {
     pub args: Vec<String>,
     pub replay: Option<u32>,
     paused: bool,
+    live: bool,
     quitting: Option<Instant>,
 }
 
@@ -76,11 +83,20 @@ impl Recorder {
     /// Starts paused; `set_paused(false)` once our tab is out of view. `panel`
     /// is whether it may read the panels, see `Settings::recorder_args`.
     pub fn start(settings: &Settings, panel: bool) -> Result<Self> {
+        if let Ok(folder) = settings.folder() {
+            super::settings::finish_leftovers(&folder);
+        }
+        Self::spawn(settings.recorder_args(panel), settings.clipping(), "recorder")
+    }
+
+    pub fn start_view(view: &str, args: Vec<String>) -> Result<Self> {
+        Self::spawn(args, None, &format!("recorder-{view}"))
+    }
+
+    fn spawn(args: Vec<String>, replay: Option<u32>, log_name: &str) -> Result<Self> {
         let exe = std::env::current_exe()?.with_file_name("framecorder");
-        let log = log_path()?;
+        let log = log_path(log_name)?;
         let log_file = File::create(&log).with_context(|| format!("creating {}", log.display()))?;
-        let args = settings.recorder_args(panel);
-        let replay = settings.clipping();
 
         let mut cmd = Command::new(&exe);
         if let Some(secs) = replay {
@@ -113,7 +129,7 @@ impl Recorder {
             }
         })?;
 
-        Ok(Self { stdin: child.stdin.take(), child, events, log, args, replay, paused: true, quitting: None })
+        Ok(Self { stdin: child.stdin.take(), child, events, log, args, replay, paused: true, live: false, quitting: None })
     }
 
     fn send(&mut self, line: &str) {
@@ -130,22 +146,36 @@ impl Recorder {
         }
     }
 
+    pub fn set_live(&mut self, enabled: bool) {
+        if self.live == enabled {
+            return;
+        }
+        self.live = enabled;
+        if let Some(path) = super::remote::live_socket() {
+            self.send(&if enabled { format!("live {}", path.display()) } else { "live".into() });
+        }
+    }
+
+    pub fn keyframe(&mut self) {
+        self.send("keyframe");
+    }
+
     pub fn paused(&self) -> bool {
         self.paused
     }
 
-    pub fn record(&mut self) -> Result<()> {
-        let path = output_path("")?;
+    pub fn record(&mut self, path: &Path) {
         self.send(&format!("record {}", path.display()));
-        Ok(())
     }
 
     pub fn stop_record(&mut self) {
         self.send("stop-record");
     }
 
-    pub fn clip(&mut self) {
-        self.send("clip");
+    /// Saves what's in the replay buffer into `path`.
+    pub fn clip(&mut self, path: &Path) {
+        let secs = self.replay.unwrap_or_default();
+        self.send(&format!("clip {secs} {}", path.display()));
     }
 
     /// Asks it to wrap up and exit; anything being written gets finished.
@@ -159,6 +189,10 @@ impl Recorder {
 
     pub fn quitting(&self) -> bool {
         self.quitting.is_some()
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
     }
 
     pub fn events(&mut self) -> Vec<Event> {
@@ -229,35 +263,110 @@ fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).context("HOME isn't set")
 }
 
-/// ~/Videos/framecorder/<sub>/<time>.mp4
-pub fn output_path(sub: &str) -> Result<PathBuf> {
-    let mut t: libc::tm = unsafe { std::mem::zeroed() };
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    unsafe { libc::localtime_r(&now, &mut t) };
-    let name = format!(
-        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.mp4",
-        t.tm_year + 1900,
-        t.tm_mon + 1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec
-    );
-    Ok(home()?.join("Videos/framecorder").join(sub).join(name))
-}
-
-fn log_path() -> Result<PathBuf> {
+fn log_path(name: &str) -> Result<PathBuf> {
     let dir = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .map_or_else(|| home().map(|h| h.join(".local/state")), Ok)?
         .join("framecorder");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("recorder.log"))
+    Ok(dir.join(format!("{name}.log")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_recorder(settings: &Settings) -> (Recorder, mpsc::Sender<Event>) {
+        let mut child = Command::new("cat").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let (tx, events) = mpsc::channel();
+        let recorder = Recorder {
+            stdin: child.stdin.take(),
+            child,
+            events,
+            log: PathBuf::new(),
+            args: settings.recorder_args(false),
+            replay: settings.clipping(),
+            paused: false,
+            live: false,
+            quitting: None,
+        };
+        (recorder, tx)
+    }
+
+    #[test]
+    fn recording_clock_and_saved_note_follow_the_recorder() {
+        let mut observed = Vec::new();
+        for paused in [true, false] {
+            let settings = Settings { onboarded: true, ..Settings::default() };
+            let mut app = super::super::App::new(settings.clone(), false, false);
+            let (mut recorder, events) = test_recorder(&settings);
+            recorder.paused = paused;
+            app.recorder = Some(recorder);
+            app.toggle_recording();
+            let running = app.recording.as_ref().unwrap().running_since.is_some();
+            events.send(parse_event("saved recording 100 7.0 /tmp/test.mp4").unwrap()).unwrap();
+            app.check_recorder();
+            let mut recorder = app.recorder.take().unwrap();
+            recorder.quit();
+            recorder.child.wait_with_output().unwrap();
+            observed.push((running, app.recording.is_none(), app.note.as_ref().unwrap().0.contains("00:00:07")));
+        }
+        assert_eq!(observed, [(false, true, true), (true, true, true)]);
+    }
+
+    #[test]
+    fn promo_footage_wraps_up_when_the_recording_stops() {
+        let settings = Settings { onboarded: true, ..Settings::default() };
+        let mut app = super::super::App::new(settings.clone(), false, false);
+        let (recorder, _events) = test_recorder(&settings);
+        app.recorder = Some(recorder);
+        app.toggle_recording();
+        let (view, _view_events) = test_recorder(&settings);
+        app.extras.push(("panels", view));
+        app.auto_pause(true);
+        app.toggle_recording();
+        let (_, view) = app.extras.pop().unwrap();
+        let mut recorder = app.recorder.take().unwrap();
+        recorder.stdin = None;
+        recorder.child.wait_with_output().unwrap();
+        assert_eq!(view.child.wait_with_output().unwrap().stdout, b"pause\nquit\n");
+    }
+
+    #[test]
+    fn live_keeps_capture_until_the_last_viewer_leaves() {
+        let settings = Settings { onboarded: true, clips: false, ..Settings::default() };
+        let mut app = super::super::App::new(settings.clone(), false, false);
+        let (recorder, _events) = test_recorder(&settings);
+        app.recorder = Some(recorder);
+        app.live_viewers = 1;
+        app.check_recorder();
+        assert!(!app.recorder.as_ref().unwrap().quitting());
+        assert!(app.recording.is_none());
+        app.live_viewers = 0;
+        app.check_recorder();
+        let mut recorder = app.recorder.take().unwrap();
+        assert!(recorder.quitting());
+        recorder.stdin = None;
+        let output = recorder.child.wait_with_output().unwrap();
+        assert!(output.stdout.starts_with(b"live "));
+        assert!(output.stdout.ends_with(b"live\nquit\n"));
+    }
+
+    #[test]
+    fn remote_record_retries_until_the_old_recorder_has_stopped() {
+        let settings = Settings { onboarded: true, ..Settings::default() };
+        let mut app = super::super::App::new(settings.clone(), false, false);
+        let (mut recorder, _) = test_recorder(&settings);
+        recorder.args = vec!["previous settings".into()];
+        app.recorder = Some(recorder);
+        let result = app.handle_remote(super::super::remote::Command::Record, "a phone");
+        let mut recorder = app.recorder.take().unwrap();
+        recorder.stdin = None;
+        let output = recorder.child.wait_with_output().unwrap();
+        assert!(result.contains("try Record again"), "{result}");
+        assert!(app.recording.is_none());
+        assert_eq!(output.stdout, b"quit\n");
+    }
 
     #[test]
     fn parses_what_the_recorder_says() {
@@ -275,6 +384,7 @@ mod tests {
             Some(Event::Failed { kind: None, message: "bad clip length".into() })
         );
         assert_eq!(parse_event("busy recording"), Some(Event::ClipWhileRecording));
+        assert_eq!(parse_event("perf 71.5 72 4.44"), Some(Event::Perf { fps: 71.5, target: 72, gpu_ms: 4.44 }));
         assert_eq!(parse_event("hello"), None);
     }
 }

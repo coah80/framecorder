@@ -13,8 +13,10 @@ pub const KEY: &str = "coah80.framecorder";
 
 // Slots in VR_IVRApplications_FnTable (openvr_capi.h, IVRApplications_008).
 const SLOT_ADD_MANIFEST: usize = 0;
+const SLOT_KEY_BY_PROCESS: usize = 5;
 const SLOT_IDENTIFY: usize = 11;
 const SLOT_SET_AUTO_LAUNCH: usize = 17;
+const SLOT_SCENE_PROCESS: usize = 30;
 
 unsafe fn slot<T: Copy>(table: *const *const c_void, index: usize) -> T {
     std::mem::transmute_copy(&*table.add(index))
@@ -68,4 +70,28 @@ pub fn register(vr: &OpenVr) -> Result<()> {
         call("identifying", identify(std::process::id(), key.as_ptr()))?;
     }
     Ok(())
+}
+
+pub struct Scene(*const *const c_void);
+
+impl Scene {
+    pub fn new(vr: &OpenVr) -> Option<Self> {
+        vr.interface(VERSION).map(Self)
+    }
+
+    pub fn game(&self) -> bool {
+        unsafe {
+            let process: unsafe extern "C" fn() -> u32 = slot(self.0, SLOT_SCENE_PROCESS);
+            let pid = process();
+            if pid == 0 {
+                return false;
+            }
+            let key_of: unsafe extern "C" fn(u32, *mut c_char, u32) -> i32 = slot(self.0, SLOT_KEY_BY_PROCESS);
+            let mut key = [0 as c_char; 128];
+            if key_of(pid, key.as_mut_ptr(), key.len() as u32) != 0 {
+                return true;
+            }
+            !std::ffi::CStr::from_ptr(key.as_ptr()).to_bytes().starts_with(b"openvr.")
+        }
+    }
 }

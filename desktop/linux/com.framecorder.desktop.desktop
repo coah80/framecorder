@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=framecorder
+Comment=clips and recordings from your steam frame
+Exec=framecorder-desktop
+Icon=framecorder
+Terminal=false
+Categories=AudioVideo;Video;
+StartupWMClass=com.framecorder.desktop
