@@ -1,6 +1,6 @@
 [package]
 name = "framecorder-app"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 description = "framecorder's sync client, shared by the desktop and Android apps"
 license = "MIT"
