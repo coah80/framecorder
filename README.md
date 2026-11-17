@@ -10,7 +10,7 @@ it runs right on the headset. there's a tab in the steamvr dashboard with a big 
 
 measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920x1080 hevc:
 
-- gpu: about 0.5 ms per recorded frame for one eye and 0.7 ms for both eyes blended, with the gpu at its top clock, which is about 5% of it at 72 fps. it runs on a high priority queue, so it gets its turn right after each refresh even in a heavy game (a low priority one starves there: missed frames, and torn ones, since the compositor draws the next frame into the same buffer)
+- gpu: about 0.45 ms per recorded frame for one eye and 0.6 ms for both eyes blended, with the gpu at its top clock, which is 3 to 5% of it at 72 fps. it runs on a high priority queue, so it gets its turn right after each refresh even in a heavy game (a low priority one starves there: missed frames, and torn ones, since the compositor draws the next frame into the same buffer)
 - cpu: about 5-7% of ONE core with game audio + mic, out of 8, about 2% more with split tracks
 - ram: about 10 MB of its own, the rest is shared libraries
 - the dashboard tab: under 1% of a core, sleeps when the menu is closed, only redraws when something changes

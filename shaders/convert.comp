@@ -15,7 +15,9 @@
 #define TILE_H 8u
 #define CELLS (TILE_W / STEP)
 #define POINTS_X (CELLS + 1u)
-#define POINTS (POINTS_X * 2u)
+#define SLOT_ROW 8u
+#define SLOT_POINTS (SLOT_ROW * 2u)
+#define CHANNEL_SLOTS (3u * SLOT_POINTS)
 #define WORKGROUP_SIZE 64u
 #define TILES_PER_DISPATCH_ROW 256u
 
@@ -33,6 +35,7 @@ layout(push_constant) uniform Params {
     uint uv_offset;
     uint first_tile;
     uint tile_count;
+    float zero;
 } p;
 
 layout(constant_id = 0) const uint FLAGS = 0u;
@@ -54,7 +57,7 @@ const uint OTHER_EYE_SHIFT = 5u;
 
 const uint WEIGHT_SLOT = 6u;
 
-shared vec2 s_lut[7u * POINTS];
+shared vec2 s_lut[7u * SLOT_POINTS];
 shared uint s_cell_needs[CELLS];
 
 // One grid cell for one channel: a corner plus how the source moves per
@@ -66,12 +69,16 @@ struct Cell {
     vec2 dxy;
 };
 
-Cell load_cell(uint i, uint slot) {
-    uint base = slot * POINTS + i;
-    vec2 a = s_lut[base];
+float wait_for(float earlier) {
+    return SHARP ? earlier * p.zero : 0.0;
+}
+
+Cell load_cell(uint i, uint slot, float earlier) {
+    uint base = slot * SLOT_POINTS + i;
+    vec2 a = s_lut[base] + wait_for(earlier);
     vec2 b = s_lut[base + 1u];
-    vec2 d = s_lut[base + POINTS_X];
-    vec2 e = s_lut[base + POINTS_X + 1u];
+    vec2 d = s_lut[base + SLOT_ROW];
+    vec2 e = s_lut[base + SLOT_ROW + 1u];
 
     Cell cell;
     const float inv = 1.0 / float(STEP);
@@ -124,8 +131,8 @@ vec4 fetch(vec2 uv) {
     return textureLod(src_tex, uv, 0.0);
 }
 
-vec4 sample_at(Cell cell, vec2 local) {
-    vec2 uv = cell_uv(cell, local);
+vec4 sample_at(Cell cell, vec2 local, float earlier) {
+    vec2 uv = cell_uv(cell, local) + wait_for(earlier);
     if (!SUPERSAMPLE) {
         return fetch(uv);
     }
@@ -158,49 +165,76 @@ vec2 pixel(vec2 local, uint k) {
     return local + vec2(float(k & 1u), float(k >> 1));
 }
 
-void eye_block(uint ci, uint eye_slot, uint needs, vec2 local, out vec3 px[4]) {
-    Cell green = load_cell(ci, eye_slot + 1u);
-    if (!PER_CHANNEL) {
-        for (uint k = 0u; k < 4u; k++) {
-            px[k] = sample_at(green, pixel(local, k)).rgb;
-        }
-        return;
-    }
-    bool own = (needs & CELL_OWN_RED_BLUE) != 0u;
-    Cell red = load_cell(ci, eye_slot + (own ? 0u : 1u));
-    Cell blue = load_cell(ci, eye_slot + (own ? 2u : 1u));
-    vec3 keep = vec3((needs & CELL_NO_RED) != 0u ? 0.0 : 1.0, 1.0, (needs & CELL_NO_BLUE) != 0u ? 0.0 : 1.0);
+void read_block(uint ci, uint slot, vec2 local, inout float earlier, out vec3 px[4]) {
+    Cell cell = load_cell(ci, slot, earlier);
     for (uint k = 0u; k < 4u; k++) {
-        vec2 at = pixel(local, k);
-        px[k] = vec3(sample_at(red, at).r, sample_at(green, at).g, sample_at(blue, at).b) * keep;
+        px[k] = sample_at(cell, pixel(local, k), earlier).rgb;
+        earlier = px[k].g;
+    }
+}
+
+vec4 read_channel(uint ci, uint eye_slot, uint needs, uint channel, vec2 local, inout float earlier) {
+    bool own = (needs & CELL_OWN_RED_BLUE) != 0u;
+    bool lost = (needs & (channel == 0u ? CELL_NO_RED : channel == 2u ? CELL_NO_BLUE : 0u)) != 0u;
+    Cell cell = load_cell(ci, eye_slot + (own ? channel : 1u), earlier);
+    vec4 value;
+    for (uint k = 0u; k < 4u; k++) {
+        value[k] = sample_at(cell, pixel(local, k), earlier)[channel];
+        earlier = value[k];
+    }
+    return value * (lost ? 0.0 : 1.0);
+}
+
+vec3 blend(vec3 mine, vec3 other, float w) {
+    return w <= 0.0 ? mine : (w >= 1.0 ? other : mix(mine, other, w));
+}
+
+float blend(float mine, float other, float w) {
+    return w <= 0.0 ? mine : (w >= 1.0 ? other : mix(mine, other, w));
+}
+
+vec4 read_blended(uint ci, uint eye_slot, uint needs, uint channel, vec2 local, vec4 w, inout float earlier) {
+    vec4 mine = read_channel(ci, eye_slot, needs, channel, local, earlier);
+    vec4 other = read_channel(ci, 3u - eye_slot, needs >> OTHER_EYE_SHIFT, channel, local, earlier);
+    vec4 both;
+    for (uint k = 0u; k < 4u; k++) {
+        both[k] = blend(mine[k], other[k], w[k]);
+    }
+    return both;
+}
+
+void load_item(uvec2 tile, uint tile_eye, uint item) {
+    uint grids = BLENDS_EYES ? 2u * CHANNEL_SLOTS : CHANNEL_SLOTS;
+    uint weights = BLENDS_EYES ? SLOT_POINTS : 0u;
+    uint count = p.lut_size.x * p.lut_size.y;
+    if (item < grids + weights) {
+        uint x = item & (SLOT_ROW - 1u);
+        uint gx = min(tile.x * CELLS + x, p.lut_size.x - 1u);
+        uint gy = min(tile.y + ((item / SLOT_ROW) & 1u), p.lut_size.y - 1u);
+        uint at = gy * p.lut_size.x + gx;
+        uint slot_eye = item >= CHANNEL_SLOTS ? 1u : 0u;
+        uint channel = item / SLOT_POINTS - slot_eye * 3u;
+        uint eye = BLENDS_EYES ? slot_eye : tile_eye;
+        if (x >= POINTS_X) {
+            return;
+        }
+        if (item >= grids) {
+            s_lut[item] = lut[count * 6u + at];
+        } else if (PER_CHANNEL || channel == 1u) {
+            s_lut[item] = lut[(eye * count + at) * 3u + channel];
+        }
+    } else if (item < grids + weights + CELLS) {
+        uint cell = item - grids - weights;
+        uint cx = min(tile.x * CELLS + cell, p.lut_size.x - 2u);
+        uint cy = min(tile.y, p.lut_size.y - 2u);
+        s_cell_needs[cell] = uint(lut[count * (TWO_EYE_GRID ? 7u : 3u) + cy * (p.lut_size.x - 1u) + cx].x);
     }
 }
 
 void load_tile(uvec2 tile, uint tile_eye) {
-    uint count = p.lut_size.x * p.lut_size.y;
-    uint channels = PER_CHANNEL ? 3u : 1u;
-    uint grids = (BLENDS_EYES ? 2u : 1u) * channels * POINTS;
-    uint weights = BLENDS_EYES ? POINTS : 0u;
-    for (uint li = gl_LocalInvocationIndex; li < grids + weights + CELLS; li += WORKGROUP_SIZE) {
-        if (li < grids + weights) {
-            uint r = li % POINTS;
-            uint gx = min(tile.x * CELLS + r % POINTS_X, p.lut_size.x - 1u);
-            uint gy = min(tile.y + r / POINTS_X, p.lut_size.y - 1u);
-            uint at = gy * p.lut_size.x + gx;
-            if (li < grids) {
-                uint slot_eye = li / (channels * POINTS);
-                uint c = PER_CHANNEL ? (li / POINTS) % 3u : 1u;
-                uint eye = BLENDS_EYES ? slot_eye : tile_eye;
-                s_lut[(slot_eye * 3u + c) * POINTS + r] = lut[eye * count * 3u + at * 3u + c];
-            } else {
-                s_lut[WEIGHT_SLOT * POINTS + r] = lut[count * 6u + at];
-            }
-        } else {
-            uint i = li - grids - weights;
-            uint cx = min(tile.x * CELLS + i, p.lut_size.x - 2u);
-            uint cy = min(tile.y, p.lut_size.y - 2u);
-            s_cell_needs[i] = uint(lut[count * (TWO_EYE_GRID ? 7u : 3u) + cy * (p.lut_size.x - 1u) + cx].x);
-        }
+    load_item(tile, tile_eye, gl_LocalInvocationIndex);
+    if (BLENDS_EYES) {
+        load_item(tile, tile_eye, gl_LocalInvocationIndex + WORKGROUP_SIZE);
     }
     barrier();
 }
@@ -222,28 +256,43 @@ void main() {
     vec2 local = vec2(float(at.x % STEP), float(at.y % STEP)) + 0.5;
     uint needs = s_cell_needs[ci];
     float shown = float(needs & CELL_SHOWN);
+    float earlier = 0.0;
 
     vec3 px[4];
     if (BLENDS_EYES) {
-        uint eye = (needs >> CELL_RIGHT_EYE_SHIFT) & 1u;
-        vec3 other[4];
-        eye_block(ci, eye * 3u, needs, local, px);
-        eye_block(ci, (1u - eye) * 3u, needs >> OTHER_EYE_SHIFT, local, other);
-        Cell weight = load_cell(ci, WEIGHT_SLOT);
+        uint eye_slot = ((needs >> CELL_RIGHT_EYE_SHIFT) & 1u) * 3u;
+        Cell weight = load_cell(ci, WEIGHT_SLOT, earlier);
         bool blended = (needs & CELL_BLENDED) != 0u;
+        vec4 w;
         for (uint k = 0u; k < 4u; k++) {
-            float w = blended ? clamp(cell_uv(weight, pixel(local, k)).x, 0.0, 1.0) : 0.0;
-            px[k] = (w <= 0.0 ? px[k] : (w >= 1.0 ? other[k] : mix(px[k], other[k], w))) * shown;
+            w[k] = blended ? clamp(cell_uv(weight, pixel(local, k)).x, 0.0, 1.0) : 0.0;
+        }
+        if (PER_CHANNEL) {
+            vec4 r = read_blended(ci, eye_slot, needs, 0u, local, w, earlier);
+            vec4 g = read_blended(ci, eye_slot, needs, 1u, local, w, earlier);
+            vec4 b = read_blended(ci, eye_slot, needs, 2u, local, w, earlier);
+            for (uint k = 0u; k < 4u; k++) {
+                px[k] = vec3(r[k], g[k], b[k]) * shown;
+            }
+        } else {
+            vec3 other[4];
+            read_block(ci, eye_slot + 1u, local, earlier, px);
+            read_block(ci, 4u - eye_slot, local, earlier, other);
+            for (uint k = 0u; k < 4u; k++) {
+                px[k] = blend(px[k], other[k], w[k]) * shown;
+            }
         }
     } else if (PER_CHANNEL && ((s_cell_needs[0] | s_cell_needs[1] | s_cell_needs[2] | s_cell_needs[3]) & CELL_OWN_RED_BLUE) != 0u) {
-        eye_block(ci, 0u, needs, local, px);
+        vec4 r = read_channel(ci, 0u, needs, 0u, local, earlier);
+        vec4 g = read_channel(ci, 0u, needs, 1u, local, earlier);
+        vec4 b = read_channel(ci, 0u, needs, 2u, local, earlier);
         for (uint k = 0u; k < 4u; k++) {
-            px[k] *= shown;
+            px[k] = vec3(r[k], g[k], b[k]) * shown;
         }
     } else {
-        Cell green = load_cell(ci, 1u);
+        read_block(ci, 1u, local, earlier, px);
         for (uint k = 0u; k < 4u; k++) {
-            px[k] = sample_at(green, pixel(local, k)).rgb * shown;
+            px[k] *= shown;
         }
     }
 

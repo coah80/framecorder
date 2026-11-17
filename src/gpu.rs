@@ -35,6 +35,7 @@ struct Params {
     uv_offset: u32,
     first_tile: u32,
     tile_count: u32,
+    zero: f32,
 }
 
 /// Layout of the NV12 buffers, dictated by the encoder.
@@ -306,6 +307,7 @@ impl Gpu {
                 uv_offset: layout.uv_offset,
                 first_tile: 0,
                 tile_count: 0,
+                zero: 0.0,
             },
             layout,
             targets: Vec::new(),

@@ -82,15 +82,16 @@ every recorded frame is one small job for `shaders/convert.comp`, reading the sc
 - **color fringing, only where it matters.** near the middle of the lens the three channels line up, so a pixel gets one read. only tiles with a cell where red or blue drift more than 0.3 px from green do three separate reads
 - **straight to nv12.** colors go through bt.709 limited range. the scanout is already gamma-encoded, which is what video expects, so there's no transfer conversion. a 2×2 block is exactly one chroma sample, so an invocation writes its two pairs of luma and its pair of chroma as 16-bit words straight into the encoder's input buffer (a dmabuf the encoder owns). no two invocations share a word, so there are no atomics
 
-that costs about 0.5 ms of gpu per recorded frame for one eye and 0.7 ms for both eyes blended, with the gpu at its top clock (903 mhz) under a game.
+that costs about 0.45 ms of gpu per recorded frame for one eye and 0.6 ms for both eyes blended, with the gpu at its top clock (903 mhz) and busy with something else.
 
 ### why it's cut up like that
 
-an earlier version of this shader made the same reads and wrote the same bytes, and cost six times as much: 4 ms a frame with both eyes. none of that was the reads. it was how the work was laid out for the adreno:
+an earlier version of this shader made the same reads and wrote the same bytes, and cost over six times as much: 4 ms a frame with both eyes. none of that was the reads. it was how the work was laid out for the adreno:
 
 - **nothing is decided while it runs.** the filter, the channels and the eyes are baked in when the shader is built (specialization constants). a branch on a setting the shader looks up as it runs costs as much as running both sides, even when every pixel goes the same way
 - **a tile does one thing.** the gpu runs invocations 64 at a time, a workgroup at a time. when they branch differently inside one, each side costs about as much as if all 64 had taken it. so what a tile needs is settled for the whole tile, once, at startup
 - **small invocations.** how many workgroups the gpu keeps going at once depends on how many registers the shader needs at its worst point, and that grows with the pixels one invocation holds on to. 2×2 pixels converts a frame well over one and a half times as fast as 4×2 did
+- **one read at a time.** left alone, the compiler starts every read an invocation is going to make before it uses any of them, and has to hold all their results at once. so each sharp read is made to wait for the one before it: its position gets that earlier result added, times a zero the shader is only handed as it runs, which the compiler can't see through. that takes the shader from 19 registers to 13, and the gpu from 10 workgroups at a time to 14
 - **the heavy tiles get their own build.** reading both eyes takes the most registers. with that path in the same shader, every other tile would be held to fewer workgroups at a time as well, so those tiles run through a build that has only that path
 - **no handing pixels around.** packing bytes from several invocations into one 32-bit word through shared memory cost more than all the texture reads together. 16-bit writes mean an invocation finishes its own block
 
@@ -152,7 +153,7 @@ measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920×1080 hevc:
 
 | | |
 |---|---|
-| gpu | ~0.5 ms per recorded frame for one eye, ~0.7 ms for both eyes blended, at the gpu's top clock. about 5% of the gpu at 72 fps |
+| gpu | ~0.45 ms per recorded frame for one eye, ~0.6 ms for both eyes blended, at the gpu's top clock. 3 to 5% of the gpu at 72 fps |
 | cpu | ~5-7% of one core (out of 8) with game audio + mic, ~2% more with split tracks |
 | ram | ~10 mb of its own, plus replay packet locations and pending disk writes when clips are on; packet bytes fall back to ram if disk storage fails |
 | encoding | the hardware encoder, no cpu or gpu time |

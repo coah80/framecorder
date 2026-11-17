@@ -222,10 +222,10 @@ The traps below come from the Frame itself, and each one cost real time to find.
 - The lens shows more above than below, so the video centers ~16° above straight ahead, like SteamVR's own view.
 
 **The GPU**
-- What the convert shader costs is how its work is laid out, not what it reads. The same reads and the same output bytes once cost six times as much. Texture reads are close to free on the Adreno. Instructions and registers aren't.
+- What the convert shader costs is how its work is laid out, not what it reads. The same reads and the same output bytes once cost over six times as much. Texture reads are close to free on the Adreno. Instructions and registers aren't.
 - A branch on anything the shader looks up as it runs (a push constant, a buffer) costs as much as running both sides, even when every pixel goes one way. What the recorder was started with goes in as specialization constants.
 - Invocations run 64 at a time, one workgroup at a time, and a workgroup whose invocations branch differently pays for each side nearly in full. Anything that changes the path is decided per tile, on the CPU (`src/tiles.rs`).
-- The GPU keeps `192 / registers` workgroups going at once, 16 at most, counting the registers the whole shader needs at its worst point. More pixels per invocation, or one heavy path among light ones, slows every tile down. `IR3_SHADER_DEBUG=cs,disasm MESA_SHADER_CACHE_DISABLE=true` in front of the recorder prints the shader as compiled, with `max_waves` and the registers (`full`).
+- The GPU keeps `192 / registers` workgroups going at once, 16 at most, counting the registers the whole shader needs at its worst point. More pixels per invocation, or one heavy path among light ones, slows every tile down. So does letting the compiler start all of an invocation's reads at once, which is what `wait_for` in the shader stops: it makes each sharp read depend on the one before. `IR3_SHADER_DEBUG=cs,disasm MESA_SHADER_CACHE_DISABLE=true` in front of the recorder prints the shader as compiled, with `max_waves` and the registers (`full`).
 - Workgroups under 32 invocations are many times slower, and handing pixels between invocations through shared memory costs more than the reads do.
 - Measure the shader with a game on the panels. A black screen and the dashboard both read cheaper than they should.
 - A change to the shader's layout has to leave the encoder's input the same, byte for byte. Run the old and the new shader on one saved panel frame and one lookup grid (`--dump-lut`), and `cmp` what they write.
