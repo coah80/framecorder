@@ -64,26 +64,37 @@ this all happens once, at startup:
 2. **work out the widest clean view.** steamvr's hidden area mesh says which parts of the render target are never drawn, and the distortion grid says which parts land on the panel at all. a binary search finds the widest view at your aspect ratio (16:9, 1:1 or 9:16) whose edges are all actually drawn, so there are no black corners. that comes out around 77° square or 64°×96° tall, then pulls in 3% from the edge, where the lens is blurriest
 3. **invert the lens, per output pixel.** for every point on a grid 8 output pixels apart: turn it into a view direction, undo the eye's roll (so the video stays level with your head), turn that into a render target spot, then solve for the panel position that shows it with newton's method on the distortion grid. that runs three times, once per color channel
 4. **decide how hard the shader has to work.** if the color fringes are narrower than a third of a video pixel everywhere, the per-channel correction gets turned off entirely. if the video shrinks the panel by more than 1.5×, supersampling gets turned on so it doesn't alias
+5. **sort the picture into tiles.** the video is cut into tiles of 32×8 pixels, four grid cells in a row (`src/tiles.rs`). every cell gets a note of what it needs: one read per pixel where the three channels line up, a read per channel where red or blue drift more than 0.3 px from green, nothing where the lens shows nothing. with both eyes, a cell also takes the eye its blend weights ask for, and only the cells inside the crossfade read both. tiles with a cell that reads both eyes go on one list, all the others on another
 
 one gotcha: the frame's compositor scans each eye out turned 180° inside its own half, while steamvr describes the panels upright. that was only found by recording on a real headset and getting upside-down videos. the shader flips each half back per sample, which keeps the seam between the eyes clean.
 
 `--eye both` builds two grids for the same level view direction, centered between the eyes. the automatic crop fits the area visible in either eye at the chosen aspect ratio. hidden areas are checked in the level render target before applying the compositor's cant. the blend copies steamvr's own headset view in its "both eyes, left/right dominant" modes (vrmonitor calls `SetHeadsetViewBlendRange(0.9, 1.0)` or `(0.0, 0.1)` for them, and the compositor draws the right eye over the left with a linear alpha ramp across that part of the overlap). so the dominant eye (`--dominant`, right by default) fills everything it sees, and the other eye shows only past the dominant eye's inner edge, fading in linearly over the tenth of the overlap next to that edge. the middle of the picture comes from one eye, so nothing ghosts there; nearby objects can only ghost inside that narrow fade. like steamvr, the overlap is measured at the picture's top and bottom rows, where the round lens edge pulls it in most (the middle row if a corner is one eye only). if one eye cannot show a direction, the other supplies it.
 
-the result is a small lookup grid (a few thousand points) uploaded to the gpu once. per frame, the gpu does no lens math at all.
+the result is a small lookup grid (a few thousand points), the cell notes and the two tile lists, uploaded to the gpu once. per frame, the gpu does no lens math and decides nothing.
 
 ## 4. the one shader
 
-every recorded frame is one compute dispatch of `shaders/convert.comp`, reading the scanout and writing the encoder's input:
+every recorded frame is one small job for `shaders/convert.comp`, reading the scanout and writing the encoder's input. one workgroup converts one tile:
 
-- **tiles.** each invocation writes a 4×2 block of pixels, and a workgroup covers 32×16 pixels, exactly 4×2 grid cells. the workgroup loads the grid points it needs into shared memory once, and each pixel's source position is a bilinear blend of its cell's corners
-- **blended eyes.** `--eye both` uses the same dispatch. workgroups load the second grid only when its blend weights need it, and pixels sample both eyes only within the crossfade. the default single-eye path keeps one grid and one eye sample.
+- **tiles.** the workgroup loads the grid points and cell notes its tile needs into shared memory once. each invocation does a 2×2 block of pixels, and each pixel's source position is a bilinear blend of its cell's corners
+- **blended eyes.** with `--eye both`, the tiles that read both eyes run through a second build of the same shader. every other tile reads one eye, exactly like a single-eye recording does
 - **sharp reads.** each sample is catmull-rom in 5 bilinear taps instead of plain bilinear. the panel image has already been resampled once by the compositor, and a soft filter on top of that looked noticeably blurrier than steam's own recorder
-- **color fringing, only where it matters.** near the middle of the lens the three channels line up, so a pixel gets one read. only cells where red or blue drift more than 0.3 px from green do three separate reads
-- **straight to nv12.** colors go through bt.709 limited range. the scanout is already gamma-encoded, which is what video expects, so there's no transfer conversion. luma and interleaved chroma get packed into 32-bit words and written straight into the encoder's input buffer (a dmabuf the encoder owns), with no byte stores and no atomics
+- **color fringing, only where it matters.** near the middle of the lens the three channels line up, so a pixel gets one read. only tiles with a cell where red or blue drift more than 0.3 px from green do three separate reads
+- **straight to nv12.** colors go through bt.709 limited range. the scanout is already gamma-encoded, which is what video expects, so there's no transfer conversion. a 2×2 block is exactly one chroma sample, so an invocation writes its two pairs of luma and its pair of chroma as 16-bit words straight into the encoder's input buffer (a dmabuf the encoder owns). no two invocations share a word, so there are no atomics
 
-that costs about 0.6 ms of gpu per recorded frame at 500 mhz, less at gameplay clocks.
+that costs about 0.5 ms of gpu per recorded frame for one eye and 0.7 ms for both eyes blended, with the gpu at its top clock (903 mhz) under a game.
 
-it runs on its own vulkan queue with a global priority (`--gpu-priority`), `high` by default. `low` only runs when the game leaves the gpu idle, which is the nicest to the game, but on the frame the compositor draws every frame into the one scanout buffer, so in a heavy game `low` reads late: missed frames, and frames torn by the compositor drawing the next one in while we read. `high` costs the game the shader's ~1.4 ms on the frames it's gpu bound, for a steady, clean capture.
+### why it's cut up like that
+
+an earlier version of this shader made the same reads and wrote the same bytes, and cost six times as much: 4 ms a frame with both eyes. none of that was the reads. it was how the work was laid out for the adreno:
+
+- **nothing is decided while it runs.** the filter, the channels and the eyes are baked in when the shader is built (specialization constants). a branch on a setting the shader looks up as it runs costs as much as running both sides, even when every pixel goes the same way
+- **a tile does one thing.** the gpu runs invocations 64 at a time, a workgroup at a time. when they branch differently inside one, each side costs about as much as if all 64 had taken it. so what a tile needs is settled for the whole tile, once, at startup
+- **small invocations.** how many workgroups the gpu keeps going at once depends on how many registers the shader needs at its worst point, and that grows with the pixels one invocation holds on to. 2×2 pixels converts a frame well over one and a half times as fast as 4×2 did
+- **the heavy tiles get their own build.** reading both eyes takes the most registers. with that path in the same shader, every other tile would be held to fewer workgroups at a time as well, so those tiles run through a build that has only that path
+- **no handing pixels around.** packing bytes from several invocations into one 32-bit word through shared memory cost more than all the texture reads together. 16-bit writes mean an invocation finishes its own block
+
+it runs on its own vulkan queue with a global priority (`--gpu-priority`), `high` by default. `low` only runs when the game leaves the gpu idle, which is the nicest to the game, but on the frame the compositor draws every frame into the one scanout buffer, so in a heavy game `low` reads late: missed frames, and frames torn by the compositor drawing the next one in while we read. `high` costs the game the shader's time on the frames it's gpu bound, for a steady, clean capture.
 
 ## 5. timing
 
@@ -133,7 +144,7 @@ one session thread (`src/mux.rs`) takes the video and audio packets and sends th
 
 framecorder shares its vulkan device with steamvr through `IVROverlayView`, and every frame it acquires the newest view texture. it copies that into an image of its own and runs it through the same shader, with a plain fit-to-frame grid.
 
-the catch is that steamvr only renders that view while something's recording it. that costs the game about 0.45 ms of gpu per frame and the odd reprojected frame. on the frame it's also fixed at 1920×1080 of the left eye, and asking for another size or eye is silently ignored. the panel source costs the game nothing measurable, which is why it's the default.
+the catch is that steamvr only renders that view while something's recording it. that costs the game about 0.45 ms of gpu per frame and the odd reprojected frame. on the frame it's also fixed at 1920×1080 of the left eye, and asking for another size or eye is silently ignored. the panel source makes steamvr render nothing extra, which is why it's the default.
 
 ## what it all costs
 
@@ -141,7 +152,7 @@ measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920×1080 hevc:
 
 | | |
 |---|---|
-| gpu | ~0.6 ms per recorded frame at 500 mhz, less at gameplay clocks |
+| gpu | ~0.5 ms per recorded frame for one eye, ~0.7 ms for both eyes blended, at the gpu's top clock. about 5% of the gpu at 72 fps |
 | cpu | ~5-7% of one core (out of 8) with game audio + mic, ~2% more with split tracks |
 | ram | ~10 mb of its own, plus replay packet locations and pending disk writes when clips are on; packet bytes fall back to ram if disk storage fails |
 | encoding | the hardware encoder, no cpu or gpu time |

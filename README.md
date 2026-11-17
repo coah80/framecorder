@@ -10,7 +10,7 @@ it runs right on the headset. there's a tab in the steamvr dashboard with a big 
 
 measured on a steam frame (snapdragon 8 gen 3, adreno 750), 1920x1080 hevc:
 
-- gpu: about 0.6 ms per recorded frame at 500 MHz, a lot less at gameplay clocks. it runs on a high priority queue, so it gets its turn right after each refresh even in a heavy game (a low priority one starves there: missed frames, and torn ones, since the compositor draws the next frame into the same buffer)
+- gpu: about 0.5 ms per recorded frame for one eye and 0.7 ms for both eyes blended, with the gpu at its top clock, which is about 5% of it at 72 fps. it runs on a high priority queue, so it gets its turn right after each refresh even in a heavy game (a low priority one starves there: missed frames, and torn ones, since the compositor draws the next frame into the same buffer)
 - cpu: about 5-7% of ONE core with game audio + mic, out of 8, about 2% more with split tracks
 - ram: about 10 MB of its own, the rest is shared libraries
 - the dashboard tab: under 1% of a core, sleeps when the menu is closed, only redraws when something changes
@@ -37,7 +37,7 @@ the long version, lens math and all, is in [docs/how-it-works.md](docs/how-it-wo
 - promo footage (settings, files, off by default): a switch for when you're capturing footage to cut together. with it on, a recording also saves both panels next to it, in a file ending `-panels` at 3840x1920 with the game's sound. that one file holds everything every view is made of: `tools/promo/develop.py` turns it into the left eye, the right eye or both blended, in any shape, afterwards and off the headset. it's one more recorder reading the panels and a bigger encode, so it costs the game more than a normal recording: turn it off again when you're done. it needs the panels, and it's only in the tab, not the apps
 - both panels (`--view raw`): both panels exactly as scanned out, distortion included
 
-`--source headset` records SteamVR's headset view instead, the picture Steam's own recorder saves (16:9 left eye only on the frame). steamvr only renders it while someone's recording it, so it costs the game about 0.45 ms of gpu per frame and a few reprojected frames. the panel source costs the game nothing measurable, so it's the default.
+`--source headset` records SteamVR's headset view instead, the picture Steam's own recorder saves (16:9 left eye only on the frame). steamvr only renders it while someone's recording it, so it costs the game about 0.45 ms of gpu per frame and a few reprojected frames. the panel source makes steamvr render nothing extra, so it's the default.
 
 the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at 120/144, so every frame is evenly spaced. `--fps 60` forces 60, tho it'll judder a bit if the panel's at 72.
 

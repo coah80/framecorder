@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use framecorder::openvr::OpenVr;
 
 /// Output pixels between grid points. The mapping is smooth, 8 is plenty.
-const STEP: u32 = 8;
+const STEP: u32 = crate::tiles::CELL_PX;
 /// Samples per side when reading SteamVR's distortion function.
 const DISTORTION_GRID: usize = 97;
 const INVALID: [f32; 2] = [-1.0, -1.0];

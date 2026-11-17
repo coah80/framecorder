@@ -205,7 +205,7 @@ Every vblank, the recorder finds the plane the VR compositor scans out and expor
 
 ## Where code lives
 
-- `src/main.rs` and its modules: the recorder (`kms.rs` scanout, `gpu.rs` Vulkan, `lut.rs` lens and cant, `encoder.rs` V4L2, `audio.rs` PipeWire, `mux.rs` and `writer.rs` files, `replay.rs` clips).
+- `src/main.rs` and its modules: the recorder (`kms.rs` scanout, `gpu.rs` Vulkan, `lut.rs` lens and cant, `tiles.rs` what each part of the picture needs from the shader, `encoder.rs` V4L2, `audio.rs` PipeWire, `mux.rs` and `writer.rs` files, `replay.rs` clips).
 - `src/ui/`: the tab. Drawn by hand into a pixel canvas (`paint.rs`, `text.rs`), no UI toolkit, so every effect costs CPU.
 - `src/grab.rs`, `src/setup.rs`, `src/apps.rs`: the helper and its protocol, install, unlock, update and uninstall, SteamVR app registration. Their binaries are in `src/bin/`.
 - `src/openvr.rs`, `src/overlay.rs`, `src/input.rs`: OpenVR through `FnTable:` interface tables, no bindings crate. Slot indices come from `openvr_capi.h`, as named consts next to the interface version.
@@ -220,6 +220,15 @@ The traps below come from the Frame itself, and each one cost real time to find.
 - SteamVR tells apps the eyes are level (`GetEyeToHeadTransform`). The compositor applies the cant itself, from the headset's factory calibration: `~/.config/openvr/config/cv/*/config.json`, `tracking_to_eye_transform[eye].eye_to_head` (what `vrcmd --info` shows as "compositor residual"). The calibration's x and y point the other way from ours.
 - The game's render target and hidden area mesh are level. The distortion data is canted. Check visibility in the right one, or rotated corners come out black.
 - The lens shows more above than below, so the video centers ~16° above straight ahead, like SteamVR's own view.
+
+**The GPU**
+- What the convert shader costs is how its work is laid out, not what it reads. The same reads and the same output bytes once cost six times as much. Texture reads are close to free on the Adreno. Instructions and registers aren't.
+- A branch on anything the shader looks up as it runs (a push constant, a buffer) costs as much as running both sides, even when every pixel goes one way. What the recorder was started with goes in as specialization constants.
+- Invocations run 64 at a time, one workgroup at a time, and a workgroup whose invocations branch differently pays for each side nearly in full. Anything that changes the path is decided per tile, on the CPU (`src/tiles.rs`).
+- The GPU keeps `192 / registers` workgroups going at once, 16 at most, counting the registers the whole shader needs at its worst point. More pixels per invocation, or one heavy path among light ones, slows every tile down. `IR3_SHADER_DEBUG=cs,disasm MESA_SHADER_CACHE_DISABLE=true` in front of the recorder prints the shader as compiled, with `max_waves` and the registers (`full`).
+- Workgroups under 32 invocations are many times slower, and handing pixels between invocations through shared memory costs more than the reads do.
+- Measure the shader with a game on the panels. A black screen and the dashboard both read cheaper than they should.
+- A change to the shader's layout has to leave the encoder's input the same, byte for byte. Run the old and the new shader on one saved panel frame and one lookup grid (`--dump-lut`), and `cmp` what they write.
 
 **SteamVR**
 - framecorder is registered as `coah80.framecorder`. In a `.vrmanifest` on this headset the binary key is `binary_path_linux_arm`, and SteamVR skips the app without it.

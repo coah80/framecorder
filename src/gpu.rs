@@ -15,9 +15,11 @@ use crate::kms::ScanoutBuffer;
 #[path = "gpu_copy.rs"]
 mod copy;
 use crate::lut::Lut;
+use crate::tiles;
 
 const SHADER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/convert.spv"));
 const MAX_SOURCES: usize = 8;
+const TILES_PER_DISPATCH_ROW: u32 = 256;
 
 const DRM_FORMAT_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
 const DRM_FORMAT_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
@@ -31,8 +33,8 @@ struct Params {
     lut_size: [u32; 2],
     y_stride: u32,
     uv_offset: u32,
-    lut_step: f32,
-    flags: u32,
+    first_tile: u32,
+    tile_count: u32,
 }
 
 /// Layout of the NV12 buffers, dictated by the encoder.
@@ -77,6 +79,7 @@ pub struct Gpu {
     set_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    both_eyes_pipeline: vk::Pipeline,
     shader: vk::ShaderModule,
     sampler: vk::Sampler,
     fence: vk::Fence,
@@ -85,6 +88,11 @@ pub struct Gpu {
     timestamp_ns: f64,
     lut_buffer: vk::Buffer,
     lut_memory: vk::DeviceMemory,
+    tiles_buffer: vk::Buffer,
+    tiles_memory: vk::DeviceMemory,
+    one_eye_tiles: u32,
+    both_eye_tiles: u32,
+    shader_flags: u32,
     params: Params,
     layout: Nv12Layout,
     targets: Vec<Target>,
@@ -202,6 +210,12 @@ impl Gpu {
         let name = unsafe { CStr::from_ptr(props.device_name.as_ptr()) };
         log::info!("gpu: {}", name.to_string_lossy());
 
+        let mut narrow_stores = vk::PhysicalDevice16BitStorageFeatures::default();
+        unsafe { instance.get_physical_device_features2(pdev, &mut vk::PhysicalDeviceFeatures2::default().push_next(&mut narrow_stores)) };
+        if narrow_stores.storage_buffer16_bit_access == vk::FALSE {
+            bail!("this GPU can't write 16-bit values into a buffer, and the conversion needs that");
+        }
+
         let queue_family = unsafe { instance.get_physical_device_queue_family_properties(pdev) }
             .iter()
             .position(|q| q.queue_flags.contains(vk::QueueFlags::COMPUTE))
@@ -236,9 +250,11 @@ impl Gpu {
                 }
                 let qinfos = [qinfo];
                 let n = if with_priority { exts.len() } else { exts.len() - 1 };
+                let mut narrow_stores = vk::PhysicalDevice16BitStorageFeatures::default().storage_buffer16_bit_access(true);
                 let info = vk::DeviceCreateInfo::default()
                     .queue_create_infos(&qinfos)
-                    .enabled_extension_names(&exts[..n]);
+                    .enabled_extension_names(&exts[..n])
+                    .push_next(&mut narrow_stores);
                 match unsafe { instance.create_device(pdev, &info, None) } {
                     Ok(d) => Some(d),
                     Err(e) => {
@@ -267,23 +283,29 @@ impl Gpu {
             set_layout: vk::DescriptorSetLayout::null(),
             pipeline_layout: vk::PipelineLayout::null(),
             pipeline: vk::Pipeline::null(),
+            both_eyes_pipeline: vk::Pipeline::null(),
             shader: vk::ShaderModule::null(),
             sampler: vk::Sampler::null(),
             fence: vk::Fence::null(),
             queries: vk::QueryPool::null(),
             lut_buffer: vk::Buffer::null(),
             lut_memory: vk::DeviceMemory::null(),
+            tiles_buffer: vk::Buffer::null(),
+            tiles_memory: vk::DeviceMemory::null(),
+            one_eye_tiles: 0,
+            both_eye_tiles: 0,
+            shader_flags: (lut.per_channel as u32)
+                | (((filter == Filter::Supersample) as u32) << 1)
+                | ((lut.rotated_eyes as u32) << 2)
+                | ((lut.blended as u32) << 4)
+                | (((filter == Filter::Sharp) as u32) << 3),
             params: Params {
                 out_size: [layout.width, layout.height],
                 lut_size: [lut.width, lut.height],
                 y_stride: layout.y_stride,
                 uv_offset: layout.uv_offset,
-                lut_step: lut.step,
-                flags: (lut.per_channel as u32)
-                    | (((filter == Filter::Supersample) as u32) << 1)
-                    | ((lut.rotated_eyes as u32) << 2)
-                    | ((lut.blended as u32) << 4)
-                    | (((filter == Filter::Sharp) as u32) << 3),
+                first_tile: 0,
+                tile_count: 0,
             },
             layout,
             targets: Vec::new(),
@@ -292,8 +314,8 @@ impl Gpu {
             copy: None,
             physical_device: pdev,
         };
-        gpu.create_pipeline(target_count)?;
         gpu.upload_lut(lut)?;
+        gpu.create_pipeline(target_count)?;
         for _ in 0..target_count {
             let t = gpu.create_target()?;
             gpu.targets.push(t);
@@ -327,6 +349,11 @@ impl Gpu {
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                     .descriptor_count(1)
                     .stage_flags(vk::ShaderStageFlags::COMPUTE),
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(3)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE),
             ];
             self.set_layout = d.create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
@@ -344,16 +371,10 @@ impl Gpu {
                 None,
             )?;
 
-            let stage = vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::COMPUTE)
-                .module(self.shader)
-                .name(c"main");
-            let info = vk::ComputePipelineCreateInfo::default()
-                .stage(stage)
-                .layout(self.pipeline_layout);
-            self.pipeline = d
-                .create_compute_pipelines(vk::PipelineCache::null(), &[info], None)
-                .map_err(|(_, e)| e)?[0];
+            self.pipeline = self.convert_pipeline(false)?;
+            if self.both_eye_tiles > 0 {
+                self.both_eyes_pipeline = self.convert_pipeline(true)?;
+            }
 
             self.sampler = d.create_sampler(
                 &vk::SamplerCreateInfo::default()
@@ -373,7 +394,7 @@ impl Gpu {
                     .descriptor_count(max_sets),
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::STORAGE_BUFFER)
-                    .descriptor_count(max_sets * 2),
+                    .descriptor_count(max_sets * 3),
             ];
             self.desc_pool = d.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
@@ -403,35 +424,73 @@ impl Gpu {
         })
     }
 
+    unsafe fn convert_pipeline(&self, blends_eyes: bool) -> Result<vk::Pipeline> {
+        let constants: [u8; 8] = std::mem::transmute([self.shader_flags, blends_eyes as u32]);
+        let entries = [
+            vk::SpecializationMapEntry { constant_id: 0, offset: 0, size: 4 },
+            vk::SpecializationMapEntry { constant_id: 1, offset: 4, size: 4 },
+        ];
+        let specialization = vk::SpecializationInfo::default().map_entries(&entries).data(&constants);
+        let stage = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(self.shader)
+            .name(c"main")
+            .specialization_info(&specialization);
+        let info = vk::ComputePipelineCreateInfo::default()
+            .stage(stage)
+            .layout(self.pipeline_layout);
+        Ok(self
+            .device
+            .create_compute_pipelines(vk::PipelineCache::null(), &[info], None)
+            .map_err(|(_, e)| e)?[0])
+    }
+
     fn upload_lut(&mut self, lut: &Lut) -> Result<()> {
-        let bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(lut.points.as_ptr().cast(), std::mem::size_of_val(lut.points.as_slice()))
+        let grid = tiles::Grid {
+            points: &lut.points,
+            width: lut.width,
+            height: lut.height,
+            per_channel: lut.per_channel,
+            blended: lut.blended,
         };
+        let plan = tiles::plan(&grid, self.layout.width, self.layout.height);
+        self.one_eye_tiles = plan.one_eye_tiles.len() as u32;
+        self.both_eye_tiles = plan.both_eye_tiles.len() as u32;
+        log::info!("{} tiles read one eye, {} blend both", self.one_eye_tiles, self.both_eye_tiles);
+        let grid_and_needs: Vec<[f32; 2]> = lut.points.iter().chain(&plan.cell_needs).copied().collect();
+        let tile_list: Vec<u32> = plan.one_eye_tiles.iter().chain(&plan.both_eye_tiles).copied().collect();
+        (self.lut_buffer, self.lut_memory) = self.upload(&grid_and_needs)?;
+        (self.tiles_buffer, self.tiles_memory) = self.upload(&tile_list)?;
+        Ok(())
+    }
+
+    fn upload<T: Copy>(&self, items: &[T]) -> Result<(vk::Buffer, vk::DeviceMemory)> {
+        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(items.as_ptr().cast(), std::mem::size_of_val(items)) };
         let d = &self.device;
         unsafe {
-            self.lut_buffer = d.create_buffer(
+            let buffer = d.create_buffer(
                 &vk::BufferCreateInfo::default()
-                    .size(bytes.len() as u64)
+                    .size(bytes.len().max(4) as u64)
                     .usage(vk::BufferUsageFlags::STORAGE_BUFFER),
                 None,
             )?;
-            let req = d.get_buffer_memory_requirements(self.lut_buffer);
+            let req = d.get_buffer_memory_requirements(buffer);
             let ty = self
                 .find_memory_type(
                     req.memory_type_bits,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
                 )
                 .context("no host visible memory for the lookup grid")?;
-            self.lut_memory = d.allocate_memory(
+            let memory = d.allocate_memory(
                 &vk::MemoryAllocateInfo::default().allocation_size(req.size).memory_type_index(ty),
                 None,
             )?;
-            d.bind_buffer_memory(self.lut_buffer, self.lut_memory, 0)?;
-            let ptr = d.map_memory(self.lut_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())?;
+            d.bind_buffer_memory(buffer, memory, 0)?;
+            let ptr = d.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())?;
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast(), bytes.len());
-            d.unmap_memory(self.lut_memory);
+            d.unmap_memory(memory);
+            Ok((buffer, memory))
         }
-        Ok(())
     }
 
     fn create_target(&self) -> Result<Target> {
@@ -633,6 +692,7 @@ impl Gpu {
             .image_layout(vk::ImageLayout::GENERAL)];
         let lut_info = [vk::DescriptorBufferInfo::default().buffer(self.lut_buffer).range(vk::WHOLE_SIZE)];
         let out_info = [vk::DescriptorBufferInfo::default().buffer(target.buffer).range(vk::WHOLE_SIZE)];
+        let tiles_info = [vk::DescriptorBufferInfo::default().buffer(self.tiles_buffer).range(vk::WHOLE_SIZE)];
         let writes = [
             vk::WriteDescriptorSet::default()
                 .dst_set(set)
@@ -649,6 +709,11 @@ impl Gpu {
                 .dst_binding(2)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&out_info),
+            vk::WriteDescriptorSet::default()
+                .dst_set(set)
+                .dst_binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&tiles_info),
         ];
         self.device.update_descriptor_sets(&writes, &[]);
     }
@@ -697,14 +762,12 @@ impl Gpu {
             &[acquire_image],
         );
 
-        d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
         d.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline_layout, 0, &[set], &[]);
-        let params: [u8; std::mem::size_of::<Params>()] = std::mem::transmute(self.params);
-        d.cmd_push_constants(cmd, self.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &params);
-        let groups_x = (self.layout.width / 4).div_ceil(8);
-        let groups_y = (self.layout.height / 2).div_ceil(8);
         d.cmd_write_timestamp(cmd, vk::PipelineStageFlags::TOP_OF_PIPE, self.queries, 0);
-        d.cmd_dispatch(cmd, groups_x, groups_y, 1);
+        self.convert_tiles(cmd, self.pipeline, 0, self.one_eye_tiles);
+        if self.both_eye_tiles > 0 {
+            self.convert_tiles(cmd, self.both_eyes_pipeline, self.one_eye_tiles, self.both_eye_tiles);
+        }
         d.cmd_write_timestamp(cmd, vk::PipelineStageFlags::BOTTOM_OF_PIPE, self.queries, 1);
 
         let release_image = vk::ImageMemoryBarrier::default()
@@ -732,6 +795,14 @@ impl Gpu {
         );
         d.end_command_buffer(cmd)?;
         Ok(())
+    }
+
+    unsafe fn convert_tiles(&self, cmd: vk::CommandBuffer, pipeline: vk::Pipeline, first_tile: u32, tile_count: u32) {
+        let d = &self.device;
+        d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
+        let params: [u8; std::mem::size_of::<Params>()] = std::mem::transmute(Params { first_tile, tile_count, ..self.params });
+        d.cmd_push_constants(cmd, self.pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, &params);
+        d.cmd_dispatch(cmd, TILES_PER_DISPATCH_ROW, tile_count.div_ceil(TILES_PER_DISPATCH_ROW), 1);
     }
 
     /// Converts the given scanout buffer into target `index` and waits for the
@@ -814,12 +885,15 @@ impl Drop for Gpu {
             }
             d.destroy_buffer(self.lut_buffer, None);
             d.free_memory(self.lut_memory, None);
+            d.destroy_buffer(self.tiles_buffer, None);
+            d.free_memory(self.tiles_memory, None);
             d.destroy_fence(self.fence, None);
             d.destroy_query_pool(self.queries, None);
             d.destroy_command_pool(self.cmd_pool, None);
             d.destroy_descriptor_pool(self.desc_pool, None);
             d.destroy_sampler(self.sampler, None);
             d.destroy_pipeline(self.pipeline, None);
+            d.destroy_pipeline(self.both_eyes_pipeline, None);
             d.destroy_pipeline_layout(self.pipeline_layout, None);
             d.destroy_descriptor_set_layout(self.set_layout, None);
             d.destroy_shader_module(self.shader, None);

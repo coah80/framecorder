@@ -19,6 +19,7 @@ mod mix;
 mod mux;
 mod perf;
 mod replay;
+mod tiles;
 #[cfg(test)]
 mod session_tests;
 mod writer;

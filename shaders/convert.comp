@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_shader_16bit_storage : require
 
 // Turns the panel scanout into NV12 for the hardware encoder in one pass.
 //
@@ -8,47 +9,53 @@
 // color channel, because the compositor pre-corrects chromatic aberration and
 // we need to undo that too. A negative position means "outside the lens", which
 // gets painted black.
-//
-// One invocation writes a 4x2 block: two words of luma and one word of
-// interleaved chroma, so there are no byte stores and no atomics. A workgroup
-// covers 32x16 pixels, which is exactly 4x2 grid cells, so the workgroup pulls
-// the grid points it needs into shared memory once and every invocation reads
-// its cell from there.
 
 #define STEP 8u
-#define WG_X 8u
-#define WG_Y 8u
-#define CELLS_X (WG_X * 4u / STEP)
-#define CELLS_Y (WG_Y * 2u / STEP)
-#define POINTS_X (CELLS_X + 1u)
-#define POINTS_Y (CELLS_Y + 1u)
-#define POINTS (POINTS_X * POINTS_Y)
+#define TILE_W 32u
+#define TILE_H 8u
+#define CELLS (TILE_W / STEP)
+#define POINTS_X (CELLS + 1u)
+#define POINTS (POINTS_X * 2u)
+#define WORKGROUP_SIZE 64u
+#define TILES_PER_DISPATCH_ROW 256u
 
-layout(local_size_x = WG_X, local_size_y = WG_Y, local_size_z = 1) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2D src_tex;
 layout(set = 0, binding = 1, std430) readonly buffer Lut { vec2 lut[]; };
-layout(set = 0, binding = 2, std430) writeonly buffer Nv12 { uint nv12[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer Nv12 { uint16_t nv12[]; };
+layout(set = 0, binding = 3, std430) readonly buffer Tiles { uint tiles[]; };
 
 layout(push_constant) uniform Params {
     uvec2 out_size;
     uvec2 lut_size;
     uint y_stride;
     uint uv_offset;
-    float lut_step;
-    uint flags;
+    uint first_tile;
+    uint tile_count;
 } p;
 
-const uint FLAG_PER_CHANNEL = 1u;
-const uint FLAG_SUPERSAMPLE = 2u;
-const uint FLAG_ROTATED_EYES = 4u;
-const uint FLAG_SHARP = 8u;
-const uint FLAG_BLEND = 16u;
+layout(constant_id = 0) const uint FLAGS = 0u;
+layout(constant_id = 1) const bool BLENDS_EYES = false;
 
-// Fringes narrower than this, in output pixels, aren't worth extra reads.
-const float FRINGE_MIN = 0.3;
+const bool PER_CHANNEL = (FLAGS & 1u) != 0u;
+const bool SUPERSAMPLE = (FLAGS & 2u) != 0u;
+const bool ROTATED_EYES = (FLAGS & 4u) != 0u;
+const bool SHARP = (FLAGS & 8u) != 0u;
+const bool TWO_EYE_GRID = (FLAGS & 16u) != 0u;
+
+const uint CELL_SHOWN = 1u;
+const uint CELL_OWN_RED_BLUE = 2u;
+const uint CELL_NO_RED = 4u;
+const uint CELL_NO_BLUE = 8u;
+const uint CELL_RIGHT_EYE_SHIFT = 4u;
+const uint CELL_BLENDED = 32u;
+const uint OTHER_EYE_SHIFT = 5u;
+
+const uint WEIGHT_SLOT = 6u;
 
 shared vec2 s_lut[7u * POINTS];
+shared uint s_cell_needs[CELLS];
 
 // One grid cell for one channel: a corner plus how the source moves per
 // output pixel along x and y, and the bilinear twist term.
@@ -57,34 +64,22 @@ struct Cell {
     vec2 dx;
     vec2 dy;
     vec2 dxy;
-    bool valid;
 };
 
-Cell load_cell(uint i, uint j, uint c) {
-    uint base = c * POINTS + j * POINTS_X + i;
+Cell load_cell(uint i, uint slot) {
+    uint base = slot * POINTS + i;
     vec2 a = s_lut[base];
     vec2 b = s_lut[base + 1u];
     vec2 d = s_lut[base + POINTS_X];
     vec2 e = s_lut[base + POINTS_X + 1u];
 
     Cell cell;
-    cell.valid = min(min(a.x, b.x), min(d.x, e.x)) >= 0.0;
     const float inv = 1.0 / float(STEP);
     cell.origin = a;
     cell.dx = (b - a) * inv;
     cell.dy = (d - a) * inv;
     cell.dxy = (e - d - b + a) * (inv * inv);
     return cell;
-}
-
-// Largest distance between two channels' positions at the cell's corners.
-float cell_split(Cell a, Cell b) {
-    const float s = float(STEP);
-    vec2 o = a.origin - b.origin;
-    vec2 x = (a.dx - b.dx) * s;
-    vec2 y = (a.dy - b.dy) * s;
-    vec2 xy = (a.dxy - b.dxy) * (s * s);
-    return max(max(length(o), length(o + x)), max(length(o + y), length(o + x + y + xy)));
 }
 
 vec2 cell_uv(Cell cell, vec2 local) {
@@ -120,10 +115,10 @@ vec4 catmull_rom(vec2 uv) {
 }
 
 vec4 fetch(vec2 uv) {
-    if ((p.flags & FLAG_ROTATED_EYES) != 0u) {
+    if (ROTATED_EYES) {
         uv = vec2(uv.x < 0.5 ? 0.5 - uv.x : 1.5 - uv.x, 1.0 - uv.y);
     }
-    if ((p.flags & FLAG_SHARP) != 0u) {
+    if (SHARP) {
         return catmull_rom(uv);
     }
     return textureLod(src_tex, uv, 0.0);
@@ -131,7 +126,7 @@ vec4 fetch(vec2 uv) {
 
 vec4 sample_at(Cell cell, vec2 local) {
     vec2 uv = cell_uv(cell, local);
-    if ((p.flags & FLAG_SUPERSAMPLE) == 0u) {
+    if (!SUPERSAMPLE) {
         return fetch(uv);
     }
     // 4 taps on a rotated grid, a cheap box filter for when we shrink.
@@ -159,113 +154,100 @@ uint chroma(vec3 c) {
     return u | (v << 8);
 }
 
-vec3 eye_color(Cell green, Cell red, Cell blue, bool per_channel, vec2 local) {
-    if (!green.valid) return vec3(0.0);
-    if (!per_channel) return sample_at(green, local).rgb;
-    return vec3(red.valid ? sample_at(red, local).r : 0.0,
-                sample_at(green, local).g,
-                blue.valid ? sample_at(blue, local).b : 0.0);
+vec2 pixel(vec2 local, uint k) {
+    return local + vec2(float(k & 1u), float(k >> 1));
 }
 
-void load_grid() {
-    uint channels = (p.flags & FLAG_PER_CHANNEL) != 0u ? 3u : 1u;
-    bool blend = (p.flags & FLAG_BLEND) != 0u;
-    uint count = p.lut_size.x * p.lut_size.y;
-    if (blend && gl_LocalInvocationIndex < POINTS) {
-        uint r = gl_LocalInvocationIndex;
-        uint gx = min(gl_WorkGroupID.x * CELLS_X + r % POINTS_X, p.lut_size.x - 1u);
-        uint gy = min(gl_WorkGroupID.y * CELLS_Y + r / POINTS_X, p.lut_size.y - 1u);
-        s_lut[6u * POINTS + r] = lut[count * 6u + gy * p.lut_size.x + gx];
-    }
-    if (blend) { barrier(); }
-    bool need_left = !blend;
-    bool need_right = false;
-    if (blend) {
-        for (uint r = 0u; r < POINTS; r++) {
-            need_left = need_left || s_lut[6u * POINTS + r].x < 1.0;
-            need_right = need_right || s_lut[6u * POINTS + r].x > 0.0;
+void eye_block(uint ci, uint eye_slot, uint needs, vec2 local, out vec3 px[4]) {
+    Cell green = load_cell(ci, eye_slot + 1u);
+    if (!PER_CHANNEL) {
+        for (uint k = 0u; k < 4u; k++) {
+            px[k] = sample_at(green, pixel(local, k)).rgb;
         }
+        return;
     }
-    uint eyes = blend ? 2u : 1u;
-    for (uint li = gl_LocalInvocationIndex; li < eyes * channels * POINTS; li += WG_X * WG_Y) {
-        uint eye = li / (channels * POINTS);
-        uint c = channels == 3u ? (li / POINTS) % 3u : 1u;
-        uint r = li % POINTS;
-        uint gx = min(gl_WorkGroupID.x * CELLS_X + r % POINTS_X, p.lut_size.x - 1u);
-        uint gy = min(gl_WorkGroupID.y * CELLS_Y + r / POINTS_X, p.lut_size.y - 1u);
-        s_lut[(eye * 3u + c) * POINTS + r] = (eye == 0u ? need_left : need_right)
-            ? lut[eye * count * 3u + (gy * p.lut_size.x + gx) * 3u + c] : vec2(-1.0);
+    bool own = (needs & CELL_OWN_RED_BLUE) != 0u;
+    Cell red = load_cell(ci, eye_slot + (own ? 0u : 1u));
+    Cell blue = load_cell(ci, eye_slot + (own ? 2u : 1u));
+    vec3 keep = vec3((needs & CELL_NO_RED) != 0u ? 0.0 : 1.0, 1.0, (needs & CELL_NO_BLUE) != 0u ? 0.0 : 1.0);
+    for (uint k = 0u; k < 4u; k++) {
+        vec2 at = pixel(local, k);
+        px[k] = vec3(sample_at(red, at).r, sample_at(green, at).g, sample_at(blue, at).b) * keep;
+    }
+}
+
+void load_tile(uvec2 tile, uint tile_eye) {
+    uint count = p.lut_size.x * p.lut_size.y;
+    uint channels = PER_CHANNEL ? 3u : 1u;
+    uint grids = (BLENDS_EYES ? 2u : 1u) * channels * POINTS;
+    uint weights = BLENDS_EYES ? POINTS : 0u;
+    for (uint li = gl_LocalInvocationIndex; li < grids + weights + CELLS; li += WORKGROUP_SIZE) {
+        if (li < grids + weights) {
+            uint r = li % POINTS;
+            uint gx = min(tile.x * CELLS + r % POINTS_X, p.lut_size.x - 1u);
+            uint gy = min(tile.y + r / POINTS_X, p.lut_size.y - 1u);
+            uint at = gy * p.lut_size.x + gx;
+            if (li < grids) {
+                uint slot_eye = li / (channels * POINTS);
+                uint c = PER_CHANNEL ? (li / POINTS) % 3u : 1u;
+                uint eye = BLENDS_EYES ? slot_eye : tile_eye;
+                s_lut[(slot_eye * 3u + c) * POINTS + r] = lut[eye * count * 3u + at * 3u + c];
+            } else {
+                s_lut[WEIGHT_SLOT * POINTS + r] = lut[count * 6u + at];
+            }
+        } else {
+            uint i = li - grids - weights;
+            uint cx = min(tile.x * CELLS + i, p.lut_size.x - 2u);
+            uint cy = min(tile.y, p.lut_size.y - 2u);
+            s_cell_needs[i] = uint(lut[count * (TWO_EYE_GRID ? 7u : 3u) + cy * (p.lut_size.x - 1u) + cx].x);
+        }
     }
     barrier();
 }
 
 void main() {
-    load_grid();
-
-    uint x0 = gl_GlobalInvocationID.x * 4u;
-    uint y0 = gl_GlobalInvocationID.y * 2u;
-    if (x0 >= p.out_size.x || y0 >= p.out_size.y) {
+    uint index = gl_WorkGroupID.y * TILES_PER_DISPATCH_ROW + gl_WorkGroupID.x;
+    if (index >= p.tile_count) {
         return;
     }
+    uint entry = tiles[p.first_tile + index];
+    uvec2 tile = uvec2(entry & 0xfffu, (entry >> 12) & 0xfffu);
+    load_tile(tile, entry >> 24);
 
-    uint ci = gl_LocalInvocationID.x * 4u / STEP;
-    uint cj = gl_LocalInvocationID.y * 2u / STEP;
-    vec2 base = vec2(float(x0 % STEP), float(y0 % STEP)) + 0.5;
-
-    Cell green = load_cell(ci, cj, 1u);
-    Cell red = green;
-    Cell blue = green;
-    bool per_channel = false;
-    if ((p.flags & FLAG_PER_CHANNEL) != 0u) {
-        red = load_cell(ci, cj, 0u);
-        blue = load_cell(ci, cj, 2u);
-        // Near the middle of the lens the channels line up; one read per
-        // pixel is enough there, and that's most of the picture.
-        float limit = FRINGE_MIN * length(green.dx);
-        per_channel = cell_split(red, green) > limit || cell_split(blue, green) > limit;
+    uvec2 at = tile * uvec2(TILE_W, TILE_H) + gl_LocalInvocationID.xy * 2u;
+    if (at.x >= p.out_size.x || at.y >= p.out_size.y) {
+        return;
     }
+    uint ci = gl_LocalInvocationID.x * 2u / STEP;
+    vec2 local = vec2(float(at.x % STEP), float(at.y % STEP)) + 0.5;
+    uint needs = s_cell_needs[ci];
+    float shown = float(needs & CELL_SHOWN);
 
-    bool blend = (p.flags & FLAG_BLEND) != 0u;
-    Cell weight;
-    Cell right_green;
-    Cell right_red;
-    Cell right_blue;
-    bool right_per_channel = false;
-    if (blend) {
-        weight = load_cell(ci, cj, 6u);
-        right_green = load_cell(ci, cj, 4u);
-        right_red = right_green;
-        right_blue = right_green;
-        if ((p.flags & FLAG_PER_CHANNEL) != 0u) {
-            right_red = load_cell(ci, cj, 3u);
-            right_blue = load_cell(ci, cj, 5u);
-            float limit = FRINGE_MIN * length(right_green.dx);
-            right_per_channel = cell_split(right_red, right_green) > limit || cell_split(right_blue, right_green) > limit;
+    vec3 px[4];
+    if (BLENDS_EYES) {
+        uint eye = (needs >> CELL_RIGHT_EYE_SHIFT) & 1u;
+        vec3 other[4];
+        eye_block(ci, eye * 3u, needs, local, px);
+        eye_block(ci, (1u - eye) * 3u, needs >> OTHER_EYE_SHIFT, local, other);
+        Cell weight = load_cell(ci, WEIGHT_SLOT);
+        bool blended = (needs & CELL_BLENDED) != 0u;
+        for (uint k = 0u; k < 4u; k++) {
+            float w = blended ? clamp(cell_uv(weight, pixel(local, k)).x, 0.0, 1.0) : 0.0;
+            px[k] = (w <= 0.0 ? px[k] : (w >= 1.0 ? other[k] : mix(px[k], other[k], w))) * shown;
+        }
+    } else if (PER_CHANNEL && ((s_cell_needs[0] | s_cell_needs[1] | s_cell_needs[2] | s_cell_needs[3]) & CELL_OWN_RED_BLUE) != 0u) {
+        eye_block(ci, 0u, needs, local, px);
+        for (uint k = 0u; k < 4u; k++) {
+            px[k] *= shown;
+        }
+    } else {
+        Cell green = load_cell(ci, 1u);
+        for (uint k = 0u; k < 4u; k++) {
+            px[k] = sample_at(green, pixel(local, k)).rgb * shown;
         }
     }
-    vec3 px[8];
-    for (uint k = 0u; k < 8u; k++) {
-        vec2 local = base + vec2(float(k & 3u), float(k >> 2));
-        float w = blend ? clamp(cell_uv(weight, local).x, 0.0, 1.0) : 0.0;
-        if (blend) {
-            if (!green.valid) w = 1.0;
-            if (!right_green.valid) w = 0.0;
-        }
-        vec3 left_color = w < 1.0 ? eye_color(green, red, blue, per_channel, local) : vec3(0.0);
-        vec3 right_color = w > 0.0 ? eye_color(right_green, right_red, right_blue, right_per_channel, local) : vec3(0.0);
-        px[k] = mix(left_color, right_color, w);
-    }
 
-    uint row0 = 0u;
-    uint row1 = 0u;
-    for (uint dx = 0u; dx < 4u; dx++) {
-        row0 |= luma(px[dx]) << (8u * dx);
-        row1 |= luma(px[4u + dx]) << (8u * dx);
-    }
-    nv12[(y0 * p.y_stride + x0) >> 2] = row0;
-    nv12[((y0 + 1u) * p.y_stride + x0) >> 2] = row1;
-
-    vec3 left = (px[0] + px[1] + px[4] + px[5]) * 0.25;
-    vec3 right = (px[2] + px[3] + px[6] + px[7]) * 0.25;
-    nv12[(p.uv_offset + (y0 >> 1) * p.y_stride + x0) >> 2] = chroma(left) | (chroma(right) << 16);
+    nv12[(at.y * p.y_stride + at.x) >> 1] = uint16_t(luma(px[0]) | (luma(px[1]) << 8));
+    nv12[((at.y + 1u) * p.y_stride + at.x) >> 1] = uint16_t(luma(px[2]) | (luma(px[3]) << 8));
+    nv12[(p.uv_offset + (at.y >> 1) * p.y_stride + at.x) >> 1] = uint16_t(chroma((px[0] + px[1] + px[2] + px[3]) * 0.25));
 }
