@@ -8,6 +8,7 @@ import {
   createCliRenderer,
   type CliRenderer,
   type KeyEvent,
+  type PasteEvent,
 } from "@opentui/core"
 
 export const color = {
@@ -79,6 +80,62 @@ export class Screen {
       panel.add(this.hint(choices.length > 1 ? "click one, or use the arrow keys and enter" : "click it, or press enter"))
       paint()
       this.renderer.keyInput.on("keypress", keys)
+    })
+  }
+
+  password(heading: string, body: string, tone: Tone = "normal"): Promise<string | null> {
+    const panel = this.show(heading, body, tone)
+    const field = new BoxRenderable(this.renderer, {
+      width: "100%",
+      border: true,
+      borderStyle: "rounded",
+      borderColor: color.mauve,
+      paddingX: 2,
+    })
+    const dots = new TextRenderable(this.renderer, { content: "", fg: color.text })
+    field.add(dots)
+    panel.add(field)
+    return new Promise((resolve) => {
+      let typed = ""
+      let finished = false
+      const paint = () => {
+        dots.content = "•".repeat([...typed].length)
+      }
+      const finish = (value: string | null) => {
+        if (finished || value === "") return
+        finished = true
+        this.renderer.keyInput.off("keypress", keys)
+        this.renderer.keyInput.off("paste", paste)
+        resolve(value)
+      }
+      const keys = (key: KeyEvent) => {
+        if (key.name === "return" || key.name === "enter" || key.name === "kpenter") return finish(typed)
+        if (key.name === "escape") return finish(null)
+        if (key.name === "backspace") typed = [...typed].slice(0, -1).join("")
+        else if (key.ctrl && key.name === "u") typed = ""
+        else if (key.ctrl || key.meta || key.super || key.hyper) return
+        else if (key.name === "space") typed += " "
+        else if (key.sequence && key.sequence.charCodeAt(0) >= 32 && key.sequence.charCodeAt(0) !== 127) typed += key.sequence
+        paint()
+      }
+      const paste = (event: PasteEvent) => {
+        typed += new TextDecoder().decode(event.bytes).replace(/[\r\n]/g, "")
+        paint()
+      }
+      const choices = [
+        this.button({ value: "continue", name: "continue", description: "" }, () => {}, () => finish(typed)),
+        this.button({ value: "cancel", name: "cancel", description: "" }, () => {}, () => finish(null)),
+      ]
+      choices.forEach(({ box, name }, i) => {
+        box.borderColor = i === 0 ? color.mauve : color.surface
+        box.backgroundColor = i === 0 ? color.surface : color.base
+        name.fg = i === 0 ? color.mauve : color.text
+      })
+      for (const { box } of choices) panel.add(box)
+      panel.add(this.hint("type it, then press enter or click continue"))
+      paint()
+      this.renderer.keyInput.on("keypress", keys)
+      this.renderer.keyInput.on("paste", paste)
     })
   }
 
