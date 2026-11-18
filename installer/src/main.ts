@@ -2,7 +2,7 @@
 // runs it: install or update, the panels' permission, or removing it.
 
 import * as headset from "./headset"
-import { Screen } from "./screen"
+import { Screen, type Tone } from "./screen"
 
 const quit = { value: "quit", name: "quit", description: "" } as const
 const done = { value: "done", name: "done", description: "" } as const
@@ -64,7 +64,7 @@ async function authorize(screen: Screen): Promise<boolean> {
   if (!headset.hasPassword()) {
     const pick = await screen.ask(
       "pick a password first",
-      "steamos doesn't have one yet, and framecorder needs it. remember it, steamos asks for it again later.",
+      "steamos doesn't have one yet, and framecorder needs it. remember it, steamos asks for it again later.\n\nyou'll type it twice, nothing shows while you type.",
       [{ value: "set", name: "set a password", description: "" }, quit],
     )
     if (pick !== "set") return false
@@ -73,11 +73,22 @@ async function authorize(screen: Screen): Promise<boolean> {
       if (again !== "retry") return false
     }
   }
-  while (!(await screen.handOver(headset.authorize))) {
-    const pick = await screen.ask("that didn't work", "try your password again?", [{ value: "retry", name: "try again", description: "" }, quit], "bad")
-    if (pick !== "retry") return false
+  if (await headset.authorized()) return true
+  let heading = "your password"
+  let tone: Tone = "normal"
+  for (;;) {
+    const password = await screen.password(heading, "framecorder needs it to record the panels.", tone)
+    if (password === null) return false
+    screen.busy("installing framecorder", "checking your password")
+    const refused = await headset.authorize(password)
+    if (!refused) return true
+    if (!refused.wrong) {
+      await screen.ask("that didn't work", refused.said || "it didn't take your password.", [done], "bad")
+      return false
+    }
+    heading = "that's not your password"
+    tone = "bad"
   }
-  return true
 }
 
 async function remove(screen: Screen): Promise<void> {

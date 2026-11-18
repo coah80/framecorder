@@ -80,8 +80,6 @@ export async function remove(): Promise<void> {
   await run(join(BIN, "framecorder-ui"), ["--uninstall"])
 }
 
-// these two ask in the terminal themselves, so the screen hands it over first
-
 /** Runs something that talks to the person in the terminal, and waits until
  * it's really gone: it puts the terminal back the way it found it on the way
  * out, and the screen has to come back after that, not before. */
@@ -91,18 +89,27 @@ async function talk(program: string, args: string[]): Promise<boolean> {
 }
 
 export function setPassword(): Promise<boolean> {
-  console.log("\npick a password for steamos. you'll type it twice, nothing shows while you type.\n")
   return talk("passwd", [])
 }
 
-/** Asks for the password up front. sudo remembers it for a few minutes, which
- * is how the install unlocks the panels at the end without asking again. */
-export function authorize(): Promise<boolean> {
-  console.log("\nyour password, so framecorder can record the panels:\n")
-  return talk("sudo", ["-v"])
+export async function authorized(): Promise<boolean> {
+  const proc = Bun.spawn(["sudo", "-n", "-v"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+  return (await proc.exited) === 0
 }
 
-/** Puts the panel helper in place, with the password from `authorize`.
+export type Refused = { wrong: boolean; said: string }
+
+export async function authorize(password: string): Promise<Refused | null> {
+  const proc = Bun.spawn(["sudo", "-S", "-p", "", "-v"], { stdin: "pipe", stdout: "ignore", stderr: "pipe" })
+  proc.stdin.write(`${password}\n`)
+  proc.stdin.end()
+  const [code, err] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+  if (code === 0) return null
+  const said = err.trim().split("\n").slice(-4).join("\n")
+  return { wrong: /incorrect password|try again/i.test(err), said }
+}
+
+/** Puts the panel helper in place, with the password `authorize` checked.
  * framecorder-setup does it, see setup::unlock. */
 export async function unlock(): Promise<void> {
   await run(join(BIN, "framecorder-setup"), ["--unlock"])
