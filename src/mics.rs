@@ -7,6 +7,7 @@
 //! Read from `pw-dump`, which takes ~30 ms on the Frame, so only while
 //! someone's picking. Shared with framecorder-sync.
 
+
 use std::process::Command;
 
 use serde_json::Value;
@@ -19,7 +20,8 @@ pub struct Mic {
     /// PipeWire's node name, what the recorder's `--mic-source` takes.
     pub name: String,
     pub label: String,
-    /// What SteamOS records from when nothing's picked.
+    /// What a recording uses when nothing's picked: SteamOS's default mic,
+    /// or the Frame's own when that's a Bluetooth headset.
     pub default: bool,
 }
 
@@ -50,6 +52,7 @@ pub fn parse(dump: &str) -> Vec<Mic> {
         .and_then(|m| m["value"]["name"].as_str())
         .map(String::from);
     let sources: Vec<&Value> = objects.iter().map(|o| &o["info"]["props"]).filter(|p| p["media.class"] == "Audio/Source").collect();
+    let bluetooth = |name: &str| sources.iter().any(|p| p["node.name"] == name && (p["bluez5.loopback"] == true || p["device.api"] == "bluez5"));
     let loopback = |p: &Value| p["alsa.loopback"] == true || p["bluez5.loopback"] == true;
     // a bluetooth headset's own node, next to the loopback SteamOS made for it
     let wrapped: Vec<&Value> = sources.iter().filter(|p| loopback(p)).map(|p| &p["device.id"]).filter(|id| !id.is_null()).collect();
@@ -67,11 +70,24 @@ pub fn parse(dump: &str) -> Vec<Mic> {
             } else {
                 p["node.description"].as_str().or(p["node.nick"].as_str()).unwrap_or(name)
             };
-            Some(Mic { default: default.as_deref() == Some(name), name: name.to_string(), label: label.to_string() })
+            Some(Mic { default: false, name: name.to_string(), label: label.to_string() })
         })
         .collect();
     mics.sort_by_key(|m| (m.label != "Frame", m.label.clone()));
+    let used = match default.as_deref() {
+        Some(name) if bluetooth(name) => mics.iter().position(|m| m.name.starts_with(FRAME_MIC)),
+        Some(name) => mics.iter().position(|m| m.name == name),
+        None => None,
+    };
+    if let Some(i) = used {
+        mics[i].default = true;
+    }
     mics
+}
+
+pub fn target(picked: Option<&str>, mics: &[Mic]) -> Option<String> {
+    let listed = |m: &&Mic| picked == Some(m.name.as_str());
+    mics.iter().find(listed).or_else(|| mics.iter().find(|m| m.default)).map(|m| m.name.clone())
 }
 
 /// Whether a name could be a PipeWire node's: what's allowed into the
@@ -89,8 +105,11 @@ mod tests {
 
     /// The Frame's own chain as its pw-dump shows it, plus a USB mic and a
     /// Bluetooth headset, each behind the loopback SteamOS makes for it.
-    #[test]
-    fn only_mics_apps_may_record_count_and_the_frame_comes_first() {
+    const FRAME: &str = "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source";
+    const YETI: &str = "alsa_loopback_device.alsa_input.usb-Blue_Yeti-00.analog-stereo";
+    const HEADSET: &str = "bluez_input.00_1B_66_A1_B2_C3";
+
+    fn dump(default: &str) -> String {
         let node = |name: &str, description: &str, extra: Value| {
             let mut props = json!({"media.class": "Audio/Source", "node.name": name, "node.description": description});
             props.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
@@ -98,10 +117,8 @@ mod tests {
         };
         let filter = || json!({"node.virtual": true, "steamos.mic_filter": true});
         let raw = |id: u32| json!({"device.api": "alsa", "device.id": id, "node.create-loopback": true});
-        let frame = "alsa_loopback_device.alsa_input.platform-sound.HiFi__Mic__source";
-        let yeti = "alsa_loopback_device.alsa_input.usb-Blue_Yeti-00.analog-stereo";
-        let headset = "bluez_input.00_1B_66_A1_B2_C3";
-        let dump = json!([
+        let (frame, yeti, headset) = (FRAME, YETI, HEADSET);
+        json!([
             node("eq_source", "Mic EQ", filter()),
             node("echo_cancel_source", "Echo-Cancel Source", filter()),
             node("echo_cancel_fallback_source", "Echo-Cancel Source", filter()),
@@ -114,15 +131,33 @@ mod tests {
             node(headset, "Moded Headset", json!({"bluez5.loopback": true, "device.id": 90, "node.virtual": false})),
             {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Audio/Sink", "node.name": "speakers"}}},
             {"type": "PipeWire:Interface:Metadata", "props": {"metadata.name": "default"}, "metadata": [
-                {"key": "default.audio.source", "value": {"name": frame}},
+                {"key": "default.audio.source", "value": {"name": default}},
             ]},
         ])
-        .to_string();
-        let mics = parse(&dump);
+        .to_string()
+    }
+
+    #[test]
+    fn only_mics_apps_may_record_count_and_the_frame_comes_first() {
+        let mics = parse(&dump(FRAME));
         let picked: Vec<_> = mics.iter().map(|m| (m.label.as_str(), m.name.as_str(), m.default)).collect();
-        assert_eq!(picked, [("Frame", frame, true), ("Moded Headset", headset, false), ("Yeti Stereo Microphone", yeti, false)]);
+        assert_eq!(picked, [("Frame", FRAME, true), ("Moded Headset", HEADSET, false), ("Yeti Stereo Microphone", YETI, false)]);
         assert!(mics.iter().all(|m| valid_name(&m.name)));
         assert!(parse("not json").is_empty());
+    }
+
+    #[test]
+    fn a_bluetooth_headset_steamos_defaults_to_is_only_recorded_when_picked() {
+        let mics = parse(&dump(HEADSET));
+        let defaults: Vec<_> = mics.iter().filter(|m| m.default).map(|m| m.name.as_str()).collect();
+        assert_eq!(defaults, [FRAME]);
+        assert_eq!(target(None, &mics).as_deref(), Some(FRAME));
+        assert_eq!(target(Some("alsa_input.unplugged"), &mics).as_deref(), Some(FRAME));
+        assert_eq!(target(Some(HEADSET), &mics).as_deref(), Some(HEADSET));
+
+        let mics = parse(&dump(YETI));
+        assert_eq!(target(None, &mics).as_deref(), Some(YETI));
+        assert_eq!(target(None, &[]), None);
     }
 
     #[test]

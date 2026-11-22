@@ -174,7 +174,8 @@ struct Args {
     mic: bool,
 
     /// Which mic, by its PipeWire node name (`pw-dump` lists them). Without
-    /// it, or while it isn't plugged in, the one SteamOS uses.
+    /// it, or while it isn't plugged in, the one SteamOS uses, or the Frame's
+    /// own when that's a Bluetooth headset.
     #[arg(long, requires = "mic")]
     mic_source: Option<String>,
 

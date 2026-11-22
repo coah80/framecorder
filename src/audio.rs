@@ -94,14 +94,19 @@ fn run(
     // capture until the connection's lost, and connect again, until stopped.
     let mut first = true;
     loop {
-        match capture(&mainloop, &sources, mic.as_deref(), &tx, first.then_some(ready)) {
-            Ok(()) => {}
+        let ended = capture(&mainloop, &sources, mic.as_deref(), &tx, first.then_some(ready));
+        let relink = matches!(ended, Ok(Ended::MicMoved));
+        match ended {
+            Ok(_) => {}
             Err(e) if first => return Err(e),
             Err(e) => log::warn!("audio: {e:#}, trying again"),
         }
         first = false;
         if stopping.get() {
             return Ok(());
+        }
+        if relink {
+            continue;
         }
         // a second's pause, while still hearing about being stopped
         let timer = mainloop.loop_().add_timer({
@@ -123,7 +128,7 @@ fn capture(
     mic: Option<&str>,
     tx: &Sender<Msg>,
     ready: Option<&std::sync::mpsc::Sender<Result<()>>>,
-) -> Result<()> {
+) -> Result<Ended> {
     let context = pw::context::ContextRc::new(mainloop, None).context("creating PipeWire context")?;
     let core = context.connect_rc(None).context("connecting to PipeWire")?;
     let _lost = core
@@ -139,18 +144,123 @@ fn capture(
         })
         .register();
 
+    let recording_mic = sources.contains(&Source::Mic);
+    let mic_target = recording_mic.then(|| framecorder::mics::target(mic, &framecorder::mics::list())).flatten();
+    let moved = std::rc::Rc::new(std::cell::Cell::new(false));
+    let _watch = if recording_mic {
+        Some(watch_mics(mainloop, &core, mic, mic_target.clone(), moved.clone())?)
+    } else {
+        None
+    };
+
     let mut streams = Vec::new();
     for &source in sources {
-        let target = mic.filter(|_| source == Source::Mic);
+        let target = if source == Source::Mic { mic_target.as_deref() } else { None };
         streams.push(open_stream(&core, source, target, tx.clone(), mainloop.clone())?);
-        log::info!("audio: capturing {source:?}");
+        match target {
+            Some(target) => log::info!("audio: capturing {source:?} from {target}"),
+            None => log::info!("audio: capturing {source:?}"),
+        }
     }
     if let Some(ready) = ready {
         let _ = ready.send(Ok(()));
     }
     mainloop.run();
     drop(streams);
-    Ok(())
+    Ok(if moved.get() { Ended::MicMoved } else { Ended::Lost })
+}
+
+enum Ended {
+    Lost,
+    MicMoved,
+}
+
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+struct MicWatch<'l> {
+    _registry: pw::registry::RegistryRc,
+    _listener: pw::registry::Listener,
+    _metadata: std::rc::Rc<std::cell::RefCell<Vec<(pw::metadata::Metadata, pw::metadata::MetadataListener)>>>,
+    _found: pw::channel::AttachedReceiver<'l, Option<String>>,
+}
+
+fn watch_mics<'l>(
+    mainloop: &'l pw::main_loop::MainLoopRc,
+    core: &pw::core::CoreRc,
+    picked: Option<&str>,
+    linked: Option<String>,
+    moved: std::rc::Rc<std::cell::Cell<bool>>,
+) -> Result<MicWatch<'l>> {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::rc::Rc;
+
+    let (poke, pokes) = std::sync::mpsc::channel::<()>();
+    let (found_tx, found_rx) = pw::channel::channel::<Option<String>>();
+    let picked = picked.map(String::from);
+    std::thread::Builder::new().name("audio-mics".into()).spawn(move || {
+        while pokes.recv().is_ok() {
+            std::thread::sleep(SETTLE);
+            while pokes.try_recv().is_ok() {}
+            let target = framecorder::mics::target(picked.as_deref(), &framecorder::mics::list());
+            if found_tx.send(target).is_err() {
+                return;
+            }
+        }
+    })?;
+
+    let found = found_rx.attach(mainloop.loop_(), {
+        let mainloop = mainloop.clone();
+        move |target| {
+            if target.is_some() && target != linked {
+                log::info!("audio: mic is now {}, linking it", target.as_deref().unwrap_or_default());
+                moved.set(true);
+                mainloop.quit();
+            }
+        }
+    });
+
+    let registry = core.get_registry_rc().context("watching mics")?;
+    let metadata = Rc::new(RefCell::new(Vec::new()));
+    let mics = Rc::new(RefCell::new(HashSet::new()));
+    let listener = registry
+        .add_listener_local()
+        .global({
+            let (registry, metadata, mics, poke) = (registry.downgrade(), metadata.clone(), mics.clone(), poke.clone());
+            move |global| {
+                let Some(props) = global.props else { return };
+                match global.type_ {
+                    pw::types::ObjectType::Node if props.get("media.class") == Some("Audio/Source") => {
+                        mics.borrow_mut().insert(global.id);
+                        let _ = poke.send(());
+                    }
+                    pw::types::ObjectType::Metadata if props.get("metadata.name") == Some("default") => {
+                        let Some(registry) = registry.upgrade() else { return };
+                        let Ok(bound) = registry.bind::<pw::metadata::Metadata, _>(global) else { return };
+                        let poke = poke.clone();
+                        let listener = bound
+                            .add_listener_local()
+                            .property(move |_, key, _, _| {
+                                if key.is_none_or(|k| k == "default.audio.source") {
+                                    let _ = poke.send(());
+                                }
+                                0
+                            })
+                            .register();
+                        metadata.borrow_mut().push((bound, listener));
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .global_remove(move |id| {
+            if mics.borrow_mut().remove(&id) {
+                let _ = poke.send(());
+            }
+        })
+        .register();
+
+    Ok(MicWatch { _registry: registry, _listener: listener, _metadata: metadata, _found: found })
 }
 
 type Stream<'c> = (pw::stream::StreamBox<'c>, pw::stream::StreamListener<()>);
@@ -177,9 +287,9 @@ fn open_stream<'c>(
         // Listening in shouldn't keep the speakers awake when nothing plays.
         props.insert("node.passive", "true");
     }
-    // a picked mic. while it isn't there WirePlumber links the default one
     if let Some(target) = target {
         props.insert("target.object", target.to_string());
+        props.insert("node.dont-fallback", "true");
     }
 
     let stream = pw::stream::StreamBox::new(core, "framecorder", props).context("creating audio stream")?;
