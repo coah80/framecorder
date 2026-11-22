@@ -105,6 +105,7 @@ capture is paced off the display itself:
 - each loop waits for vblank, and only grabs a frame when the next slot on the frame grid is due (with half a refresh of tolerance). so 60 fps on a 72 hz panel still works, it just judders a bit
 - timestamps come from the vblank's own `CLOCK_MONOTONIC` time, the moment the frame actually went to the panels. audio uses the same clock, which is what keeps them in sync
 - if the encoder is still busy with all its input buffers, that frame gets dropped instead of blocking. the loop never waits on anything but vblank and its own shader
+- once the hottest cpu or gpu sensor hits 95°C, the same 95 steamos's fan control treats as its limit, recordings at 60 fps or more grab every other frame until it's back under 88°C, and the tab says so. a frame pushed that hard (a heavy game with passthrough on) has rebooted itself, and at that point the game needs the headroom more than the video needs the frames
 
 ## 6. encoding
 

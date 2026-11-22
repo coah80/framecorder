@@ -22,11 +22,12 @@ mod replay;
 mod tiles;
 #[cfg(test)]
 mod session_tests;
+mod thermal;
 mod writer;
 
 
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -490,6 +491,8 @@ fn capture_loop(
     let mut last_status = Instant::now();
     let mut window = (0u64, 0u64);
     let mut gpu_time = Duration::ZERO;
+    let mut backoff = thermal::Backoff::new(thermal::Thermal::find(Path::new("/sys/class/thermal")));
+    let mut step = 1;
     // Time spent paused so far, and when the current pause began.
     let mut paused_total = Duration::ZERO;
     let mut paused_since = PAUSED.load(Ordering::SeqCst).then_some(start);
@@ -548,12 +551,32 @@ fn capture_loop(
             continue;
         }
 
+        if fps >= 60 {
+            match backoff.check(Instant::now()) {
+                Some(thermal::Change::Hot(c)) => {
+                    step = 2;
+                    log::warn!("the headset is at {c:.0}°C, recording at {} fps until it cools", fps / step);
+                    if args.control {
+                        println!("hot {c:.0} {}", fps / step);
+                    }
+                }
+                Some(thermal::Change::Cooled(c)) => {
+                    step = 1;
+                    log::info!("the headset cooled to {c:.0}°C, back to {fps} fps");
+                    if args.control {
+                        println!("cooled {fps}");
+                    }
+                }
+                None => {}
+            }
+        }
+
         let now = vblank.saturating_sub(start).saturating_sub(paused_total);
         if now + tolerance < due {
             continue;
         }
         while due <= now + tolerance {
-            due += interval;
+            due += interval * step;
         }
 
         let grabbed = match view.as_deref_mut() {
@@ -593,7 +616,7 @@ fn capture_loop(
                 gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64
             );
             if args.control {
-                println!("perf {:.1} {fps} {:.2}", frames as f64 / secs, gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64);
+                println!("perf {:.1} {} {:.2}", frames as f64 / secs, fps / step, gpu_time.as_secs_f64() * 1000.0 / frames.max(1) as f64);
             }
             gpu_time = Duration::ZERO;
             if dropped > window.1 {

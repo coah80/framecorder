@@ -39,7 +39,7 @@ the long version, lens math and all, is in [docs/how-it-works.md](docs/how-it-wo
 
 `--source headset` records SteamVR's headset view instead, the picture Steam's own recorder saves (16:9 left eye only on the frame). steamvr only renders it while someone's recording it, so it costs the game about 0.45 ms of gpu per frame and a few reprojected frames. the panel source makes steamvr render nothing extra, so it's the default.
 
-the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at 120/144, so every frame is evenly spaced. `--fps 60` forces 60, tho it'll judder a bit if the panel's at 72.
+the frame rate defaults to the panel's refresh rate (72 or 90), or half of it at 120/144, so every frame is evenly spaced. `--fps 60` forces 60, tho it'll judder a bit if the panel's at 72. if the headset hits 95°C it records at half that until it cools down.
 
 ## audio
 

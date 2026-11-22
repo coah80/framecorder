@@ -269,7 +269,7 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let mut canvas = paint::Canvas::new(view::WIDTH, view::HEIGHT);
     let settings = Settings::load();
     let status = match state {
-        "recording" | "locked" | "watching-2" => Status::Recording { recorded: Duration::from_secs(754) },
+        "recording" | "locked" | "watching-2" | "hot" => Status::Recording { recorded: Duration::from_secs(754) },
         _ => Status::Idle,
     };
     let screen = match state {
@@ -312,7 +312,11 @@ pub fn preview(path: &Path, state: &str) -> Result<()> {
     let devices: Vec<Device> = devices.into_iter().map(|d| if on { d } else { Device { presence: Presence::Away, transfer: None, ..d } }).collect();
     let available = on && !matches!(state, "setup-no-sync" | "no-sync" | "sync-error");
     let sync = SyncView { on, available, error, devices: &devices, page, pairing, update: &update };
-    let note = (state == "saved").then_some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true));
+    let note = match state {
+        "saved" => Some(("Saved 2026-09-23_01-43-02.mp4 · 00:12:34 · 3771.2 MB", true)),
+        "hot" => Some(("Headset at 95°C, recording at 45 fps until it cools", false)),
+        _ => None,
+    };
     let hover_on = match state {
         "idle" => Some(Action::Record),
         "report-written" => Some(Action::Send),
@@ -1158,6 +1162,12 @@ impl App {
                     self.note = Some((format!("Clipped {} · {secs:.0} s · {:.1} MB", file_name(&path), bytes as f64 / 1e6), true));
                     self.toast = Some((format!("Clipped the last {secs:.0} s"), true));
                     self.buzz = true;
+                }
+                recorder::Event::Hot { celsius, fps } => {
+                    self.note = Some((format!("Headset at {celsius}°C, recording at {fps} fps until it cools"), false));
+                }
+                recorder::Event::Cooled { fps } => {
+                    self.note = Some((format!("Headset cooled down, back to {fps} fps"), true));
                 }
                 recorder::Event::ClipWhileRecording => {
                     self.toast = Some(("Recording, it's all in there".into(), true));
