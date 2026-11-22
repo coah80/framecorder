@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::config::{write_atomic, Paths};
 
-const LIMIT: usize = 1024 * 1024;
+const LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Default)]
 struct Queue {
@@ -166,7 +166,7 @@ mod tests {
         let a = first.next(Duration::ZERO).unwrap().unwrap();
         let b = second.next(Duration::ZERO).unwrap().unwrap();
         assert!(Arc::ptr_eq(&a, &b));
-        for _ in 0..20 {
+        for _ in 0..=LIMIT / 65536 {
             live.broadcast(vec![3; 65536].into(), false, false);
             assert_eq!(second.next(Duration::ZERO).unwrap().unwrap().len(), 65536);
         }

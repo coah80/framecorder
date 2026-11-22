@@ -502,3 +502,168 @@ fn half_rate_recording_reports_real_duration() {
     assert!(close(probe(&path)[0], 6.0, 0.1));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+fn padded(mut v: VideoPacket, size: usize) -> VideoPacket {
+    if v.data.len() + 6 < size {
+        v.data.extend_from_slice(&[0, 0, 0, 1, 0x0c]);
+        v.data.resize(size - 1, 0xff);
+        v.data.push(0x80);
+    }
+    v
+}
+
+fn live_socket_capacity(dir: &Path) -> usize {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixDatagram;
+
+    let path = dir.join("probe.sock");
+    let srv = UnixDatagram::bind(&path).unwrap();
+    let cli = UnixDatagram::unbound().unwrap();
+    cli.connect(&path).unwrap();
+    cli.set_nonblocking(true).unwrap();
+    let sndbuf: libc::c_int = 4 * 1024 * 1024;
+    unsafe {
+        libc::setsockopt(
+            cli.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&sndbuf as *const libc::c_int).cast(),
+            std::mem::size_of_val(&sndbuf) as libc::socklen_t,
+        );
+    }
+    let msg = vec![0u8; 188 * 300 + 9];
+    let mut bytes = 0;
+    while cli.send(&msg).is_ok() {
+        bytes += msg.len();
+    }
+    drop((cli, srv));
+    let _ = std::fs::remove_file(&path);
+    bytes
+}
+
+#[test]
+fn big_keyframes_reach_a_busy_live_reader_whole() {
+    use std::os::unix::net::UnixDatagram;
+    use std::time::{Duration, Instant};
+
+    let dir = tempdir("live-busy");
+    let socket_path = dir.join("live.sock");
+    let socket = UnixDatagram::bind(&socket_path).unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0; 65536];
+        let (mut gaps, mut keys, mut expected) = (0, 0, None);
+        loop {
+            let n = socket.recv(&mut buf).unwrap();
+            if &buf[..n] == b"done" {
+                return (gaps, keys);
+            }
+            let seq = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            if expected.is_some_and(|e| e != seq) {
+                gaps += 1;
+            }
+            expected = Some(seq + 1);
+            keys += usize::from(buf[8] == 1);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    });
+    let secs = 5;
+    let video = encode_video(secs).expect("no libx264 in this FFmpeg");
+    let mut cfg = config(None, None);
+    cfg.audio_tracks.clear();
+    let (tx, rx) = mpsc::channel();
+    let session = std::thread::spawn(move || mux::run(cfg, rx));
+    tx.send(Msg::Live(Some(socket_path.clone()))).unwrap();
+    let start = Instant::now();
+    let mut sent_keys = 0;
+    for v in video {
+        let due = Duration::from_micros(v.pts_us);
+        std::thread::sleep(due.saturating_sub(start.elapsed()));
+        sent_keys += usize::from(v.key);
+        let size = if v.key { 1_500_000 } else { 60_000 };
+        tx.send(Msg::Video(padded(v, size))).unwrap();
+    }
+    drop(tx);
+    session.join().unwrap().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    UnixDatagram::unbound().unwrap().send_to(b"done", &socket_path).unwrap();
+    let (gaps, keys) = reader.join().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    assert_eq!((gaps, keys), (0, sent_keys), "live video skipped ahead {gaps} times");
+}
+
+#[test]
+fn fresh_keyframe_replaces_an_overflowed_live_backlog() {
+    use std::os::unix::net::UnixDatagram;
+    use std::time::{Duration, Instant};
+
+    let dir = tempdir("live-overflow-key");
+    let cap = live_socket_capacity(&dir);
+    let socket_path = dir.join("live.sock");
+    let socket = UnixDatagram::bind(&socket_path).unwrap();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let reader = std::thread::spawn(move || {
+        go_rx.recv().unwrap();
+        let mut buf = [0u8; 65536];
+        let (mut gaps, mut keys, mut expected) = (0usize, 0usize, None::<u64>);
+        loop {
+            let n = socket.recv(&mut buf).unwrap();
+            if &buf[..n] == b"done" {
+                return (gaps, keys);
+            }
+            let seq = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            if expected.is_some_and(|e| e != seq) {
+                gaps += 1;
+            }
+            expected = Some(seq + 1);
+            keys += usize::from(buf[8] == 1);
+        }
+    });
+    let video = encode_video(3).expect("no libx264 in this FFmpeg");
+    let mut frames = video.into_iter();
+    let first_key = frames.next().unwrap();
+    assert!(first_key.key);
+    let mut p_frames = Vec::new();
+    let mut second_key = None;
+    for v in &mut frames {
+        if v.key {
+            second_key = Some(v);
+            break;
+        }
+        p_frames.push(v);
+    }
+    let second_key = second_key.expect("second keyframe at 2 s");
+
+    let mut cfg = config(None, None);
+    cfg.audio_tracks.clear();
+    let (tx, rx) = mpsc::channel();
+    let session = std::thread::spawn(move || mux::run(cfg, rx));
+    tx.send(Msg::Live(Some(socket_path.clone()))).unwrap();
+
+    let chunk_size = 300_000;
+    let total_frames = (cap + 6_500_000).div_ceil(chunk_size);
+    tx.send(Msg::Video(padded(first_key, chunk_size))).unwrap();
+    for v in p_frames.into_iter().take(total_frames.saturating_sub(1)) {
+        tx.send(Msg::Video(padded(v, chunk_size))).unwrap();
+    }
+    let marker = dir.join("marker.mp4");
+    tx.send(Msg::Record(marker.clone())).unwrap();
+    tx.send(Msg::Video(padded(second_key, 2_000_000))).unwrap();
+    tx.send(Msg::StopRecord).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() {
+        assert!(Instant::now() < deadline, "session did not process recovery keyframe");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    go_tx.send(()).unwrap();
+    for v in frames.take(15) {
+        std::thread::sleep(Duration::from_millis(10));
+        tx.send(Msg::Video(padded(v, 10_000))).unwrap();
+    }
+    drop(tx);
+    session.join().unwrap().unwrap();
+    UnixDatagram::unbound().unwrap().send_to(b"done", &socket_path).unwrap();
+    let (gaps, keys) = reader.join().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    assert_eq!((gaps, keys), (1, 2), "fresh keyframe should survive backlog overflow with one gap");
+}

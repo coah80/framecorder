@@ -362,7 +362,11 @@ fn now(s: &Status, connected: bool, can: bool, on: bool, starting: bool, status:
         ("off", format!("live view needs a newer framecorder on {}.", s.name), theme::PEACH)
     } else {
         match status.map(|st| &st.phase) {
-            Some(LivePhase::Connecting) if on => ("connecting", String::new(), theme::YELLOW),
+            Some(LivePhase::Connecting) if on => (
+                "connecting",
+                status.and_then(|st| st.error.clone()).unwrap_or_default(),
+                theme::YELLOW,
+            ),
             Some(LivePhase::Live) if on => {
                 let rate = status.map_or(0, |st| st.bytes_per_second);
                 ("live", format::rate(rate as f64), theme::MAUVE)
