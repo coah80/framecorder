@@ -499,9 +499,15 @@ fn run(mut writer: Writer, rx: Receiver<Packet>) -> Result<Saved> {
     }
 }
 
+const LIVE_BACKLOG: usize = 8 * 1024 * 1024;
+const LIVE_SNDBUF: libc::c_int = 4 * 1024 * 1024;
+const LIVE_CHUNK: usize = 188 * 300;
+
 pub struct Live {
     writer: Writer,
     socket: std::os::unix::net::UnixDatagram,
+    backlog: std::collections::VecDeque<Vec<u8>>,
+    backlog_bytes: usize,
     waiting: bool,
     sequence: u64,
     start: Option<i64>,
@@ -511,9 +517,20 @@ pub struct Live {
 
 impl Live {
     pub fn new(path: &Path, streams: &Streams) -> Result<Self> {
+        use std::os::fd::AsRawFd;
         let socket = std::os::unix::net::UnixDatagram::unbound()?;
         socket.connect(path).context("connecting the live stream")?;
         socket.set_nonblocking(true)?;
+        let sndbuf = LIVE_SNDBUF;
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&sndbuf as *const libc::c_int).cast(),
+                std::mem::size_of_val(&sndbuf) as libc::socklen_t,
+            );
+        }
         let silence = if streams.audio.is_empty() { Some(crate::aac::Track::new(1, 128_000)?) } else { None };
         let mut writer = Writer {
             fmt: ptr::null_mut(),
@@ -548,7 +565,25 @@ impl Live {
             Self::take(&mut writer);
             result?;
         }
-        Ok(Self { writer, socket, waiting: true, sequence: 0, start: None, silence, silence_base: 0 })
+        Ok(Self { writer, socket, backlog: Default::default(), backlog_bytes: 0, waiting: true, sequence: 0, start: None, silence, silence_base: 0 })
+    }
+
+    fn flush(&mut self) {
+        while let Some(message) = self.backlog.front() {
+            match self.socket.send(message) {
+                Ok(_) => {
+                    self.backlog_bytes -= message.len();
+                    self.backlog.pop_front();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(_) => {
+                    self.backlog.clear();
+                    self.backlog_bytes = 0;
+                    self.waiting = true;
+                    return;
+                }
+            }
+        }
     }
 
     unsafe fn take(writer: &mut Writer) -> Vec<u8> {
@@ -562,6 +597,7 @@ impl Live {
 
     pub fn send(&mut self, p: &Packet) -> Result<()> {
         if p.stream > 1 { return Ok(()); }
+        self.flush();
         if p.data.len() > 4 * 1024 * 1024 {
             self.waiting = true;
             return Ok(());
@@ -585,17 +621,25 @@ impl Live {
             result?;
             data
         };
-        for (i, chunk) in data.chunks(188 * 300).enumerate() {
+        let incoming = data.len() + data.len().div_ceil(LIVE_CHUNK) * 9;
+        if self.backlog_bytes + incoming > LIVE_BACKLOG {
+            self.backlog.clear();
+            self.backlog_bytes = 0;
+            if !key {
+                self.waiting = true;
+                return Ok(());
+            }
+        }
+        for (i, chunk) in data.chunks(LIVE_CHUNK).enumerate() {
             let mut message = Vec::with_capacity(chunk.len() + 9);
             message.extend_from_slice(&self.sequence.to_le_bytes());
             self.sequence = self.sequence.wrapping_add(1);
             message.push(u8::from(key && i == 0));
             message.extend_from_slice(chunk);
-            if self.socket.send(&message).is_err() {
-                self.waiting = true;
-                break;
-            }
+            self.backlog_bytes += message.len();
+            self.backlog.push_back(message);
         }
+        self.flush();
         if p.stream == 0 {
             let target = (p.pts + 1) * RATE as i64 / self.writer.fps as i64;
             let mut out = Vec::new();

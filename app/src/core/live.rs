@@ -180,15 +180,21 @@ async fn pull(
             return;
         };
         let _ = data.send(None);
+        log::info!("live view: {e}");
+        let fatal = matches!(
+            e,
+            ApiError::Refused(404, _) | ApiError::Unauthorized | ApiError::WrongFingerprint
+        );
         state.send_modify(|s| {
-            s.phase = LivePhase::Error;
+            s.phase = if fatal {
+                LivePhase::Error
+            } else {
+                LivePhase::Connecting
+            };
             s.error = Some(e.to_string());
             s.bytes_per_second = 0;
         });
-        if matches!(
-            e,
-            ApiError::Refused(404, _) | ApiError::Unauthorized | ApiError::WrongFingerprint
-        ) {
+        if fatal {
             return;
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -239,14 +245,21 @@ async fn serve(
                 let chunk = match next {
                     Ok(Some((chunk, key))) if key || !waiting => chunk,
                     Ok(Some(_)) => continue,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                    Ok(None) | Err(broadcast::error::RecvError::Lagged(_)) => {
                         waiting = true;
                         continue;
                     }
-                    _ => break,
+                    Err(broadcast::error::RecvError::Closed) => break,
                 };
                 waiting = false;
-                if !matches!(tokio::time::timeout(Duration::from_secs(2), socket.write_all(&chunk)).await, Ok(Ok(()))) { break; }
+                match tokio::time::timeout(Duration::from_secs(2), socket.write_all(&chunk)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break,
+                    Err(_) => {
+                        log::info!("live view: a local player stopped reading for 2 s, hung up on it");
+                        break;
+                    }
+                }
             }
             _ = socket.read_u8() => break,
         }

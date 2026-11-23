@@ -8,6 +8,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, watch};
 
+const TS: usize = 188;
+
 struct Headset {
     addr: String,
     fp: String,
@@ -143,7 +145,7 @@ async fn until(
 }
 
 #[tokio::test]
-async fn shares_real_transport_stream_drops_slow_players_and_reconnects() {
+async fn shares_real_transport_stream_drops_slow_players_and_keeps_players_through_reconnects() {
     tokio::time::timeout(Duration::from_secs(40), async {
         let fixture = tempfile::tempdir().unwrap();
         let path = fixture.path().join("stream.ts");
@@ -212,13 +214,32 @@ async fn shares_real_transport_stream_drops_slow_players_and_reconnects() {
         }
         until(&mut state, |s| s.viewers == 1).await;
         drop(slow);
+        state.borrow_and_update();
         drop(feed);
+        loop {
+            state.changed().await.unwrap();
+            let s = state.borrow().clone();
+            assert_ne!(s.phase, LivePhase::Error, "transient disconnect should reconnect without entering Error");
+            if s.error.is_some() {
+                assert_eq!(s.phase, LivePhase::Connecting);
+                break;
+            }
+        }
         let second_feed = headset.feeds.recv().await.unwrap();
         let mut c = player(&relay.status().url, false).await;
+        until(&mut state, |s| s.viewers == 2).await;
         second_feed.send(fixture.clone()).await.unwrap();
+        until(&mut state, |s| s.phase == LivePhase::Live && s.error.is_none()).await;
         let mut received = vec![0; fixture.len()];
         c.read_exact(&mut received).await.unwrap();
         assert_eq!(received, fixture);
+        let mut kept = Vec::new();
+        while !kept.ends_with(&fixture) {
+            let mut piece = [0; TS];
+            a.read_exact(&mut piece).await.unwrap();
+            kept.extend_from_slice(&piece);
+        }
+        assert_eq!(relay.status().viewers, 2, "players stay through a headset reconnect");
         relay.stop().await;
         assert_eq!(relay.status().phase, LivePhase::Stopped);
         assert_eq!(relay.status().viewers, 0);
