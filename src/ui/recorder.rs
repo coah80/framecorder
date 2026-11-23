@@ -35,6 +35,7 @@ pub enum Event {
     Failed { kind: Option<Kind>, message: String },
     Perf { fps: f64, target: u32, gpu_ms: f64 },
     Hot { celsius: u32, fps: u32 },
+    PowerLimit { fps: u32 },
     Cooled { fps: u32 },
 }
 
@@ -64,6 +65,7 @@ pub fn parse_event(line: &str) -> Option<Event> {
             let (celsius, fps) = rest.split_once(' ')?;
             Some(Event::Hot { celsius: celsius.parse().ok()?, fps: fps.parse().ok()? })
         }
+        "power" => Some(Event::PowerLimit { fps: rest.parse().ok()? }),
         "cooled" => Some(Event::Cooled { fps: rest.parse().ok()? }),
         "failed" => {
             let (k, message) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -393,6 +395,7 @@ mod tests {
         assert_eq!(parse_event("busy recording"), Some(Event::ClipWhileRecording));
         assert_eq!(parse_event("perf 71.5 72 4.44"), Some(Event::Perf { fps: 71.5, target: 72, gpu_ms: 4.44 }));
         assert_eq!(parse_event("hot 95 45"), Some(Event::Hot { celsius: 95, fps: 45 }));
+        assert_eq!(parse_event("power 45"), Some(Event::PowerLimit { fps: 45 }));
         assert_eq!(parse_event("cooled 90"), Some(Event::Cooled { fps: 90 }));
         assert_eq!(parse_event("hello"), None);
     }

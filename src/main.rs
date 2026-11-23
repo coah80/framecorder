@@ -27,7 +27,7 @@ mod writer;
 
 
 use std::os::fd::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -491,7 +491,7 @@ fn capture_loop(
     let mut last_status = Instant::now();
     let mut window = (0u64, 0u64);
     let mut gpu_time = Duration::ZERO;
-    let mut backoff = thermal::Backoff::new(thermal::Thermal::find(Path::new("/sys/class/thermal")));
+    let mut backoff = thermal::Backoff::new(thermal::Thermal::system());
     let mut step = 1;
     // Time spent paused so far, and when the current pause began.
     let mut paused_total = Duration::ZERO;
@@ -566,6 +566,19 @@ fn capture_loop(
                         println!("hot {c:.0} {}", fps / step);
                     }
                 }
+                Some(thermal::Change::PowerLimit) => {
+                    step = 2;
+                    if args.qp.is_none() {
+                        enc.set_bitrate(args.bitrate * 1_000_000 / step);
+                    }
+                    window = (captured, dropped);
+                    last_status = Instant::now();
+                    gpu_time = Duration::ZERO;
+                    log::warn!("the headset hit its power limit, recording at {} fps until it eases", fps / step);
+                    if args.control {
+                        println!("power {}", fps / step);
+                    }
+                }
                 Some(thermal::Change::Cooled(c)) => {
                     step = 1;
                     if args.qp.is_none() {
@@ -574,7 +587,10 @@ fn capture_loop(
                     window = (captured, dropped);
                     last_status = Instant::now();
                     gpu_time = Duration::ZERO;
-                    log::info!("the headset cooled to {c:.0}°C, back to {fps} fps");
+                    match c {
+                        Some(c) => log::info!("the headset cooled to {c:.0}°C, back to {fps} fps"),
+                        None => log::info!("the headset recovered, back to {fps} fps"),
+                    }
                     if args.control {
                         println!("cooled {fps}");
                     }

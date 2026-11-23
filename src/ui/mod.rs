@@ -1166,8 +1166,11 @@ impl App {
                 recorder::Event::Hot { celsius, fps } => {
                     self.note = Some((format!("Headset at {celsius}°C, recording at {fps} fps until it cools"), false));
                 }
+                recorder::Event::PowerLimit { fps } => {
+                    self.note = Some((format!("Headset hit its power limit, recording at {fps} fps until it eases"), false));
+                }
                 recorder::Event::Cooled { fps } => {
-                    self.note = Some((format!("Headset cooled down, back to {fps} fps"), true));
+                    self.note = Some((format!("Back to {fps} fps"), true));
                 }
                 recorder::Event::ClipWhileRecording => {
                     self.toast = Some(("Recording, it's all in there".into(), true));
