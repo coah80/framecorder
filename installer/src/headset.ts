@@ -2,7 +2,7 @@
 // to framecorder-setup, and the one permission, which needs root.
 
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -26,10 +26,24 @@ export function unlocked(): boolean {
   return has(HELPER) || has(RECORDER)
 }
 
-/** steamos starts out with no password, and sudo needs one. */
 export function hasPassword(): boolean {
-  const out = spawnSync("passwd", ["-S"], { encoding: "utf8" })
-  return out.stdout?.split(" ")[1] === "P"
+  const status = spawnSync("passwd", ["-S"], { encoding: "utf8" })
+  if (status.status === 0) {
+    const state = status.stdout.trim().split(/\s+/)[1]
+    if (state === "P") return true
+    if (state === "NP" || state === "L") return false
+  }
+  const steamos = spawnSync("steamos-passwd", ["--has-password"], { stdio: "ignore" })
+  if (!steamos.error && steamos.status !== null) return steamos.status === 0
+  return false
+}
+
+export function sandboxed(): boolean {
+  try {
+    return /^NoNewPrivs:\s*1$/m.test(readFileSync("/proc/self/status", "utf8"))
+  } catch {
+    return false
+  }
 }
 
 /** Runs a program, quietly. Throws with the end of what it said if it fails. */
@@ -80,26 +94,42 @@ export async function remove(): Promise<void> {
   await run(join(BIN, "framecorder-ui"), ["--uninstall"])
 }
 
-// these two ask in the terminal themselves, so the screen hands it over first
+export type TalkResult = { ok: boolean; said: string }
 
-/** Runs something that talks to the person in the terminal, and waits until
- * it's really gone: it puts the terminal back the way it found it on the way
- * out, and the screen has to come back after that, not before. */
-async function talk(program: string, args: string[]): Promise<boolean> {
-  const proc = Bun.spawn([program, ...args], { stdin: "inherit", stdout: "inherit", stderr: "inherit" })
+async function talk(program: string, args: string[], banner?: string): Promise<TalkResult> {
+  if (banner) writeSync(1, banner)
+  let proc
+  try {
+    proc = Bun.spawn([program, ...args], { stdin: "inherit", stdout: "inherit", stderr: "pipe" })
+  } catch (e) {
+    return { ok: false, said: e instanceof Error ? e.message : String(e) }
+  }
+  const chunks: Uint8Array[] = []
+  const reader = proc.stderr.getReader()
+  const drain = (async () => {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      writeSync(2, value)
+      chunks.push(value)
+    }
+  })()
+  const [code] = await Promise.all([proc.exited, drain])
+  const said = Buffer.concat(chunks).toString("utf8").trim().split("\n").slice(-4).join("\n")
+  return { ok: code === 0, said }
+}
+
+export function setPassword(): Promise<TalkResult> {
+  return talk("passwd", [], "\npick a password for steamos. you'll type it twice, nothing shows while you type.\n\n")
+}
+
+export async function authorized(): Promise<boolean> {
+  const proc = Bun.spawn(["sudo", "-n", "-v"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
   return (await proc.exited) === 0
 }
 
-export function setPassword(): Promise<boolean> {
-  console.log("\npick a password for steamos. you'll type it twice, nothing shows while you type.\n")
-  return talk("passwd", [])
-}
-
-/** Asks for the password up front. sudo remembers it for a few minutes, which
- * is how the install unlocks the panels at the end without asking again. */
-export function authorize(): Promise<boolean> {
-  console.log("\nyour password, so framecorder can record the panels:\n")
-  return talk("sudo", ["-v"])
+export function authorize(): Promise<TalkResult> {
+  return talk("sudo", ["-v"], "\nyour password, so framecorder can record the panels:\n\n")
 }
 
 /** Puts the panel helper in place, with the password from `authorize`.

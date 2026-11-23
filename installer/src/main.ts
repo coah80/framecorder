@@ -2,7 +2,7 @@
 // runs it: install or update, the panels' permission, or removing it.
 
 import * as headset from "./headset"
-import { Screen } from "./screen"
+import { Screen, type Tone } from "./screen"
 
 const quit = { value: "quit", name: "quit", description: "" } as const
 const done = { value: "done", name: "done", description: "" } as const
@@ -31,22 +31,28 @@ async function main(screen: Screen): Promise<void> {
   if (pick === "remove") await remove(screen)
 }
 
-/** Password first, then everything else runs on its own. No password, no
- * install: the panels are what framecorder records. */
 async function install(screen: Screen): Promise<void> {
-  if (!(await authorize(screen))) {
-    await screen.ask(
-      "nothing was installed",
-      "it needs your password to read the panels. run this again when you're ready.",
-      [done],
-      "bad",
-    )
+  const auth = await authorize(screen)
+  if (auth !== "ok") {
+    if (auth === "cancelled") {
+      const why = headset.hasPassword()
+        ? "it needs your password to read the panels. run this again when you're ready."
+        : "framecorder won't work without a sudo password. set one in steam under developer mode, then run this again."
+      await screen.ask("nothing was installed", why, [done], "bad")
+    }
     return
   }
   await headset.install((status) => screen.busy("installing framecorder", status))
-  // the install itself puts the panel helper in place with the password,
-  // this is in case it couldn't
   if (!headset.unlocked()) {
+    if (!(await headset.authorized()) && (await authorize(screen)) !== "ok") {
+      await screen.ask(
+        "panels are still locked",
+        "framecorder is installed, but it needs your password to read the panels. run this again when you're ready.",
+        [done],
+        "bad",
+      )
+      return
+    }
     screen.busy("installing framecorder", "unlocking the panels")
     await headset.unlock()
   }
@@ -58,26 +64,60 @@ async function install(screen: Screen): Promise<void> {
   )
 }
 
-/** Gets the password, before anything else happens. Helps set one if
- * steamos doesn't have one yet. */
-async function authorize(screen: Screen): Promise<boolean> {
-  if (!headset.hasPassword()) {
+async function ensurePassword(screen: Screen): Promise<boolean> {
+  if (headset.hasPassword()) return true
+  let heading = "set a password first"
+  let tone: Tone = "normal"
+  while (!headset.hasPassword()) {
     const pick = await screen.ask(
-      "pick a password first",
-      "steamos doesn't have one yet, and framecorder needs it. remember it, steamos asks for it again later.",
-      [{ value: "set", name: "set a password", description: "" }, quit],
+      heading,
+      "steamos doesn't have a password yet, and framecorder won't work without one.\n\nin steam: settings -> system -> developer mode, then settings -> developer -> user password.\n\nonce it's set, check again, or set one here in the terminal.",
+      [
+        { value: "check", name: "check again", description: "after setting it in steam" },
+        { value: "set", name: "set a password here", description: "runs passwd in this terminal" },
+        quit,
+      ],
+      tone,
     )
-    if (pick !== "set") return false
-    while (!(await screen.handOver(headset.setPassword))) {
-      const again = await screen.ask("no password was set", "try again?", [{ value: "retry", name: "try again", description: "" }, quit], "bad")
-      if (again !== "retry") return false
+    if (pick === "quit") return false
+    if (pick === "set") {
+      const res = await screen.handOver(headset.setPassword)
+      if (headset.hasPassword()) return true
+      heading = "no password was set"
+      tone = "bad"
+      if (res.said) {
+        const again = await screen.ask("no password was set", res.said, [{ value: "retry", name: "back", description: "" }, quit], "bad")
+        if (again !== "retry") return false
+      }
+      continue
+    }
+    if (!headset.hasPassword()) {
+      heading = "still no password set"
+      tone = "bad"
     }
   }
-  while (!(await screen.handOver(headset.authorize))) {
-    const pick = await screen.ask("that didn't work", "try your password again?", [{ value: "retry", name: "try again", description: "" }, quit], "bad")
-    if (pick !== "retry") return false
-  }
   return true
+}
+
+async function authorize(screen: Screen): Promise<"ok" | "cancelled" | "blocked"> {
+  if (headset.sandboxed()) {
+    await screen.ask(
+      "this terminal is sandboxed",
+      "sudo can't run inside a sandboxed terminal, so framecorder can't unlock the panels here.\n\nopen konsole or ssh into the frame and run the install command there.",
+      [done],
+      "bad",
+    )
+    return "blocked"
+  }
+  if (!(await ensurePassword(screen))) return "cancelled"
+  if (await headset.authorized()) return "ok"
+  for (;;) {
+    const res = await screen.handOver(headset.authorize)
+    if (res.ok) return "ok"
+    const body = res.said ? `${res.said}\n\ntry your password again?` : "try your password again?"
+    const pick = await screen.ask("that didn't work", body, [{ value: "retry", name: "try again", description: "" }, quit], "bad")
+    if (pick !== "retry") return "cancelled"
+  }
 }
 
 async function remove(screen: Screen): Promise<void> {

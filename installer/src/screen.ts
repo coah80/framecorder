@@ -111,11 +111,10 @@ export class Screen {
     }, 80)
   }
 
-  /** Hands the terminal to something that asks for itself, like sudo. */
   async handOver<R>(run: () => Promise<R>): Promise<R> {
     this.stopSpinner()
     this.renderer.suspend()
-    // ctrl+c there cancels the prompt, it shouldn't take the installer with it
+    while (process.stdin.read() !== null) {}
     const stay = () => {}
     process.on("SIGINT", stay)
     try {
