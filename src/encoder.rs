@@ -347,8 +347,7 @@ impl Encoder {
             None => {
                 self.set_ctrl("frame_rc", CID_FRAME_RC_ENABLE, 1);
                 self.set_ctrl("bitrate_mode", CID_BITRATE_MODE, 0); // VBR
-                self.set_ctrl("bitrate", CID_BITRATE, cfg.bitrate as i32);
-                self.set_ctrl("bitrate_peak", CID_BITRATE_PEAK, peak_bitrate(cfg.bitrate) as i32);
+                self.set_bitrate(cfg.bitrate);
             }
         }
     }
@@ -425,6 +424,11 @@ impl Encoder {
     /// doesn't wait for the next one.
     pub fn force_keyframe(&self) {
         self.set_ctrl("force_key_frame", CID_FORCE_KEY_FRAME, 1);
+    }
+
+    pub fn set_bitrate(&self, bitrate: u32) {
+        self.set_ctrl("bitrate", CID_BITRATE, bitrate as i32);
+        self.set_ctrl("bitrate_peak", CID_BITRATE_PEAK, peak_bitrate(bitrate) as i32);
     }
 
     pub fn layout(&self) -> Nv12Layout {

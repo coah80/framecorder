@@ -555,6 +555,12 @@ fn capture_loop(
             match backoff.check(Instant::now()) {
                 Some(thermal::Change::Hot(c)) => {
                     step = 2;
+                    if args.qp.is_none() {
+                        enc.set_bitrate(args.bitrate * 1_000_000 / step);
+                    }
+                    window = (captured, dropped);
+                    last_status = Instant::now();
+                    gpu_time = Duration::ZERO;
                     log::warn!("the headset is at {c:.0}°C, recording at {} fps until it cools", fps / step);
                     if args.control {
                         println!("hot {c:.0} {}", fps / step);
@@ -562,6 +568,12 @@ fn capture_loop(
                 }
                 Some(thermal::Change::Cooled(c)) => {
                     step = 1;
+                    if args.qp.is_none() {
+                        enc.set_bitrate(args.bitrate * 1_000_000);
+                    }
+                    window = (captured, dropped);
+                    last_status = Instant::now();
+                    gpu_time = Duration::ZERO;
                     log::info!("the headset cooled to {c:.0}°C, back to {fps} fps");
                     if args.control {
                         println!("cooled {fps}");

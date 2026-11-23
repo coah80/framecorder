@@ -121,12 +121,13 @@ pub struct Streams {
 pub struct Saved {
     pub path: PathBuf,
     pub frames: u64,
+    pub ticks: u64,
     pub bytes: u64,
 }
 
 impl Saved {
     pub fn seconds(&self, fps: u32) -> f64 {
-        self.frames as f64 / fps.max(1) as f64
+        self.ticks as f64 / fps.max(1) as f64
     }
 }
 
@@ -144,6 +145,7 @@ struct Writer {
     path: PathBuf,
     fps: u32,
     frames: u64,
+    ticks: u64,
     bytes: u64,
     /// The file again, for pushing what's written out of memory.
     file: Option<std::fs::File>,
@@ -174,6 +176,7 @@ impl Writer {
             path: path.to_owned(),
             fps: streams.fps,
             frames: 0,
+            ticks: 0,
             bytes: 0,
             file: None,
             flushed: 0,
@@ -286,6 +289,7 @@ impl Writer {
             ff::av_packet_rescale_ts(pkt, from, (*st).time_base);
             if p.stream == 0 {
                 self.frames += 1;
+                self.ticks = self.ticks.max((p.pts + p.duration).max(0) as u64);
             }
             self.bytes += p.data.len() as u64;
             let ret = if live {
@@ -344,7 +348,7 @@ impl Writer {
             }
         }
         std::fs::rename(&self.part, &self.path).with_context(|| format!("renaming {}", self.part.display()))?;
-        Ok(Saved { path: std::mem::take(&mut self.path), frames: self.frames, bytes: self.bytes })
+        Ok(Saved { path: std::mem::take(&mut self.path), frames: self.frames, ticks: self.ticks, bytes: self.bytes })
     }
 }
 
@@ -518,6 +522,7 @@ impl Live {
             path: PathBuf::new(),
             fps: streams.fps,
             frames: 0,
+            ticks: 0,
             bytes: 0,
             file: None,
             flushed: 0,
