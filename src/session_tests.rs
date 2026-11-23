@@ -471,3 +471,34 @@ fn live_transport_demuxes_and_a_stalled_reader_cannot_stop_recording() {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[test]
+fn half_rate_recording_reports_real_duration() {
+    let dir = tempdir("half-rate");
+    let path = dir.join("rec.mp4");
+    let video = encode_video(6).expect("no libx264 in this FFmpeg");
+    let params = video[0].data.clone();
+    let streams = crate::writer::Streams {
+        codec: Codec::H264,
+        width: W,
+        height: H,
+        fps: FPS,
+        video_params: params,
+        audio: Vec::new(),
+    };
+    let handle = crate::writer::Handle::spawn(&path, &streams, false).unwrap();
+    for (i, v) in video.into_iter().enumerate().step_by(2) {
+        handle.send(crate::writer::Packet {
+            stream: 0,
+            pts: i as i64,
+            duration: 1,
+            key: v.key,
+            data: v.data.into(),
+        });
+    }
+    let saved = handle.close().join().unwrap().unwrap();
+    assert_eq!(saved.frames, (3 * FPS) as u64);
+    assert!(close(saved.seconds(FPS), 6.0, 0.1), "reported {} s", saved.seconds(FPS));
+    assert!(close(probe(&path)[0], 6.0, 0.1));
+    std::fs::remove_dir_all(dir).unwrap();
+}

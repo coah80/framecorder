@@ -243,6 +243,7 @@ The traps below come from the Frame itself, and each one cost real time to find.
 - Starting a game can restart PipeWire. Anything holding a stream has to notice and reconnect (`src/audio.rs`).
 - SteamOS updates swap library majors under you: 0.5.7 replaced FFmpeg 7.1 with 8.0 and a recorder linked to the system's FFmpeg stopped starting. That's why the recorder links a pinned FFmpeg statically. Link anything else the OS ships only if its soname has stayed put for years (libc, libdrm, PipeWire, Vulkan).
 - Memory is tight and swap is compressed. Holding hundreds of MB lets the kernel swap out PipeWire's realtime thread, which gets it killed and silences the whole headset. Big buffers go to disk at the disk's pace.
+- Pushed hard enough (a heavy game, passthrough on, live view going), the Frame can reboot itself without a kernel panic: `journalctl -b -1 -k` ends in `qcom-camss` CSI2 errors and `C7 temperature 95.x greater than max 95`, and the next boot's PMIC lines say `SMPL` and `FAULT_SEQ`, with `/sys/fs/pstore` empty. That's the SoC's power and heat limit, not our crash. What we can do is take less, which is why the recorder halves its frame rate at 95°C (`src/thermal.rs`).
 - The headset doesn't answer ping. Check port 22, and if it's gone, it's asleep: ask someone to wake it.
 
 **Tooling**
